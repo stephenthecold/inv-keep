@@ -1,0 +1,21 @@
+{
+  "//": "Bubblewrap TWA config. Set host/startUrl to YOUR https domain, then run: bubblewrap build",
+  "packageId": "com.invkeep.twa",
+  "host": "inv-keep.example.com",
+  "name": "Inv-Keep",
+  "launcherName": "Inv-Keep",
+  "display": "standalone",
+  "orientation": "portrait",
+  "themeColor": "#2f81f7",
+  "navigationColor": "#0f1419",
+  "backgroundColor": "#0f1419",
+  "startUrl": "/",
+  "iconUrl": "https://inv-keep.example.com/static/icons/icon-512.png",
+  "maskableIconUrl": "https://inv-keep.example.com/static/icons/maskable-512.png",
+  "webManifestUrl": "https://inv-keep.example.com/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "enableNotifications": false,
+  "features": {},
+  "shortcuts": [],
+  "signingKey": { "path": "./android.keystore", "alias": "android" }
+}

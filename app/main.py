@@ -38,7 +38,31 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 templates = Jinja2Templates(directory="app/templates")
 
-PUBLIC_PATHS = {"/login", "/auth/callback", "/logout", "/health"}
+# Minimal service worker: cache the static shell, network-first for everything else
+# (data is dynamic). Having a fetch handler is what makes the app installable.
+_SERVICE_WORKER_JS = """
+const CACHE = 'inv-keep-v1';
+const SHELL = ['/static/style.css', '/static/app.js',
+  '/static/icons/icon-192.png', '/static/icons/icon-512.png'];
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+});
+self.addEventListener('activate', (e) => {
+  e.waitUntil(caches.keys().then((ks) =>
+    Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
+});
+self.addEventListener('fetch', (e) => {
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  if (SHELL.some((p) => req.url.endsWith(p))) {
+    e.respondWith(caches.match(req).then((r) => r || fetch(req)));
+    return;
+  }
+  e.respondWith(fetch(req).catch(() => caches.match(req)));
+});
+""".strip()
+
+PUBLIC_PATHS = {"/login", "/auth/callback", "/logout", "/health", "/manifest.webmanifest", "/sw.js"}
 
 _stop_event = threading.Event()
 
@@ -139,6 +163,46 @@ def reports_money(db, value):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# ============================================================ PWA
+@app.get("/manifest.webmanifest")
+def manifest(db: Session = Depends(get_db)):
+    name = store.get(db, "app_title") or "Inv-Keep"
+    accent = store.get(db, "brand_accent") or "#2f81f7"
+    logo = store.get(db, "brand_logo")
+    icons = [
+        {"src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+        {"src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+        {"src": "/static/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+    ]
+    if logo:
+        icons.insert(0, {"src": logo, "sizes": "any", "type": "image/png", "purpose": "any"})
+    return JSONResponse(
+        {
+            "name": name,
+            "short_name": name[:12],
+            "description": "Inventory charge-out and barcode scanning",
+            "start_url": "/",
+            "scope": "/",
+            "display": "standalone",
+            "orientation": "portrait",
+            "background_color": "#0f1419",
+            "theme_color": accent,
+            "icons": icons,
+        },
+        media_type="application/manifest+json",
+    )
+
+
+@app.get("/sw.js")
+def service_worker():
+    # Served from the root so its scope is the whole app.
+    return Response(
+        content=_SERVICE_WORKER_JS,
+        media_type="application/javascript",
+        headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"},
+    )
 
 
 def _auth_error_page(detail):
@@ -418,13 +482,27 @@ def parts_restock(part_id: int, request: Request, amount: int = Form(...), db: S
     return redirect("/parts", "Stock updated.")
 
 
+def _label_ctx(request, db, rendered, sheet):
+    size_key = request.query_params.get("size") or store.get(db, "label_size") or "sheet"
+    preset = labels.size_preset(size_key)
+    return dict(
+        parts_to_print=rendered,
+        sheet=sheet,
+        sizes=labels.LABEL_SIZES,
+        size_key=size_key,
+        page_w=preset["w"],
+        page_h=preset["h"],
+        size_label=preset["label"],
+    )
+
+
 @app.get("/parts/{part_id}/label", response_class=HTMLResponse)
 def part_label(part_id: int, request: Request, db: Session = Depends(get_db)):
     part = db.get(Part, part_id)
     if not part:
         return redirect("/parts", "Part not found.", ok=False)
-    svg = labels.render_svg(part.barcode)
-    return templates.TemplateResponse("label.html", ctx(request, db, parts_to_print=[(part, svg)]))
+    rendered = [(part, labels.render_svg(part.barcode))]
+    return templates.TemplateResponse("label.html", ctx(request, db, base_path=f"/parts/{part_id}/label", **_label_ctx(request, db, rendered, False)))
 
 
 @app.get("/labels", response_class=HTMLResponse)
@@ -436,7 +514,7 @@ def labels_sheet(request: Request, db: Session = Depends(get_db)):
         .all()
     )
     rendered = [(p, labels.render_svg(p.barcode)) for p in parts]
-    return templates.TemplateResponse("label.html", ctx(request, db, parts_to_print=rendered, sheet=True))
+    return templates.TemplateResponse("label.html", ctx(request, db, base_path="/labels", **_label_ctx(request, db, rendered, True)))
 
 
 # ============================================================ categories
@@ -679,7 +757,7 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         "settings.html",
         ctx(request, db, providers=emailer.PROVIDERS, this_month=datetime.utcnow().strftime("%Y-%m"),
-            disable_auth=settings.disable_auth),
+            disable_auth=settings.disable_auth, label_sizes=labels.LABEL_SIZES),
     )
 
 
@@ -697,6 +775,16 @@ def settings_general(
     audit.record(db, current_user(request), "settings.general", "settings", None, "Updated general settings")
     db.commit()
     return redirect("/settings", "General settings saved.")
+
+
+@app.post("/settings/printing")
+def settings_printing(request: Request, label_size: str = Form("sheet"), db: Session = Depends(get_db)):
+    if label_size not in labels.LABEL_SIZES:
+        label_size = "sheet"
+    store.set(db, "label_size", label_size)
+    audit.record(db, current_user(request), "settings.printing", "settings", None, f"Default label size {label_size}")
+    db.commit()
+    return redirect("/settings", "Printing settings saved.")
 
 
 @app.post("/settings/branding")

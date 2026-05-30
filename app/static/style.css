@@ -163,6 +163,24 @@ dialog.modal h2 { margin-top: 0; }
 /* wide tables scroll on small screens */
 .table-scroll { overflow-x: auto; }
 
+/* responsive / handheld (Android AIO scanners, phones) */
+@media (max-width: 720px) {
+  header { flex-wrap: wrap; gap: .5rem .9rem; padding: .6rem .8rem; }
+  nav { order: 3; width: 100%; overflow-x: auto; gap: .9rem; padding-bottom: .2rem; -webkit-overflow-scrolling: touch; }
+  nav a { white-space: nowrap; }
+  main { padding: 1rem .8rem 4rem; }
+  .page-head { flex-wrap: wrap; }
+  .scan-bar { flex-direction: column; align-items: stretch; }
+  #scan { font-size: 1.5rem; padding: 1.1rem; }
+  .charge-actions button { flex: 1; }
+  .grid-form label, .grid-form .subgroup { flex: 1 1 100%; }
+  dialog.modal { width: 96%; padding: 1rem; }
+  .charge-icon { font-size: 1.8rem; }
+}
+
+/* sized label preview on screen */
+.label-sized .label { border: 1px dashed var(--line); margin: .35rem; }
+
 /* label printing */
 .label-sheet { display: flex; flex-wrap: wrap; gap: .4rem; }
 .label { border: 1px solid var(--line); border-radius: 6px; padding: .4rem .6rem; text-align: center; background: #fff; color: #000; }

@@ -14,6 +14,8 @@ DEFAULTS = {
     "app_title": env_settings.app_title,
     "currency": env_settings.currency,
     "low_stock_threshold": "5",
+    # Default label size preset key (see app/labels.py LABEL_SIZES)
+    "label_size": "sheet",
     # White-label branding
     "brand_accent": "",        # hex colour, e.g. #2f81f7 (blank = default)
     "brand_logo": "",          # served path under /uploads, e.g. /uploads/logo.png

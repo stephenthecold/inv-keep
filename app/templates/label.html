@@ -1,22 +1,50 @@
 {% extends "base.html" %}
 {% block content %}
+{% if page_w and page_h %}
+<style>
+  @page { size: {{ page_w }}mm {{ page_h }}mm; margin: 1.5mm; }
+  @media print {
+    .label-sheet { display: block; }
+    .label {
+      width: {{ page_w - 3 }}mm; height: {{ page_h - 3 }}mm;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      page-break-after: always; border: none; gap: 1mm; overflow: hidden;
+    }
+    .label-barcode svg { max-width: 100%; max-height: {{ (page_h * 0.62)|round(0,'floor') }}mm; height: auto; }
+    .label-name { font-size: {{ '9pt' if page_h >= 25 else '7pt' }}; line-height: 1.05; }
+  }
+</style>
+{% endif %}
+
 <div class="no-print">
   <h1>{% if sheet %}Labels{% else %}Label{% endif %}</h1>
-  <p>
-    <button onclick="window.print()">🖨️ Print</button>
-    <a class="btn" href="/parts">Back to parts</a>
+  <form method="get" action="{{ base_path }}" class="filter">
+    <label>Label size
+      <select name="size" onchange="this.form.submit()">
+        {% for key, s in sizes.items() %}
+        <option value="{{ key }}" {% if key == size_key %}selected{% endif %}>{{ s.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button onclick="window.print(); return false;">🖨️ Print</button>
+    <a class="btn ghost" href="/parts">Back to items</a>
+  </form>
+  <p class="muted">
+    Showing <b>{{ size_label }}</b>. In the print dialog, pick your thermal printer and make sure
+    its paper size matches (turn off headers/footers and any scaling/“fit to page”).
+    Set a default under <a href="/settings">Settings → Printing</a>.
+    See <a href="https://github.com">docs/PRINTING.md</a> for Rollo &amp; Brother setup.
   </p>
-  <p class="muted">Tip: in the print dialog set the paper size to match your label stock and turn off headers/footers.</p>
 </div>
 
-<div class="label-sheet">
+<div class="label-sheet {% if page_w and page_h %}label-sized{% endif %}">
   {% for part, svg in parts_to_print %}
   <div class="label">
-    <div class="label-name">{{ part.name }}</div>
+    <div class="label-name">{% if part.icon %}{{ part.icon }} {% endif %}{{ part.name }}</div>
     <div class="label-barcode">{{ svg | safe }}</div>
   </div>
   {% else %}
-  <p class="muted no-print">Nothing to print. Add a part with a blank barcode to auto-generate one.</p>
+  <p class="muted no-print">Nothing to print. Add an item with a blank barcode to auto-generate one.</p>
   {% endfor %}
 </div>
 {% endblock %}

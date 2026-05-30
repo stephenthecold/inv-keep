@@ -41,6 +41,23 @@
   <small>The app title, emoji/logo, accent colour and footer appear across the whole app. Max logo size 2 MB.</small>
 </section>
 
+<!-- ---------------- Printing ---------------- -->
+<section class="card">
+  <h2>Printing</h2>
+  <form method="post" action="/settings/printing" class="grid-form">
+    <label>Default label size
+      <select name="label_size">
+        {% for key, s in label_sizes.items() %}
+        <option value="{{ key }}" {% if cfg.label_size == key %}selected{% endif %}>{{ s.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit">Save printing</button>
+  </form>
+  <small>Used as the default on the label pages. Covers Rollo (4×6, 2.25×1.25 in) and Brother
+  (P-touch 12/18/24 mm tapes, QL 62×29 mm / continuous). See docs/PRINTING.md.</small>
+</section>
+
 <!-- ---------------- Authentication ---------------- -->
 <section class="card">
   <h2>Authentication</h2>

@@ -4,3 +4,10 @@ data/uploads/
 .env
 __pycache__/
 *.pyc
+# Android TWA build artifacts (Bubblewrap)
+android/*.keystore
+android/*.apk
+android/*.aab
+android/app/
+android/.gradle/
+android/build/

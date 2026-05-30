@@ -105,8 +105,21 @@ route, since the app trusts those headers implicitly.
 If an OIDC misconfiguration prevents login, set `DISABLE_AUTH=1` in `.env` and restart. That
 bypasses all auth so you can reach **Settings**, fix the config, then remove the flag.
 
+## Android AIO scanners (PWA)
+Inv-Keep is an installable **PWA** tuned for Android all-in-one barcode scanners
+(Zebra, Sunmi, Chainway, etc.): set the scanner to keyboard-wedge mode and “Add to
+Home screen”. Full setup, and how to build an APK (Trusted Web Activity), is in
+**[docs/ANDROID.md](docs/ANDROID.md)**.
+
+## Thermal label printing
+Label pages print through the OS print dialog at exact `@page` sizes, with presets
+for **Rollo** (4×6, 2.25×1.25 in) and **Brother** (P-touch 12/18/24 mm tapes, QL
+62×29 mm / continuous). Set a default under Settings → Printing. See
+**[docs/PRINTING.md](docs/PRINTING.md)**.
+
 ## Backups
-Everything lives in `./data/app.db`. Back up that folder (or snapshot the volume).
+Everything lives in `./data/` — `app.db` plus any uploaded brand logo under
+`./data/uploads`. Back up that folder (or snapshot the volume).
 
 ## Run locally without Docker
 ```bash
@@ -114,3 +127,18 @@ pip install -r requirements.txt
 export DATABASE_URL="sqlite:///./data/app.db"
 uvicorn app.main:app --reload
 ```
+
+## Documentation
+- [CONFIGURATION.md](CONFIGURATION.md) — every environment variable and in-app setting
+- [CHANGELOG.md](CHANGELOG.md) — versioned list of changes
+- [docs/ANDROID.md](docs/ANDROID.md) — Android AIO scanners / PWA / APK
+- [docs/PRINTING.md](docs/PRINTING.md) — Rollo & Brother thermal printing
+
+## Versioning
+Inv-Keep uses [SemVer](https://semver.org). The version lives in `app/version.py`,
+shows in the footer and Settings, and each release is tagged in git (`vX.Y.Z`) with
+a matching CHANGELOG entry.
+
+## License
+[MIT](LICENSE) — free to use, modify and distribute. (Swap the LICENSE file if you
+prefer a different open-source license before publishing.)

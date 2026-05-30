@@ -3,6 +3,19 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.1.0] — 2026-05-30
+- **Progressive Web App (PWA)** — installable on Android (and desktop): app
+  manifest, service worker, icons, theme colour and a standalone fullscreen
+  display. Optimised for **Android AIO barcode scanners** (keyboard-wedge input,
+  responsive touch layout, persistent scan focus). See [docs/ANDROID.md](docs/ANDROID.md).
+- **Thermal label printing** — label pages now offer size presets for **Rollo**
+  (4×6 in, 2.25×1.25 in) and **Brother** (P-touch 12/18/24 mm tapes, QL 62×29 mm /
+  62 mm continuous) with exact `@page` sizing, plus a default label size in
+  Settings → Printing. See [docs/PRINTING.md](docs/PRINTING.md).
+- **Open-source preparation** — added MIT `LICENSE`, `CONFIGURATION.md` (every env
+  var + UI setting), this changelog, and a Bubblewrap TWA config for building an APK.
+- Responsive layout improvements for small handheld screens.
+
 ## [1.0.0] — 2026-05-30
 First versioned release. Cumulative feature set:
 

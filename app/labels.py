@@ -7,6 +7,23 @@ from barcode.writer import SVGWriter
 
 PREFIX = "PCO"
 
+# Label size presets. width/height in millimetres; 0 = flow on a normal sheet.
+LABEL_SIZES = {
+    "sheet":       {"label": "Plain paper sheet (many per page)", "w": 0,   "h": 0},
+    "rollo-4x6":   {"label": "Rollo 4×6 in (102×152 mm)",          "w": 102, "h": 152},
+    "asset-57x32": {"label": "Asset 2.25×1.25 in (57×32 mm)",      "w": 57,  "h": 32},
+    "50x25":       {"label": "50×25 mm",                            "w": 50,  "h": 25},
+    "ql-62x29":    {"label": "Brother QL 62×29 mm die-cut",         "w": 62,  "h": 29},
+    "ql-62-cont":  {"label": "Brother QL 62 mm continuous",         "w": 62,  "h": 40},
+    "ptouch-24":   {"label": "Brother P-touch 24 mm tape",          "w": 70,  "h": 24},
+    "ptouch-18":   {"label": "Brother P-touch 18 mm tape",          "w": 60,  "h": 18},
+    "ptouch-12":   {"label": "Brother P-touch 12 mm tape",          "w": 50,  "h": 12},
+}
+
+
+def size_preset(key):
+    return LABEL_SIZES.get(key) or LABEL_SIZES["sheet"]
+
 
 def generate_value(part_id: int) -> str:
     """Deterministic, human-readable internal barcode for items with no barcode."""

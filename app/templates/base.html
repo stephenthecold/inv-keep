@@ -2,9 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>{{ cfg.app_title }}</title>
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="{{ cfg.brand_accent or '#2f81f7' }}">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="{{ cfg.app_title }}">
+  <link rel="icon" href="/static/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   {% if cfg.brand_accent %}<style>:root{ --accent: {{ cfg.brand_accent }}; }</style>{% endif %}
 </head>
 <body>
@@ -39,5 +47,6 @@
     {{ cfg.app_title }} <span class="muted">v{{ version }}</span>
   </footer>
   <script src="/static/app.js"></script>
+  <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}</script>
 </body>
 </html>
