@@ -40,6 +40,7 @@ _ADDED_COLUMNS = {
         "unit_price": "NUMERIC DEFAULT 0",
         "description": "TEXT DEFAULT ''",
         "icon": "TEXT DEFAULT ''",
+        "image": "TEXT DEFAULT ''",
     },
     "categories": {
         "description": "TEXT DEFAULT ''",

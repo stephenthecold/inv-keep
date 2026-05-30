@@ -42,7 +42,8 @@ class Part(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     description = Column(Text, default="")
-    icon = Column(String, default="")  # emoji / short text for quick identification
+    icon = Column(String, default="")   # emoji / short text for quick identification
+    image = Column(String, default="")  # optional uploaded photo path (/uploads/items/..)
     barcode = Column(String, unique=True, nullable=False, index=True)
     # "bulk"  -> quantity-tracked SKU, one barcode shared by many identical items
     # "unique"-> a single physical item with its own barcode

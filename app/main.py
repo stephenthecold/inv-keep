@@ -31,7 +31,37 @@ ensure_columns()
 
 # Uploaded brand assets live alongside the database (under the mounted ./data volume).
 UPLOAD_DIR = os.path.join("data", "uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+ITEM_IMG_DIR = os.path.join(UPLOAD_DIR, "items")
+os.makedirs(ITEM_IMG_DIR, exist_ok=True)
+
+# Top ~20 currencies for the Settings dropdown: (code, symbol, name).
+CURRENCIES = [
+    ("USD", "$", "US Dollar"), ("EUR", "€", "Euro"), ("GBP", "£", "British Pound"),
+    ("JPY", "¥", "Japanese Yen"), ("CNY", "¥", "Chinese Yuan"), ("INR", "₹", "Indian Rupee"),
+    ("AUD", "A$", "Australian Dollar"), ("CAD", "C$", "Canadian Dollar"), ("CHF", "Fr", "Swiss Franc"),
+    ("HKD", "HK$", "Hong Kong Dollar"), ("SGD", "S$", "Singapore Dollar"), ("SEK", "kr", "Swedish Krona"),
+    ("KRW", "₩", "South Korean Won"), ("NZD", "NZ$", "New Zealand Dollar"), ("MXN", "MX$", "Mexican Peso"),
+    ("BRL", "R$", "Brazilian Real"), ("ZAR", "R", "South African Rand"), ("RUB", "₽", "Russian Ruble"),
+    ("AED", "د.إ", "UAE Dirham"), ("PLN", "zł", "Polish Zloty"),
+]
+
+_IMG_EXT = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
+
+
+async def _save_item_image(image, part_id):
+    """Save an uploaded item photo, return its served path or None."""
+    if not image or not getattr(image, "filename", ""):
+        return None
+    ext = _IMG_EXT.get(image.content_type)
+    if not ext:
+        return None
+    data = await image.read()
+    if not data or len(data) > 4 * 1024 * 1024:
+        return None
+    fname = f"{part_id}{ext}"
+    with open(os.path.join(ITEM_IMG_DIR, fname), "wb") as fh:
+        fh.write(data)
+    return f"/uploads/items/{fname}?v={secrets.token_hex(4)}"
 
 app = FastAPI(title=settings.app_title)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -343,6 +373,7 @@ def api_checkout(payload: CheckoutIn, request: Request, db: Session = Depends(ge
             "remaining": part.quantity_on_hand,
             "client": client.name,
             "job": job.name if job else "",
+            "image": part.image or "",
         },
     }
 
@@ -366,6 +397,7 @@ def api_search(q: str = "", db: Session = Depends(get_db)):
                 "id": p.id,
                 "name": p.name,
                 "icon": p.icon or "",
+                "image": p.image or "",
                 "description": p.description or "",
                 "barcode": p.barcode,
                 "type": p.type,
@@ -409,7 +441,7 @@ def parts_page(request: Request, db: Session = Depends(get_db)):
 
 
 @app.post("/parts/add")
-def parts_add(
+async def parts_add(
     request: Request,
     name: str = Form(...),
     barcode: str = Form(""),
@@ -421,6 +453,7 @@ def parts_add(
     quantity_on_hand: int = Form(0),
     category_id: str = Form(""),
     low_stock_threshold: str = Form(""),
+    image: UploadFile = File(None),
     db: Session = Depends(get_db),
 ):
     barcode = barcode.strip()
@@ -452,6 +485,9 @@ def parts_add(
         part.barcode_generated = True
         generated = True
 
+    img_path = await _save_item_image(image, part.id)
+    if img_path:
+        part.image = img_path
     audit.record(db, current_user(request), "part.create", "part", part.id, f"Created {part.name} ({part.barcode})")
     db.commit()
     if generated:
@@ -460,7 +496,7 @@ def parts_add(
 
 
 @app.post("/parts/{part_id}/edit")
-def parts_edit(
+async def parts_edit(
     part_id: int,
     request: Request,
     name: str = Form(...),
@@ -471,6 +507,8 @@ def parts_edit(
     category_id: str = Form(""),
     low_stock_threshold: str = Form(""),
     active: str = Form(""),
+    image: UploadFile = File(None),
+    remove_image: str = Form(""),
     db: Session = Depends(get_db),
 ):
     part = db.get(Part, part_id)
@@ -483,6 +521,11 @@ def parts_edit(
         part.category_id = int(category_id) if category_id else None
         part.low_stock_threshold = int(low_stock_threshold) if low_stock_threshold.strip() else None
         part.active = active == "on"
+        if remove_image == "on":
+            part.image = ""
+        img_path = await _save_item_image(image, part.id)
+        if img_path:
+            part.image = img_path
         audit.record(db, current_user(request), "part.edit", "part", part.id, f"Edited {part.name}")
         db.commit()
     return redirect("/parts", "Part saved.")
@@ -786,7 +829,8 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         "settings.html",
         ctx(request, db, providers=emailer.PROVIDERS, this_month=datetime.utcnow().strftime("%Y-%m"),
-            disable_auth=settings.disable_auth, size_groups=labels.grouped_sizes()),
+            disable_auth=settings.disable_auth, size_groups=labels.grouped_sizes(),
+            currencies=CURRENCIES, label_sizes=labels.LABEL_SIZES),
     )
 
 

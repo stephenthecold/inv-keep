@@ -29,6 +29,24 @@ function money(n) {
 // ---- modal helpers (used by list pages) ----
 function openModal(id) { const d = document.getElementById(id); if (d && d.showModal) d.showModal(); }
 
+// ---- account dropdown menu (top-right) ----
+(function () {
+  const btn = document.getElementById("account-btn");
+  const menu = document.getElementById("account-menu");
+  if (!btn || !menu) return;
+  const close = () => { menu.hidden = true; btn.setAttribute("aria-expanded", "false"); };
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const willOpen = menu.hidden;
+    menu.hidden = !willOpen;
+    btn.setAttribute("aria-expanded", String(willOpen));
+  });
+  document.addEventListener("click", (e) => {
+    if (!menu.hidden && !menu.contains(e.target) && e.target !== btn) close();
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+})();
+
 // ---- icon dropdown: selecting an emoji fills the paired text input ----
 document.addEventListener("change", (e) => {
   const sel = e.target.closest(".icon-select");
@@ -66,6 +84,15 @@ document.addEventListener("click", (e) => {
   document.getElementById("ep-meta").textContent =
     "Barcode " + (d.barcode || "") + " · " + (d.type || "") + " · qty changes via Restock";
   setIconField(document.getElementById("edit-part"), d.icon || "");
+  const cur = document.getElementById("ep-image-current");
+  if (cur) {
+    if (d.image) { cur.src = d.image; cur.style.display = ""; }
+    else { cur.removeAttribute("src"); cur.style.display = "none"; }
+  }
+  const rm = document.getElementById("ep-remove");
+  if (rm) rm.checked = false;
+  const fileInput = document.querySelector("#edit-part input[type=file]");
+  if (fileInput) fileInput.value = "";
   openModal("edit-part");
 });
 
@@ -120,7 +147,9 @@ if (scan) {
     suggest.innerHTML = "";
     results.forEach((p) => {
       const row = document.createElement("div");
-      const ic = p.icon ? `<span class="sg-icon">${p.icon}</span>` : "";
+      const ic = p.image
+        ? `<img class="sg-thumb" src="${p.image}" alt="">`
+        : (p.icon ? `<span class="sg-icon">${p.icon}</span>` : "");
       row.innerHTML = `${ic}<b>${p.name}</b> <span class="muted">· ${p.barcode} · on hand ${p.qty} · ${money(p.unit_price)}</span>`;
       row.onclick = () => { hideSuggest(); openCharge(p); };
       suggest.appendChild(row);
@@ -150,7 +179,14 @@ if (scan) {
   // -- charge panel --
   function openCharge(part) {
     currentPart = part;
-    document.getElementById("cp-icon").textContent = part.icon || "";
+    const cpImg = document.getElementById("cp-image");
+    if (part.image) {
+      cpImg.src = part.image; cpImg.style.display = "";
+      document.getElementById("cp-icon").textContent = "";
+    } else {
+      cpImg.style.display = "none";
+      document.getElementById("cp-icon").textContent = part.icon || "";
+    }
     document.getElementById("cp-name").textContent = part.name;
     document.getElementById("cp-desc").textContent = part.description || "";
     document.getElementById("cp-barcode").textContent = part.barcode;

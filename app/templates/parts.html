@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% set ICONS = [('🔌','Plug / cable'),('🔋','Battery'),('🧰','Toolbox'),('🖥️','Computer'),('💾','Drive'),('📡','Antenna'),('🛜','Wi-Fi'),('🔧','Wrench'),('🔩','Bolt / fastener'),('💡','Bulb'),('🔦','Flashlight'),('📦','Box'),('🪛','Screwdriver'),('🧲','Magnet'),('🔗','Connector'),('📶','Signal'),('🖨️','Printer'),('⌨️','Keyboard'),('🖱️','Mouse'),('📱','Phone')] %}
+{% set ICONS = [('🌐','Network / Ethernet cable'),('🔌','Power cord / plug'),('🔗','Connector / coupler'),('🔋','Battery'),('🧰','Toolbox'),('🖥️','Computer'),('💾','Drive'),('📡','Antenna'),('🛜','Wi-Fi'),('🔧','Wrench'),('🔩','Bolt / fastener'),('💡','Bulb'),('🔦','Flashlight'),('📦','Box'),('🪛','Screwdriver'),('🧲','Magnet'),('📶','Signal'),('🖨️','Printer'),('⌨️','Keyboard'),('🖱️','Mouse'),('📱','Phone')] %}
 {% macro icon_field(current='') %}
 <label>Icon
   <span class="icon-field">
@@ -29,9 +29,10 @@
 <!-- Add item -->
 <dialog id="add-part" class="modal">
   <h2>Add item</h2>
-  <form method="post" action="/parts/add" class="grid-form">
+  <form method="post" action="/parts/add" class="grid-form" enctype="multipart/form-data">
     <label>Name <input name="name" required></label>
     {{ icon_field() }}
+    <label>Photo (optional) <input type="file" name="image" accept="image/png,image/jpeg,image/webp,image/gif"></label>
     <label class="wide">Description <textarea name="description" rows="2" placeholder="optional"></textarea></label>
     <label>Barcode <input name="barcode" value="{{ prefill }}" placeholder="leave blank to auto-generate"></label>
     <label>Type
@@ -53,11 +54,18 @@
 <!-- Edit item (shared, populated by JS) -->
 <dialog id="edit-part" class="modal">
   <h2>Edit item</h2>
-  <form id="edit-part-form" method="post" action="">
+  <form id="edit-part-form" method="post" action="" enctype="multipart/form-data">
     <div class="muted" id="ep-meta" style="margin-bottom:.5rem"></div>
     <div class="grid-form">
       <label>Name <input name="name" id="ep-name" required></label>
       {{ icon_field() }}
+      <label>Photo
+        <span class="icon-field">
+          <img id="ep-image-current" class="item-thumb" alt="" style="display:none">
+          <input type="file" name="image" accept="image/png,image/jpeg,image/webp,image/gif">
+        </span>
+      </label>
+      <label class="check">Remove photo <input type="checkbox" name="remove_image" id="ep-remove"></label>
       <label class="wide">Description <textarea name="description" id="ep-description" rows="2"></textarea></label>
       <label>Category <select name="category_id" id="ep-category">{{ category_options() }}</select></label>
       <label>Our cost <input name="unit_cost" id="ep-cost" type="number" step="0.01"></label>
@@ -75,12 +83,12 @@
 <div class="table-scroll">
 <table class="lines">
   <thead>
-    <tr><th></th><th>Name</th><th>Barcode</th><th>Category</th><th class="num">On hand</th><th class="num">Our cost</th><th class="num">Client price</th><th></th><th>Restock</th></tr>
+    <tr><th></th><th>Name</th><th>Barcode</th><th>Category</th><th class="num">On hand</th><th class="num">Our cost</th><th class="num">Client price</th><th class="actions-col">Actions</th></tr>
   </thead>
   <tbody>
     {% for p in parts %}
     <tr {% if not p.active %}class="voided"{% endif %}>
-      <td class="item-icon">{{ p.icon }}</td>
+      <td class="item-icon">{% if p.image %}<img class="item-thumb" src="{{ p.image }}" alt="">{% else %}{{ p.icon }}{% endif %}</td>
       <td>
         <div class="item-name">{{ p.name }}{% if not p.active %} <span class="tag muted">inactive</span>{% endif %}</div>
         {% if p.description %}<div class="muted item-desc">{{ p.description }}</div>{% endif %}
@@ -90,22 +98,22 @@
       <td class="num {% if p.quantity_on_hand <= 0 %}low{% endif %}">{{ p.quantity_on_hand }}</td>
       <td class="num">{{ cfg.currency }}{{ '%.2f'|format(p.unit_cost) }}</td>
       <td class="num">{{ cfg.currency }}{{ '%.2f'|format(p.unit_price) }}</td>
-      <td>
-        <button type="button" class="edit-part"
-          data-id="{{ p.id }}" data-name="{{ p.name }}" data-icon="{{ p.icon }}"
-          data-description="{{ p.description }}" data-category="{{ p.category_id if p.category_id is not none else '' }}"
-          data-cost="{{ '%.2f'|format(p.unit_cost) }}" data-price="{{ '%.2f'|format(p.unit_price) }}"
-          data-threshold="{{ p.low_stock_threshold if p.low_stock_threshold is not none else '' }}"
-          data-active="{{ '1' if p.active else '0' }}" data-barcode="{{ p.barcode }}" data-type="{{ p.type }}">Edit</button>
-      </td>
-      <td>
-        <form method="post" action="/parts/{{ p.id }}/restock" class="inline">
-          <input name="amount" type="number" value="10" style="width:4rem"><button type="submit">+</button>
-        </form>
+      <td class="actions-col">
+        <div class="item-actions">
+          <button type="button" class="edit-part"
+            data-id="{{ p.id }}" data-name="{{ p.name }}" data-icon="{{ p.icon }}" data-image="{{ p.image }}"
+            data-description="{{ p.description }}" data-category="{{ p.category_id if p.category_id is not none else '' }}"
+            data-cost="{{ '%.2f'|format(p.unit_cost) }}" data-price="{{ '%.2f'|format(p.unit_price) }}"
+            data-threshold="{{ p.low_stock_threshold if p.low_stock_threshold is not none else '' }}"
+            data-active="{{ '1' if p.active else '0' }}" data-barcode="{{ p.barcode }}" data-type="{{ p.type }}">Edit</button>
+          <form method="post" action="/parts/{{ p.id }}/restock" class="restock-form" title="Add stock">
+            <input name="amount" type="number" value="10" aria-label="restock amount"><button type="submit">+ Stock</button>
+          </form>
+        </div>
       </td>
     </tr>
     {% else %}
-    <tr class="empty"><td colspan="9">No items yet — add one above.</td></tr>
+    <tr class="empty"><td colspan="8">No items yet — add one above.</td></tr>
     {% endfor %}
   </tbody>
 </table>

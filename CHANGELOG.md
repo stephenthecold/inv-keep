@@ -3,6 +3,22 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.5.0] — 2026-05-30
+- **Account menu** — History, Report, Audit and Settings moved into a clickable
+  account dropdown (top-right), decluttering the main nav (Scan / Items /
+  Categories / Clients / Jobs).
+- **Currency picker** — currency is now a dropdown of the top ~20 world currencies
+  (custom values still respected).
+- **Item photos** — upload a custom photo per item; it shows in the items table,
+  search results and the charge panel (falls back to the emoji icon).
+- **Separate cable icons** — distinct “Network / Ethernet cable” and “Power cord /
+  plug” options in the icon dropdown.
+- **Tidier restock** — Edit + Restock grouped in a stable Actions cell that no
+  longer shifts around as the window resizes.
+- **More label brands + size-aware preview** — added **Epson** (ColorWorks /
+  LabelWorks) and **Brady** (M21 / self-laminating) presets; the label customizer
+  preview now resizes to the selected label size.
+
 ## [1.4.0] — 2026-05-30
 - **Fix: stale assets** — the service worker is now network-first (cache only as an
   offline fallback) and CSS/JS are version-busted, so updates apply immediately.

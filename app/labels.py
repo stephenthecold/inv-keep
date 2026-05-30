@@ -37,6 +37,21 @@ LABEL_SIZES = {
     # Rollo
     "rollo-4x6":    {"brand": "Rollo", "label": "Rollo 4×6 in (102×152 mm)",        "w": 102, "h": 152},
     "asset-57x32":  {"brand": "Rollo", "label": "Rollo 2.25×1.25 in (57×32 mm)",    "w": 57,  "h": 32},
+
+    # Epson (ColorWorks label + LabelWorks tape)
+    "epson-cw-4x6":  {"brand": "Epson", "label": "Epson ColorWorks 4×6 in (102×152 mm)", "w": 102, "h": 152},
+    "epson-cw-225":  {"brand": "Epson", "label": "Epson ColorWorks 2.25×1.25 in (57×32 mm)", "w": 57, "h": 32},
+    "epson-cw-2x1":  {"brand": "Epson", "label": "Epson ColorWorks 2×1 in (51×25 mm)", "w": 51, "h": 25},
+    "epson-lw-24":   {"brand": "Epson", "label": "Epson LabelWorks 24 mm tape", "w": 70, "h": 24},
+    "epson-lw-18":   {"brand": "Epson", "label": "Epson LabelWorks 18 mm tape", "w": 60, "h": 18},
+    "epson-lw-12":   {"brand": "Epson", "label": "Epson LabelWorks 12 mm tape", "w": 50, "h": 12},
+
+    # Brady (M-series tape + self-laminating wire/cable labels)
+    "brady-m21-19":  {"brand": "Brady", "label": "Brady M21 19 mm (3/4 in) tape", "w": 60, "h": 19},
+    "brady-m21-12":  {"brand": "Brady", "label": "Brady M21 12.7 mm (1/2 in) tape", "w": 50, "h": 13},
+    "brady-25x13":   {"brand": "Brady", "label": "Brady 1×0.5 in label (25×13 mm)", "w": 25, "h": 13},
+    "brady-selflam": {"brand": "Brady", "label": "Brady self-laminating wire 25×38 mm", "w": 25, "h": 38},
+    "brady-51x25":   {"brand": "Brady", "label": "Brady 2×1 in label (51×25 mm)", "w": 51, "h": 25},
 }
 
 

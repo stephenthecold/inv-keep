@@ -28,14 +28,19 @@
       <a href="/categories">Categories</a>
       <a href="/clients">Clients</a>
       <a href="/jobs">Jobs</a>
-      <a href="/transactions">History</a>
-      <a href="/report">Report</a>
-      <a href="/audit">Audit</a>
-      <a href="/settings">Settings</a>
     </nav>
-    <div class="user">
-      {% if user and user.username %}<span>{{ user.username }}</span>{% endif %}
-      {% if cfg.auth_mode == 'oidc' %}<a class="logout" href="/logout">Logout</a>{% endif %}
+    <div class="account">
+      <button type="button" class="account-btn" id="account-btn" aria-haspopup="true" aria-expanded="false">
+        <span class="account-name">{{ user.username or 'Menu' }}</span>
+        <span class="caret">▾</span>
+      </button>
+      <div class="account-menu" id="account-menu" hidden>
+        <a href="/transactions">History</a>
+        <a href="/report">Report</a>
+        <a href="/audit">Audit</a>
+        <a href="/settings">Settings</a>
+        {% if cfg.auth_mode == 'oidc' %}<a class="logout" href="/logout">Log out</a>{% endif %}
+      </div>
     </div>
   </header>
   <main>

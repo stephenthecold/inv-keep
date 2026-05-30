@@ -9,7 +9,14 @@
   <h2>General</h2>
   <form method="post" action="/settings/general" class="grid-form">
     <label>App title <input name="app_title" value="{{ cfg.app_title }}"></label>
-    <label>Currency symbol <input name="currency" value="{{ cfg.currency }}" style="width:5rem"></label>
+    <label>Currency
+      <select name="currency">
+        {% for code, sym, nm in currencies %}
+        <option value="{{ sym }}" {% if cfg.currency == sym %}selected{% endif %}>{{ sym }} — {{ nm }} ({{ code }})</option>
+        {% endfor %}
+        {% if cfg.currency not in (currencies | map(attribute=1) | list) %}<option value="{{ cfg.currency }}" selected>{{ cfg.currency }} — custom</option>{% endif %}
+      </select>
+    </label>
     <label>Default low-stock threshold <input name="low_stock_threshold" type="number" value="{{ cfg.low_stock_threshold }}"></label>
     <button type="submit">Save general</button>
   </form>
@@ -75,6 +82,15 @@
     <button type="submit">Save label content</button>
   </form>
   <div class="label-preview-wrap">
+    <label>Preview at label size
+      <select id="lp-size">
+        {% for brand, items in size_groups %}
+        <optgroup label="{{ brand }}">
+          {% for key, s in items %}<option value="{{ key }}" {% if key == cfg.label_size %}selected{% endif %}>{{ s.label }}</option>{% endfor %}
+        </optgroup>
+        {% endfor %}
+      </select>
+    </label>
     <div class="muted">Live preview (sample item):</div>
     <div id="label-preview" class="label-preview"></div>
   </div>
@@ -82,16 +98,30 @@
   (function(){
     var f = document.getElementById('label-content-form');
     var box = document.getElementById('label-preview');
+    var sizeSel = document.getElementById('lp-size');
     if(!f||!box) return;
     var cur = {{ cfg.currency | tojson }};
+    var SIZES = {{ label_sizes | tojson }};
     function on(n){ var el=f.querySelector('[name="'+n+'"]'); return el && el.checked; }
     function val(n){ var el=f.querySelector('[name="'+n+'"]'); return el ? el.value : ''; }
     function esc(s){ return (s||'').replace(/[&<>]/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
+    function applySize(){
+      var s = SIZES[sizeSel ? sizeSel.value : ''] || {w:0,h:0};
+      if(s.w && s.h){
+        var scale = Math.min(280/s.w, 360/s.h, 6);
+        box.style.width = Math.round(s.w*scale)+'px';
+        box.style.height = Math.round(s.h*scale)+'px';
+        box.style.overflow = 'hidden';
+        box.style.justifyContent = 'center';
+      } else {
+        box.style.width=''; box.style.height=''; box.style.overflow=''; box.style.minWidth='180px';
+      }
+    }
     function render(){
       var bars=''; for(var i=0;i<18;i++) bars+='<i></i>';
       var h='';
       if(val('label_company_text')) h+='<div class="lp-company">'+esc(val('label_company_text'))+'</div>';
-      if(on('label_show_name')||on('label_show_icon')) h+='<div class="lp-name">'+(on('label_show_icon')?'🔌 ':'')+(on('label_show_name')?'Sample Item':'')+'</div>';
+      if(on('label_show_name')||on('label_show_icon')) h+='<div class="lp-name">'+(on('label_show_icon')?'🌐 ':'')+(on('label_show_name')?'Sample Item':'')+'</div>';
       if(on('label_show_category')) h+='<div class="lp-sub">Sample Category</div>';
       if(on('label_show_description')) h+='<div class="lp-sub">Sample description</div>';
       h+='<div class="lp-bars">'+bars+'</div>';
@@ -100,7 +130,9 @@
       if(val('label_extra_text')) h+='<div class="lp-sub">'+esc(val('label_extra_text'))+'</div>';
       box.innerHTML=h;
     }
-    f.addEventListener('input', render); f.addEventListener('change', render); render();
+    f.addEventListener('input', render); f.addEventListener('change', render);
+    if(sizeSel) sizeSel.addEventListener('change', applySize);
+    applySize(); render();
   })();
   </script>
 </section>
