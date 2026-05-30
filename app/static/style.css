@@ -184,7 +184,10 @@ dialog.modal h2 { margin-top: 0; }
 /* label printing */
 .label-sheet { display: flex; flex-wrap: wrap; gap: .4rem; }
 .label { border: 1px solid var(--line); border-radius: 6px; padding: .4rem .6rem; text-align: center; background: #fff; color: #000; }
+.label-company { font-size: .7rem; font-weight: 700; letter-spacing: .02em; }
 .label-name { font-size: .8rem; font-weight: 600; margin-bottom: .2rem; }
+.label-sub { font-size: .65rem; opacity: .85; }
+.label-price { font-size: .8rem; font-weight: 700; }
 .label-barcode svg { max-width: 100%; height: auto; }
 @media print {
   header, .no-print, .flash { display: none !important; }

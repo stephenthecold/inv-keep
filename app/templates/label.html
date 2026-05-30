@@ -44,8 +44,15 @@
 <div class="label-sheet {% if page_w and page_h %}label-sized{% endif %}">
   {% for part, svg in parts_to_print %}
   <div class="label">
-    <div class="label-name">{% if part.icon %}{{ part.icon }} {% endif %}{{ part.name }}</div>
+    {% if content.company %}<div class="label-company">{{ content.company }}</div>{% endif %}
+    {% if content.name or content.icon %}
+    <div class="label-name">{% if content.icon and part.icon %}{{ part.icon }} {% endif %}{% if content.name %}{{ part.name }}{% endif %}</div>
+    {% endif %}
+    {% if content.category and part.category %}<div class="label-sub">{{ part.category.name }}</div>{% endif %}
+    {% if content.description and part.description %}<div class="label-sub">{{ part.description }}</div>{% endif %}
     <div class="label-barcode">{{ svg | safe }}</div>
+    {% if content.price %}<div class="label-price">{{ currency }}{{ '%.2f'|format(part.unit_price) }}</div>{% endif %}
+    {% if content.extra %}<div class="label-sub">{{ content.extra }}</div>{% endif %}
   </div>
   {% else %}
   <p class="muted no-print">Nothing to print. Add an item with a blank barcode to auto-generate one.</p>

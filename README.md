@@ -140,9 +140,10 @@ uvicorn app.main:app --reload
 ```
 
 ## Documentation
+- [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md) — one-page architecture & decisions digest
 - [CONFIGURATION.md](CONFIGURATION.md) — every environment variable and in-app setting
 - [CHANGELOG.md](CHANGELOG.md) — versioned list of changes
-- [docs/DEPLOY.md](docs/DEPLOY.md) — hostname, ports, SSL, reverse proxies, installer
+- [docs/DEPLOY.md](docs/DEPLOY.md) — hostname, ports, SSL (Let's Encrypt / own cert / external), installer
 - [docs/ANDROID.md](docs/ANDROID.md) — Android AIO scanners / PWA / APK
 - [docs/PRINTING.md](docs/PRINTING.md) — Brother, DYMO, Zebra & Rollo thermal printing
 

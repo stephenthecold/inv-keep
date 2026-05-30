@@ -3,6 +3,19 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.3.0] — 2026-05-30
+- **Bring-your-own-cert / external proxy** — TLS now has three modes: bundled Caddy
+  with Let's Encrypt, bundled Caddy with **your own certificate** (`Caddyfile.custom`
+  + `certs/`), or **no bundled proxy** (use your own nginx/Traefik). The installer
+  asks which. See [docs/DEPLOY.md](docs/DEPLOY.md).
+- **Customizable label content** — Settings → Printing lets you choose what prints on
+  each label (icon, name, barcode digits, price, description, category) plus a
+  **company/header line** and **extra footer line**.
+- **Full APK framework + PWA** — completed `android/twa-manifest.json` (versioned,
+  shortcuts, splash, fingerprint flow) and `android/README.md`; PWA continues to work
+  with no build.
+- **docs/PROJECT_STATE.md** — consolidated handoff/context digest of the whole project.
+
 ## [1.2.0] — 2026-05-30
 - **Top-4 label-brand presets** — label-size dropdown is now grouped by brand:
   **Brother** (QL + P-touch), **DYMO** (LabelWriter + LabelManager), **Zebra**

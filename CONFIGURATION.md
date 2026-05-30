@@ -17,6 +17,10 @@ Inv-Keep is configured in two layers:
 | `DATABASE_URL` | `sqlite:////code/data/app.db` | SQLAlchemy URL. SQLite is the default; the file lives on the mounted `./data` volume. |
 | `SESSION_SECRET` | _(change me)_ | Secret used to sign the login session cookie. Generate with `python -c "import secrets; print(secrets.token_hex(32))"`. |
 | `DISABLE_AUTH` | `false` | **Break-glass.** If `1`/`true`, all authentication is bypassed regardless of UI settings. Use to recover from an OIDC lock-out, then unset. |
+| `HOSTNAME` | `localhost` | Public hostname (used by the SSL proxy and OIDC redirect URLs). |
+| `APP_PORT` | `8000` | Host port for direct access → `http://HOSTNAME:APP_PORT`. |
+| `ACME_EMAIL` | `admin@example.com` | Let's Encrypt contact email when the bundled SSL proxy is enabled. |
+| `CADDY_CONFIG` | `./Caddyfile` | Which Caddy config the `ssl` profile mounts: `./Caddyfile` (Let's Encrypt) or `./Caddyfile.custom` (your own cert in `certs/`). |
 | `APP_TITLE` | `Inv-Keep` | Seed only: initial app title (then edit in Settings → General). |
 | `CURRENCY` | `$` | Seed only: initial currency symbol. |
 | `AUTH_MODE` | `none` | Seed only: initial auth mode (`none` / `oidc` / `forward`). |
@@ -41,7 +45,12 @@ Inv-Keep is configured in two layers:
 ### Printing
 | Setting | Default | Notes |
 |---|---|---|
-| `label_size` | `sheet` | Default label preset. Keys: `sheet`, `rollo-4x6`, `asset-57x32`, `50x25`, `ql-62x29`, `ql-62-cont`, `ptouch-24`, `ptouch-18`, `ptouch-12`. See [docs/PRINTING.md](docs/PRINTING.md). |
+| `label_size` | `sheet` | Default label preset, grouped by brand (Brother/DYMO/Zebra/Rollo). See [docs/PRINTING.md](docs/PRINTING.md). |
+| `label_show_icon` / `label_show_name` / `label_show_code_text` | `1` / `1` / `1` | Toggle the item icon, name, and human-readable barcode digits on each label. |
+| `label_show_price` / `label_show_description` / `label_show_category` | `0` | Optionally add the client price, description, or category to each label. |
+| `label_company_text` | _(empty)_ | Header line printed on every label (e.g. company name). |
+| `label_extra_text` | _(empty)_ | Footer line printed on every label. |
+| `android_asset_links` | _(empty)_ | Digital Asset Links JSON served at `/.well-known/assetlinks.json` for the TWA APK. |
 
 ### White-label / Branding
 | Setting | Default | Notes |

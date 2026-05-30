@@ -2,6 +2,10 @@ data/*.db
 data/uploads/
 .venv/
 .env
+# Custom TLS certs (keep the certs/ folder + its README, ignore the key material)
+certs/*.pem
+certs/*.key
+certs/*.crt
 __pycache__/
 *.pyc
 # Android TWA build artifacts (Bubblewrap)
@@ -11,3 +15,5 @@ android/*.aab
 android/app/
 android/.gradle/
 android/build/
+.DS_Store
+**/.DS_Store

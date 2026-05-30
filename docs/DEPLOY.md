@@ -39,6 +39,16 @@ The `caddy` service obtains and renews a **Let's Encrypt** certificate for
 The app runs with `--proxy-headers`, so it trusts Caddy's `X-Forwarded-Proto/Host`
 and builds correct `https://` URLs (OIDC callback, PWA, etc.).
 
+## Bring your own certificate (bundled Caddy, no Let's Encrypt)
+Use the bundled proxy but with **your own** cert/key:
+
+1. Put PEM files at `certs/cert.pem` (full chain) and `certs/key.pem`.
+2. In `.env` set `CADDY_CONFIG=./Caddyfile.custom` and `HOSTNAME=your.domain`.
+3. `docker compose --profile ssl up -d --build`
+
+The `certs/*.pem` files are git-ignored. The installer's TLS option **2) My own
+cert** sets this up for you.
+
 ## Behind your own reverse proxy (nginx / Traefik / Authentik outpost)
 Skip the `ssl` profile, expose `APP_PORT`, and proxy to it. Forward
 `X-Forwarded-Proto: https` and `X-Forwarded-Host`. If you use Authentik's proxy

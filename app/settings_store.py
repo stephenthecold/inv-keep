@@ -16,6 +16,15 @@ DEFAULTS = {
     "low_stock_threshold": "5",
     # Default label size preset key (see app/labels.py LABEL_SIZES)
     "label_size": "sheet",
+    # Label content toggles + custom text (what prints on each label)
+    "label_show_icon": "1",
+    "label_show_name": "1",
+    "label_show_code_text": "1",   # human-readable digits under the barcode
+    "label_show_price": "0",
+    "label_show_description": "0",
+    "label_show_category": "0",
+    "label_company_text": "",      # printed at the top of every label (e.g. company name)
+    "label_extra_text": "",        # printed at the bottom of every label
     # Android TWA Digital Asset Links JSON (served at /.well-known/assetlinks.json)
     "android_asset_links": "",
     # White-label branding

@@ -58,8 +58,21 @@
     </label>
     <button type="submit">Save printing</button>
   </form>
-  <small>Used as the default on the label pages. Covers Rollo (4×6, 2.25×1.25 in) and Brother
-  (P-touch 12/18/24 mm tapes, QL 62×29 mm / continuous). See docs/PRINTING.md.</small>
+  <small>Used as the default on the label pages. Grouped by brand: Brother, DYMO, Zebra, Rollo.
+  See docs/PRINTING.md.</small>
+
+  <h3>What prints on each label</h3>
+  <form method="post" action="/settings/label-content" class="grid-form">
+    <label class="check">Icon <input type="checkbox" name="label_show_icon" {% if cfg.label_show_icon == '1' %}checked{% endif %}></label>
+    <label class="check">Name <input type="checkbox" name="label_show_name" {% if cfg.label_show_name == '1' %}checked{% endif %}></label>
+    <label class="check">Barcode digits <input type="checkbox" name="label_show_code_text" {% if cfg.label_show_code_text == '1' %}checked{% endif %}></label>
+    <label class="check">Price <input type="checkbox" name="label_show_price" {% if cfg.label_show_price == '1' %}checked{% endif %}></label>
+    <label class="check">Description <input type="checkbox" name="label_show_description" {% if cfg.label_show_description == '1' %}checked{% endif %}></label>
+    <label class="check">Category <input type="checkbox" name="label_show_category" {% if cfg.label_show_category == '1' %}checked{% endif %}></label>
+    <label class="wide">Company / header line (printed on every label) <input name="label_company_text" value="{{ cfg.label_company_text }}" placeholder="e.g. Acme IT Services"></label>
+    <label class="wide">Extra footer line <input name="label_extra_text" value="{{ cfg.label_extra_text }}" placeholder="e.g. Property of Acme — return if found"></label>
+    <button type="submit">Save label content</button>
+  </form>
 </section>
 
 <!-- ---------------- Android (TWA) ---------------- -->

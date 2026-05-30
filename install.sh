@@ -67,18 +67,37 @@ say "${BOLD}1) Hostname & access${RESET}"
 HOSTNAME_IN="$(ask "Public hostname (domain or IP)" "localhost")"
 APP_PORT="$(ask "Host port for direct access" "8000")"
 
-USE_SSL=1
-if yesno "Enable automatic HTTPS (Let's Encrypt via Caddy)?" "n"; then USE_SSL=1; else USE_SSL=0; fi
-ACME_EMAIL="admin@example.com"
-if [ "$USE_SSL" = "1" ]; then
-  case "$HOSTNAME_IN" in
-    localhost|127.0.0.1|"") warn "SSL needs a real public domain with DNS + ports 80/443. 'localhost' won't get a cert.";;
-  esac
-  ACME_EMAIL="$(ask "Email for Let's Encrypt notices" "admin@${HOSTNAME_IN}")"
-  SCHEME="https"; BASE_URL="https://${HOSTNAME_IN}"
-else
-  SCHEME="http"; BASE_URL="http://${HOSTNAME_IN}:${APP_PORT}"
-fi
+say ""
+say "HTTPS / TLS — choose how certificates are handled:"
+say "  ${DIM}1) Let's Encrypt   — automatic certs via the bundled Caddy proxy${RESET}"
+say "  ${DIM}2) My own cert     — bundled Caddy using your cert files (certs/cert.pem + key.pem)${RESET}"
+say "  ${DIM}3) Separate proxy  — no bundled proxy; your own nginx/Traefik/etc. handles TLS${RESET}"
+TLS_CHOICE="$(ask "Choose 1/2/3" "3")"
+USE_SSL=0; CADDY_CONFIG="./Caddyfile"; ACME_EMAIL="admin@${HOSTNAME_IN}"
+case "$TLS_CHOICE" in
+  1)
+    USE_SSL=1; CADDY_CONFIG="./Caddyfile"
+    case "$HOSTNAME_IN" in
+      localhost|127.0.0.1|"") warn "Let's Encrypt needs a real public domain with DNS + ports 80/443. 'localhost' won't get a cert.";;
+    esac
+    ACME_EMAIL="$(ask "Email for Let's Encrypt notices" "admin@${HOSTNAME_IN}")"
+    BASE_URL="https://${HOSTNAME_IN}"
+    ;;
+  2)
+    USE_SSL=1; CADDY_CONFIG="./Caddyfile.custom"
+    mkdir -p certs
+    warn "Place your certificate at certs/cert.pem and private key at certs/key.pem (PEM format) before/after this."
+    BASE_URL="https://${HOSTNAME_IN}"
+    ;;
+  *)
+    USE_SSL=0
+    if yesno "Will your separate reverse proxy serve HTTPS for ${HOSTNAME_IN}?" "y"; then
+      BASE_URL="https://${HOSTNAME_IN}"
+    else
+      BASE_URL="http://${HOSTNAME_IN}:${APP_PORT}"
+    fi
+    ;;
+esac
 
 say ""
 say "${BOLD}2) Branding${RESET}"
@@ -110,6 +129,7 @@ say "${BOLD}Writing .env …${RESET}"
   echo "HOSTNAME=${HOSTNAME_IN}"
   echo "APP_PORT=${APP_PORT}"
   echo "ACME_EMAIL=${ACME_EMAIL}"
+  echo "CADDY_CONFIG=${CADDY_CONFIG}"
   echo ""
   echo "APP_TITLE=${APP_TITLE}"
   echo "CURRENCY=${CURRENCY}"

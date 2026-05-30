@@ -1,0 +1,9 @@
+# Inv-Keep behind Caddy using YOUR OWN certificate (no Let's Encrypt).
+# Place your files at ./certs/cert.pem and ./certs/key.pem (PEM format).
+# Select this file by setting CADDY_CONFIG=./Caddyfile.custom in .env, then:
+#   docker compose --profile ssl up -d
+{$HOSTNAME} {
+	encode zstd gzip
+	tls /certs/cert.pem /certs/key.pem
+	reverse_proxy inv-keep:8000
+}

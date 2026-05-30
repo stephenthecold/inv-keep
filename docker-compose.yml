@@ -31,7 +31,10 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # CADDY_CONFIG selects ./Caddyfile (Let's Encrypt, default) or
+      # ./Caddyfile.custom (your own cert at ./certs/cert.pem + ./certs/key.pem).
+      - ${CADDY_CONFIG:-./Caddyfile}:/etc/caddy/Caddyfile:ro
+      - ./certs:/certs:ro
       - caddy_data:/data
       - caddy_config:/config
 

@@ -497,9 +497,20 @@ def parts_restock(part_id: int, request: Request, amount: int = Form(...), db: S
     return redirect("/parts", "Stock updated.")
 
 
-def _label_ctx(request, db, rendered, sheet):
+def _label_ctx(request, db, parts, sheet):
     size_key = request.query_params.get("size") or store.get(db, "label_size") or "sheet"
     preset = labels.size_preset(size_key)
+    show_code = store.get_bool(db, "label_show_code_text")
+    rendered = [(p, labels.render_svg(p.barcode, show_text=show_code)) for p in parts]
+    content = {
+        "icon": store.get_bool(db, "label_show_icon"),
+        "name": store.get_bool(db, "label_show_name"),
+        "price": store.get_bool(db, "label_show_price"),
+        "description": store.get_bool(db, "label_show_description"),
+        "category": store.get_bool(db, "label_show_category"),
+        "company": store.get(db, "label_company_text"),
+        "extra": store.get(db, "label_extra_text"),
+    }
     return dict(
         parts_to_print=rendered,
         sheet=sheet,
@@ -508,6 +519,8 @@ def _label_ctx(request, db, rendered, sheet):
         page_w=preset["w"],
         page_h=preset["h"],
         size_label=preset["label"],
+        content=content,
+        currency=store.get(db, "currency"),
     )
 
 
@@ -516,8 +529,7 @@ def part_label(part_id: int, request: Request, db: Session = Depends(get_db)):
     part = db.get(Part, part_id)
     if not part:
         return redirect("/parts", "Part not found.", ok=False)
-    rendered = [(part, labels.render_svg(part.barcode))]
-    return templates.TemplateResponse("label.html", ctx(request, db, base_path=f"/parts/{part_id}/label", **_label_ctx(request, db, rendered, False)))
+    return templates.TemplateResponse("label.html", ctx(request, db, base_path=f"/parts/{part_id}/label", **_label_ctx(request, db, [part], False)))
 
 
 @app.get("/labels", response_class=HTMLResponse)
@@ -528,8 +540,7 @@ def labels_sheet(request: Request, db: Session = Depends(get_db)):
         .order_by(Part.name)
         .all()
     )
-    rendered = [(p, labels.render_svg(p.barcode)) for p in parts]
-    return templates.TemplateResponse("label.html", ctx(request, db, base_path="/labels", **_label_ctx(request, db, rendered, True)))
+    return templates.TemplateResponse("label.html", ctx(request, db, base_path="/labels", **_label_ctx(request, db, parts, True)))
 
 
 # ============================================================ categories
@@ -800,6 +811,35 @@ def settings_printing(request: Request, label_size: str = Form("sheet"), db: Ses
     audit.record(db, current_user(request), "settings.printing", "settings", None, f"Default label size {label_size}")
     db.commit()
     return redirect("/settings", "Printing settings saved.")
+
+
+@app.post("/settings/label-content")
+def settings_label_content(
+    request: Request,
+    label_show_icon: str = Form(""),
+    label_show_name: str = Form(""),
+    label_show_code_text: str = Form(""),
+    label_show_price: str = Form(""),
+    label_show_description: str = Form(""),
+    label_show_category: str = Form(""),
+    label_company_text: str = Form(""),
+    label_extra_text: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    for field, val in [
+        ("label_show_icon", label_show_icon),
+        ("label_show_name", label_show_name),
+        ("label_show_code_text", label_show_code_text),
+        ("label_show_price", label_show_price),
+        ("label_show_description", label_show_description),
+        ("label_show_category", label_show_category),
+    ]:
+        store.set(db, field, "1" if val == "on" else "0")
+    store.set(db, "label_company_text", label_company_text.strip())
+    store.set(db, "label_extra_text", label_extra_text.strip())
+    audit.record(db, current_user(request), "settings.label_content", "settings", None, "Updated label content")
+    db.commit()
+    return redirect("/settings", "Label content saved.")
 
 
 @app.post("/settings/android")

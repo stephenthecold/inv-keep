@@ -60,7 +60,7 @@ def generate_value(part_id: int) -> str:
     return f"{PREFIX}{part_id:06d}"
 
 
-def render_svg(code: str, *, module_height: float = 12.0, font_size: int = 10) -> str:
+def render_svg(code: str, *, module_height: float = 12.0, font_size: int = 10, show_text: bool = True) -> str:
     """Return an inline SVG string of a Code128 barcode for `code`."""
     writer = SVGWriter()
     options = {
@@ -69,6 +69,7 @@ def render_svg(code: str, *, module_height: float = 12.0, font_size: int = 10) -
         "font_size": font_size,
         "text_distance": 3.0,
         "quiet_zone": 2.0,
+        "write_text": show_text,
     }
     code128 = barcode.get("code128", code, writer=writer)
     buf = BytesIO()
