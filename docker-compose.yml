@@ -5,10 +5,36 @@ services:
     # image: ghcr.io/youruser/inv-keep:latest
     container_name: inv-keep
     restart: unless-stopped
-    ports:
-      - "8000:8000"
     env_file:
       - .env
+    # Direct access on APP_PORT. When using the bundled SSL proxy you can drop the
+    # public mapping (Caddy reaches it over the internal network), but exposing it
+    # is harmless for local/LAN use.
+    ports:
+      - "${APP_PORT:-8000}:8000"
     volumes:
-      # SQLite database persists here. Back this folder up.
+      # SQLite DB + uploaded brand assets persist here. Back this folder up.
       - ./data:/code/data
+
+  # Optional automatic-HTTPS reverse proxy. Enable with:  docker compose --profile ssl up -d
+  # Requires HOSTNAME + ACME_EMAIL in .env, ports 80/443 free, and DNS pointing here.
+  caddy:
+    image: caddy:2
+    container_name: inv-keep-caddy
+    restart: unless-stopped
+    profiles: ["ssl"]
+    depends_on:
+      - inv-keep
+    env_file:
+      - .env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

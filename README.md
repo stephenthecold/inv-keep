@@ -58,18 +58,29 @@ only read once to seed the defaults on a brand-new database.
 - **Monthly report** is emailed automatically on a configurable day of the month (a background
   scheduler checks hourly), or on demand with **Send now**.
 
-## Quick start (Docker Compose)
+## Quick start — interactive installer (recommended)
+
+```bash
+./install.sh
+```
+Asks for **hostname, port, SSL (Let's Encrypt), branding and OIDC**, writes `.env`
+(with a generated `SESSION_SECRET`), and starts the stack — adding the automatic-HTTPS
+proxy if you enable SSL. Use `./install.sh -y` for all-defaults. See [docs/DEPLOY.md](docs/DEPLOY.md).
+
+## Quick start — manual (Docker Compose)
 
 ```bash
 cp .env.example .env
 # Generate a session secret and paste it into SESSION_SECRET:
 python3 -c "import secrets; print(secrets.token_hex(32))"
 
-docker compose up -d --build
+docker compose up -d --build                 # http://HOSTNAME:APP_PORT (default :8000)
+# ...or with automatic HTTPS (needs a real domain + ports 80/443 + ACME_EMAIL):
+docker compose --profile ssl up -d --build   # https://HOSTNAME
 ```
 
-Open http://localhost:8000. It starts with **no login** so you can try it immediately on a
-trusted network. **Set up authentication in the UI before exposing it** (see below).
+It starts with **no login** so you can try it immediately on a trusted network.
+**Set up authentication in the UI before exposing it** (see below).
 
 First steps in the UI (use the **+ Add new …** button in the top-right of each list page):
 1. **Clients** → add the clients you bill. **Jobs** → add jobs (each attached to a client).
@@ -131,8 +142,9 @@ uvicorn app.main:app --reload
 ## Documentation
 - [CONFIGURATION.md](CONFIGURATION.md) — every environment variable and in-app setting
 - [CHANGELOG.md](CHANGELOG.md) — versioned list of changes
+- [docs/DEPLOY.md](docs/DEPLOY.md) — hostname, ports, SSL, reverse proxies, installer
 - [docs/ANDROID.md](docs/ANDROID.md) — Android AIO scanners / PWA / APK
-- [docs/PRINTING.md](docs/PRINTING.md) — Rollo & Brother thermal printing
+- [docs/PRINTING.md](docs/PRINTING.md) — Brother, DYMO, Zebra & Rollo thermal printing
 
 ## Versioning
 Inv-Keep uses [SemVer](https://semver.org). The version lives in `app/version.py`,

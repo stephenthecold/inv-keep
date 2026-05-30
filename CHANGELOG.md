@@ -3,6 +3,19 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.2.0] — 2026-05-30
+- **Top-4 label-brand presets** — label-size dropdown is now grouped by brand:
+  **Brother** (QL + P-touch), **DYMO** (LabelWriter + LabelManager), **Zebra**
+  (2×1 … 4×6 in) and **Rollo**, plus generic sizes. See [docs/PRINTING.md](docs/PRINTING.md).
+- **Deployment config** — `HOSTNAME`, `APP_PORT`, and optional **automatic HTTPS**
+  via a bundled Caddy reverse proxy (`docker compose --profile ssl up`). The app now
+  runs behind proxy headers so OIDC/PWA URLs build as `https`. See [docs/DEPLOY.md](docs/DEPLOY.md).
+- **`install.sh`** — interactive installer that collects hostname, port, SSL +
+  Let's Encrypt email, branding, and OIDC up front, writes `.env`, and starts the stack.
+- **Android build pipeline** — `.github/workflows/android.yml` builds a TWA APK/AAB
+  in CI; `/.well-known/assetlinks.json` is served from a Settings field so the
+  installed app can hide the URL bar. Plus a `ci.yml` checks workflow.
+
 ## [1.1.0] — 2026-05-30
 - **Progressive Web App (PWA)** — installable on Android (and desktop): app
   manifest, service worker, icons, theme colour and a standalone fullscreen

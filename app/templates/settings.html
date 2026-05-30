@@ -47,8 +47,12 @@
   <form method="post" action="/settings/printing" class="grid-form">
     <label>Default label size
       <select name="label_size">
-        {% for key, s in label_sizes.items() %}
-        <option value="{{ key }}" {% if cfg.label_size == key %}selected{% endif %}>{{ s.label }}</option>
+        {% for brand, items in size_groups %}
+        <optgroup label="{{ brand }}">
+          {% for key, s in items %}
+          <option value="{{ key }}" {% if cfg.label_size == key %}selected{% endif %}>{{ s.label }}</option>
+          {% endfor %}
+        </optgroup>
         {% endfor %}
       </select>
     </label>
@@ -56,6 +60,19 @@
   </form>
   <small>Used as the default on the label pages. Covers Rollo (4×6, 2.25×1.25 in) and Brother
   (P-touch 12/18/24 mm tapes, QL 62×29 mm / continuous). See docs/PRINTING.md.</small>
+</section>
+
+<!-- ---------------- Android (TWA) ---------------- -->
+<section class="card">
+  <h2>Android app (TWA)</h2>
+  <form method="post" action="/settings/android" class="grid-form">
+    <label class="wide">Digital Asset Links JSON
+      <textarea name="android_asset_links" rows="5" placeholder='Paste the JSON from "bubblewrap fingerprint" so the installed APK hides the URL bar. Served at /.well-known/assetlinks.json'>{{ cfg.android_asset_links }}</textarea>
+    </label>
+    <button type="submit">Save Android</button>
+  </form>
+  <small>Only needed when packaging a Trusted Web Activity APK. See docs/ANDROID.md.
+  Install the PWA directly with no setup via the browser's “Add to Home screen”.</small>
 </section>
 
 <!-- ---------------- Authentication ---------------- -->

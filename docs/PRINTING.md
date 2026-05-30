@@ -14,16 +14,21 @@ and **Brother** thermal printers — without printer-specific drivers in the app
 - In the print dialog: select the thermal printer, set paper size to match, and
   **turn off** headers/footers and any “fit to page”/scaling.
 
-## Size presets
-| Preset | Size | Typical use |
-|---|---|---|
-| Plain paper sheet | A4/Letter, many per page | laser/inkjet sheets |
-| Rollo 4×6 in | 102 × 152 mm | Rollo shipping-size labels |
-| Asset 2.25×1.25 in | 57 × 32 mm | small asset labels (Rollo, Zebra, Munbyn) |
-| 50×25 mm | 50 × 25 mm | generic small label |
-| Brother QL 62×29 mm | 62 × 29 mm | QL die-cut address labels |
-| Brother QL 62 mm continuous | 62 mm wide | QL continuous roll |
-| Brother P-touch 24/18/12 mm | tape width | PT continuous tape |
+## Size presets (top 4 label brands)
+The label-size dropdown is grouped by brand. Pick the one that matches your media.
+
+**Brother** — QL 62×29 mm die-cut, QL 62 mm continuous, QL 29×90 mm address,
+P-touch 24 / 18 / 12 mm tapes.
+
+**DYMO** — LabelWriter 30252 Address (89×28 mm), 30336 Multipurpose (54×25 mm),
+30334 Medium (57×32 mm), 30330 Return (51×19 mm), LabelManager 12 mm tape.
+
+**Zebra** — 2×1 in (51×25 mm), 2.25×1.25 in (57×32 mm), 3×2 in (76×51 mm),
+4×6 in (102×152 mm).
+
+**Rollo** — 4×6 in (102×152 mm), 2.25×1.25 in (57×32 mm).
+
+**Generic** — plain paper sheet (many per page), 50×25 mm.
 
 ## Rollo
 Rollo printers install as a normal system printer (USB or network) via Rollo's
@@ -46,6 +51,28 @@ driver / the OS print framework.
 ### QL series (QL-800/820/1100 — die-cut or continuous)
 - Pick **QL 62×29 mm** (die-cut) or **QL 62 mm continuous**.
 - Same driver/print-service flow as P-touch.
+
+## DYMO
+DYMO LabelWriter (450/550/5xx) and LabelManager install via DYMO Connect / the
+DYMO driver.
+
+- **Desktop**: install DYMO Connect, choose the **DYMO LabelWriter** in the print
+  dialog, pick the matching 302xx preset, and disable scaling.
+- **Android**: DYMO's own apps are limited; use a LabelWriter shared through the OS
+  print framework (Mopria/USB) where supported, or print from a desktop.
+- Note the LabelWriter 5xx series uses auto-detected die-cut labels — the preset's
+  `@page` size should match the loaded label.
+
+## Zebra
+Zebra (ZD/GK/GX desktop, ZSB) install via the Zebra driver or **Zebra Printer
+Setup Utility**.
+
+- **Desktop**: install the Zebra driver, select the printer, choose the matching
+  Zebra preset, and turn off scaling.
+- **Android**: use the **Zebra Print** service / Print Station, or Mopria, then
+  Print → select the Zebra printer.
+- These presets render the barcode as an image sized to the label; for raw ZPL
+  templating you'd want a printer-specific integration (not built in).
 
 ## Notes & limits
 - Direct raster/ESC-P streaming to Brother, or Rollo's wireless API, is **not**

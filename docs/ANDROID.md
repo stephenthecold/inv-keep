@@ -45,8 +45,18 @@ bubblewrap build
 
 This produces a signed APK/AAB that opens your hosted PWA fullscreen. To remove the
 browser address bar entirely you must publish a **Digital Asset Links** file at
-`https://your-domain/.well-known/assetlinks.json` (Bubblewrap prints the JSON to
-use). The scanner setup is identical to the PWA case above.
+`https://your-domain/.well-known/assetlinks.json`. Inv-Keep already **serves that
+route** — paste the JSON Bubblewrap prints into **Settings → Android app (TWA)** and
+it's published automatically. The scanner setup is identical to the PWA case above.
+
+### Build the APK in CI (no local Android toolchain)
+If you don't want to install the Android SDK locally, the repo ships a GitHub
+Actions workflow at **`.github/workflows/android.yml`**. Run it from the Actions tab
+(*Build Android APK (TWA)* → *Run workflow*) and enter your HTTPS host; it builds the
+APK/AAB with Bubblewrap and uploads them as a build artifact, and prints the SHA256
+fingerprint to put in your assetlinks JSON. For a stable signing key across builds,
+add the `ANDROID_KEYSTORE_B64` / `ANDROID_KEYSTORE_PASS` / `ANDROID_KEY_ALIAS`
+repository secrets (otherwise an ephemeral test key is generated).
 
 > A Capacitor/WebView wrapper is also possible if you need deeper native hooks
 > (e.g. consuming a scanner's *intent* broadcast instead of keyboard mode), but for

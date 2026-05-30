@@ -16,6 +16,8 @@ DEFAULTS = {
     "low_stock_threshold": "5",
     # Default label size preset key (see app/labels.py LABEL_SIZES)
     "label_size": "sheet",
+    # Android TWA Digital Asset Links JSON (served at /.well-known/assetlinks.json)
+    "android_asset_links": "",
     # White-label branding
     "brand_accent": "",        # hex colour, e.g. #2f81f7 (blank = default)
     "brand_logo": "",          # served path under /uploads, e.g. /uploads/logo.png

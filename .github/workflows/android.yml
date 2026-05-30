@@ -1,0 +1,78 @@
+name: Build Android APK (TWA)
+
+# Builds a Trusted Web Activity APK/AAB from android/twa-manifest.json with
+# Bubblewrap. Run it manually and pass your hosted HTTPS domain.
+#
+# For a STABLE signature (so /.well-known/assetlinks.json keeps working across
+# builds), add these repository secrets; otherwise an ephemeral keystore is made
+# and the APK is test-signed only:
+#   ANDROID_KEYSTORE_B64   - base64 of your .keystore
+#   ANDROID_KEYSTORE_PASS  - keystore/key password
+#   ANDROID_KEY_ALIAS      - key alias (default: android)
+
+on:
+  workflow_dispatch:
+    inputs:
+      host:
+        description: "Public HTTPS host of your Inv-Keep (e.g. inv-keep.example.com)"
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+
+      - name: Install Bubblewrap
+        run: npm i -g @bubblewrap/cli
+
+      - name: Point manifest at the host
+        run: |
+          node -e '
+            const fs=require("fs"),p="android/twa-manifest.json";
+            const m=JSON.parse(fs.readFileSync(p));
+            const h="${{ github.event.inputs.host }}";
+            m.host=h; m.startUrl="/";
+            m.webManifestUrl=`https://${h}/manifest.webmanifest`;
+            m.iconUrl=`https://${h}/static/icons/icon-512.png`;
+            m.maskableIconUrl=`https://${h}/static/icons/maskable-512.png`;
+            fs.writeFileSync(p,JSON.stringify(m,null,2));
+          '
+
+      - name: Prepare signing key
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > android/android.keystore
+            echo "Using provided keystore."
+          else
+            keytool -genkeypair -dname "CN=Inv-Keep" -alias "${{ secrets.ANDROID_KEY_ALIAS || 'android' }}" \
+              -keystore android/android.keystore -storepass "${KS_PASS:-invkeep}" -keypass "${KS_PASS:-invkeep}" \
+              -keyalg RSA -keysize 2048 -validity 10000
+            echo "::warning::No ANDROID_KEYSTORE_B64 secret; generated an ephemeral test keystore."
+          fi
+
+      - name: Build TWA
+        working-directory: android
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASS || 'invkeep' }}
+          BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASS || 'invkeep' }}
+        run: |
+          bubblewrap build --skipPwaValidation || bubblewrap init --manifest ./twa-manifest.json --directory . && bubblewrap build --skipPwaValidation
+
+      - name: Show signing fingerprint (for assetlinks.json)
+        run: |
+          keytool -list -v -keystore android/android.keystore -storepass "${{ secrets.ANDROID_KEYSTORE_PASS || 'invkeep' }}" | grep -A1 "SHA256:" || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: inv-keep-android
+          path: |
+            android/*.apk
+            android/*.aab

@@ -1,0 +1,11 @@
+# Automatic HTTPS for Inv-Keep via Caddy.
+# HOSTNAME and ACME_EMAIL come from .env. Caddy obtains + renews a Let's Encrypt
+# certificate for HOSTNAME automatically (ports 80/443 must be reachable).
+{
+	email {$ACME_EMAIL}
+}
+
+{$HOSTNAME} {
+	encode zstd gzip
+	reverse_proxy inv-keep:8000
+}

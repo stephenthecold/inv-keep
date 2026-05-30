@@ -21,8 +21,12 @@
   <form method="get" action="{{ base_path }}" class="filter">
     <label>Label size
       <select name="size" onchange="this.form.submit()">
-        {% for key, s in sizes.items() %}
-        <option value="{{ key }}" {% if key == size_key %}selected{% endif %}>{{ s.label }}</option>
+        {% for brand, items in size_groups %}
+        <optgroup label="{{ brand }}">
+          {% for key, s in items %}
+          <option value="{{ key }}" {% if key == size_key %}selected{% endif %}>{{ s.label }}</option>
+          {% endfor %}
+        </optgroup>
         {% endfor %}
       </select>
     </label>

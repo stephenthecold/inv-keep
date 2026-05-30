@@ -62,7 +62,8 @@ self.addEventListener('fetch', (e) => {
 });
 """.strip()
 
-PUBLIC_PATHS = {"/login", "/auth/callback", "/logout", "/health", "/manifest.webmanifest", "/sw.js"}
+PUBLIC_PATHS = {"/login", "/auth/callback", "/logout", "/health", "/manifest.webmanifest",
+                "/sw.js", "/.well-known/assetlinks.json"}
 
 _stop_event = threading.Event()
 
@@ -193,6 +194,20 @@ def manifest(db: Session = Depends(get_db)):
         },
         media_type="application/manifest+json",
     )
+
+
+@app.get("/.well-known/assetlinks.json")
+def asset_links(db: Session = Depends(get_db)):
+    """Digital Asset Links for the Android TWA (hides the URL bar). Configure the
+    JSON under Settings → Android once you know your APK's signing fingerprint."""
+    import json as _json
+
+    raw = store.get(db, "android_asset_links")
+    try:
+        data = _json.loads(raw) if raw.strip() else []
+    except ValueError:
+        data = []
+    return JSONResponse(data, media_type="application/json")
 
 
 @app.get("/sw.js")
@@ -488,7 +503,7 @@ def _label_ctx(request, db, rendered, sheet):
     return dict(
         parts_to_print=rendered,
         sheet=sheet,
-        sizes=labels.LABEL_SIZES,
+        size_groups=labels.grouped_sizes(),
         size_key=size_key,
         page_w=preset["w"],
         page_h=preset["h"],
@@ -757,7 +772,7 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         "settings.html",
         ctx(request, db, providers=emailer.PROVIDERS, this_month=datetime.utcnow().strftime("%Y-%m"),
-            disable_auth=settings.disable_auth, label_sizes=labels.LABEL_SIZES),
+            disable_auth=settings.disable_auth, size_groups=labels.grouped_sizes()),
     )
 
 
@@ -785,6 +800,14 @@ def settings_printing(request: Request, label_size: str = Form("sheet"), db: Ses
     audit.record(db, current_user(request), "settings.printing", "settings", None, f"Default label size {label_size}")
     db.commit()
     return redirect("/settings", "Printing settings saved.")
+
+
+@app.post("/settings/android")
+def settings_android(request: Request, android_asset_links: str = Form(""), db: Session = Depends(get_db)):
+    store.set(db, "android_asset_links", android_asset_links.strip())
+    audit.record(db, current_user(request), "settings.android", "settings", None, "Updated Android asset links")
+    db.commit()
+    return redirect("/settings", "Android settings saved.")
 
 
 @app.post("/settings/branding")

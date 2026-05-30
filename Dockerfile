@@ -15,4 +15,7 @@ RUN mkdir -p /code/data
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --proxy-headers/--forwarded-allow-ips let the app honour X-Forwarded-Proto/Host
+# from a TLS reverse proxy (Caddy), so OIDC redirect URLs are built as https.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", \
+     "--proxy-headers", "--forwarded-allow-ips", "*"]
