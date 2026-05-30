@@ -1,4 +1,22 @@
 {% extends "base.html" %}
+{% set ICONS = [('🔌','Plug / cable'),('🔋','Battery'),('🧰','Toolbox'),('🖥️','Computer'),('💾','Drive'),('📡','Antenna'),('🛜','Wi-Fi'),('🔧','Wrench'),('🔩','Bolt / fastener'),('💡','Bulb'),('🔦','Flashlight'),('📦','Box'),('🪛','Screwdriver'),('🧲','Magnet'),('🔗','Connector'),('📶','Signal'),('🖨️','Printer'),('⌨️','Keyboard'),('🖱️','Mouse'),('📱','Phone')] %}
+{% macro icon_field(current='') %}
+<label>Icon
+  <span class="icon-field">
+    <select class="icon-select">
+      <option value="">— none —</option>
+      {% for e, nm in ICONS %}<option value="{{ e }}" {% if e == current %}selected{% endif %}>{{ e }} {{ nm }}</option>{% endfor %}
+      <option value="__custom" {% if current and current not in ICONS|map(attribute=0)|list %}selected{% endif %}>Custom…</option>
+    </select>
+    <input name="icon" class="icon-input" value="{{ current }}" maxlength="8" style="width:3.4rem;text-align:center" placeholder="emoji">
+  </span>
+</label>
+{% endmacro %}
+{% macro category_options(selected='') %}
+<option value="">— none —</option>
+{% for cid, label, depth, c in categories %}<option value="{{ cid }}" {% if selected|string == cid|string %}selected{% endif %}>{{ '— ' * depth }}{{ c.name }}</option>{% endfor %}
+{% endmacro %}
+
 {% block content %}
 <div class="page-head">
   <h1>Items</h1>
@@ -8,32 +26,18 @@
   </div>
 </div>
 
+<!-- Add item -->
 <dialog id="add-part" class="modal">
   <h2>Add item</h2>
   <form method="post" action="/parts/add" class="grid-form">
     <label>Name <input name="name" required></label>
-    <label>Icon
-      <input name="icon" id="add-icon" maxlength="8" style="width:5rem" placeholder="emoji">
-    </label>
-    <div class="wide emoji-pick" data-target="add-icon">
-      {% for e in ['🔌','🔋','🧰','🖥️','💾','📡','🛜','🔧','🔩','💡','🔦','📦','🪛','🧲','🔗','📶'] %}<button type="button">{{ e }}</button>{% endfor %}
-    </div>
-    <label class="wide">Description <textarea name="description" rows="2" placeholder="optional notes about this item"></textarea></label>
+    {{ icon_field() }}
+    <label class="wide">Description <textarea name="description" rows="2" placeholder="optional"></textarea></label>
     <label>Barcode <input name="barcode" value="{{ prefill }}" placeholder="leave blank to auto-generate"></label>
     <label>Type
-      <select name="type">
-        <option value="bulk">Bulk (qty by SKU)</option>
-        <option value="unique">Unique (one item)</option>
-      </select>
+      <select name="type"><option value="bulk">Bulk (qty by SKU)</option><option value="unique">Unique (one item)</option></select>
     </label>
-    <label>Category
-      <select name="category_id">
-        <option value="">— none —</option>
-        {% for cid, label, depth, c in categories %}
-        <option value="{{ cid }}">{{ '— ' * depth }}{{ c.name }}</option>
-        {% endfor %}
-      </select>
-    </label>
+    <label>Category <select name="category_id">{{ category_options() }}</select></label>
     <label>Our cost <input name="unit_cost" type="number" step="0.01" value="0"></label>
     <label>Client price <input name="unit_price" type="number" step="0.01" value="0"></label>
     <label>Qty on hand <input name="quantity_on_hand" type="number" value="0"></label>
@@ -46,48 +50,62 @@
   <small>Leave the barcode blank to auto-generate one + a printable label. Unique items are forced to qty 1.</small>
 </dialog>
 
+<!-- Edit item (shared, populated by JS) -->
+<dialog id="edit-part" class="modal">
+  <h2>Edit item</h2>
+  <form id="edit-part-form" method="post" action="">
+    <div class="muted" id="ep-meta" style="margin-bottom:.5rem"></div>
+    <div class="grid-form">
+      <label>Name <input name="name" id="ep-name" required></label>
+      {{ icon_field() }}
+      <label class="wide">Description <textarea name="description" id="ep-description" rows="2"></textarea></label>
+      <label>Category <select name="category_id" id="ep-category">{{ category_options() }}</select></label>
+      <label>Our cost <input name="unit_cost" id="ep-cost" type="number" step="0.01"></label>
+      <label>Client price <input name="unit_price" id="ep-price" type="number" step="0.01"></label>
+      <label>Low-stock at <input name="low_stock_threshold" id="ep-threshold" type="number" placeholder="default"></label>
+      <label class="check">Active <input type="checkbox" name="active" id="ep-active"></label>
+    </div>
+    <menu class="modal-actions">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit">Save changes</button>
+    </menu>
+  </form>
+</dialog>
+
 <div class="table-scroll">
 <table class="lines">
   <thead>
-    <tr><th>Icon</th><th>Name</th><th>Description</th><th>Barcode</th><th>Type</th><th>Category</th><th class="num">On hand</th><th class="num">Our cost</th><th class="num">Client price</th><th class="num">Low at</th><th>Active</th><th></th><th>Restock</th></tr>
+    <tr><th></th><th>Name</th><th>Barcode</th><th>Category</th><th class="num">On hand</th><th class="num">Our cost</th><th class="num">Client price</th><th></th><th>Restock</th></tr>
   </thead>
   <tbody>
     {% for p in parts %}
     <tr {% if not p.active %}class="voided"{% endif %}>
+      <td class="item-icon">{{ p.icon }}</td>
       <td>
-        <form id="edit-{{ p.id }}" method="post" action="/parts/{{ p.id }}/edit"></form>
-        <input form="edit-{{ p.id }}" name="icon" value="{{ p.icon }}" maxlength="8" style="width:3.2rem; text-align:center" placeholder="—">
+        <div class="item-name">{{ p.name }}{% if not p.active %} <span class="tag muted">inactive</span>{% endif %}</div>
+        {% if p.description %}<div class="muted item-desc">{{ p.description }}</div>{% endif %}
       </td>
-      <td><input form="edit-{{ p.id }}" name="name" value="{{ p.name }}"></td>
-      <td><input form="edit-{{ p.id }}" name="description" value="{{ p.description }}" placeholder="—" style="width:14rem"></td>
-      <td>
-        <code>{{ p.barcode }}</code>
-        {% if p.barcode_generated %}<a href="/parts/{{ p.id }}/label" title="Print label">🏷️</a>{% endif %}
-      </td>
-      <td>{{ p.type }}</td>
-      <td>
-        <select form="edit-{{ p.id }}" name="category_id">
-          <option value="">—</option>
-          {% for cid, label, depth, c in categories %}
-          <option value="{{ cid }}" {% if p.category_id == cid %}selected{% endif %}>{{ '— ' * depth }}{{ c.name }}</option>
-          {% endfor %}
-        </select>
-      </td>
+      <td><code>{{ p.barcode }}</code>{% if p.barcode_generated %} <a href="/parts/{{ p.id }}/label" title="Print label">🏷️</a>{% endif %}</td>
+      <td>{{ cat_names.get(p.category_id, '') }}</td>
       <td class="num {% if p.quantity_on_hand <= 0 %}low{% endif %}">{{ p.quantity_on_hand }}</td>
-      <td class="num"><input form="edit-{{ p.id }}" name="unit_cost" type="number" step="0.01" value="{{ '%.2f'|format(p.unit_cost) }}" style="width:5rem"></td>
-      <td class="num"><input form="edit-{{ p.id }}" name="unit_price" type="number" step="0.01" value="{{ '%.2f'|format(p.unit_price) }}" style="width:5rem"></td>
-      <td class="num"><input form="edit-{{ p.id }}" name="low_stock_threshold" type="number" value="{{ p.low_stock_threshold if p.low_stock_threshold is not none else '' }}" placeholder="def" style="width:4rem"></td>
-      <td><input form="edit-{{ p.id }}" type="checkbox" name="active" {% if p.active %}checked{% endif %}></td>
-      <td><button form="edit-{{ p.id }}" type="submit">Save</button></td>
+      <td class="num">{{ cfg.currency }}{{ '%.2f'|format(p.unit_cost) }}</td>
+      <td class="num">{{ cfg.currency }}{{ '%.2f'|format(p.unit_price) }}</td>
+      <td>
+        <button type="button" class="edit-part"
+          data-id="{{ p.id }}" data-name="{{ p.name }}" data-icon="{{ p.icon }}"
+          data-description="{{ p.description }}" data-category="{{ p.category_id if p.category_id is not none else '' }}"
+          data-cost="{{ '%.2f'|format(p.unit_cost) }}" data-price="{{ '%.2f'|format(p.unit_price) }}"
+          data-threshold="{{ p.low_stock_threshold if p.low_stock_threshold is not none else '' }}"
+          data-active="{{ '1' if p.active else '0' }}" data-barcode="{{ p.barcode }}" data-type="{{ p.type }}">Edit</button>
+      </td>
       <td>
         <form method="post" action="/parts/{{ p.id }}/restock" class="inline">
-          <input name="amount" type="number" value="10" style="width:4rem">
-          <button type="submit">+</button>
+          <input name="amount" type="number" value="10" style="width:4rem"><button type="submit">+</button>
         </form>
       </td>
     </tr>
     {% else %}
-    <tr class="empty"><td colspan="13">No items yet — add one above.</td></tr>
+    <tr class="empty"><td colspan="9">No items yet — add one above.</td></tr>
     {% endfor %}
   </tbody>
 </table>

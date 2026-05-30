@@ -31,6 +31,7 @@ DEFAULTS = {
     "brand_accent": "",        # hex colour, e.g. #2f81f7 (blank = default)
     "brand_logo": "",          # served path under /uploads, e.g. /uploads/logo.png
     "brand_emoji": "📦",       # shown when no logo image is set
+    "brand_show_title": "1",   # show the app-title text next to the logo
     "brand_footer": "",        # optional footer text
     # Authentication (UI-managed). Seeded from env on first run.
     "auth_mode": env_settings.auth_mode,  # none | oidc | forward

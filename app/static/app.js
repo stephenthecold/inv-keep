@@ -29,14 +29,44 @@ function money(n) {
 // ---- modal helpers (used by list pages) ----
 function openModal(id) { const d = document.getElementById(id); if (d && d.showModal) d.showModal(); }
 
-// ---- emoji icon picker: clicking a swatch fills the target input ----
+// ---- icon dropdown: selecting an emoji fills the paired text input ----
+document.addEventListener("change", (e) => {
+  const sel = e.target.closest(".icon-select");
+  if (!sel) return;
+  const input = sel.parentElement.querySelector(".icon-input");
+  if (!input) return;
+  if (sel.value === "__custom") { input.value = ""; input.focus(); }
+  else { input.value = sel.value; }
+});
+
+// Sync a select to a given icon value (used when opening the edit modal).
+function setIconField(scope, value) {
+  const sel = scope.querySelector(".icon-select");
+  const input = scope.querySelector(".icon-input");
+  if (input) input.value = value || "";
+  if (!sel) return;
+  const match = Array.from(sel.options).some((o) => o.value === value);
+  sel.value = match && value ? value : (value ? "__custom" : "");
+}
+
+// ---- edit-item modal: populate the shared dialog from the row's data-* ----
 document.addEventListener("click", (e) => {
-  const btn = e.target.closest(".emoji-pick button");
+  const btn = e.target.closest(".edit-part");
   if (!btn) return;
-  e.preventDefault();
-  const wrap = btn.closest(".emoji-pick");
-  const target = document.getElementById(wrap.dataset.target);
-  if (target) target.value = btn.textContent.trim();
+  const d = btn.dataset;
+  const form = document.getElementById("edit-part-form");
+  form.action = "/parts/" + d.id + "/edit";
+  document.getElementById("ep-name").value = d.name || "";
+  document.getElementById("ep-description").value = d.description || "";
+  document.getElementById("ep-cost").value = d.cost || "0";
+  document.getElementById("ep-price").value = d.price || "0";
+  document.getElementById("ep-threshold").value = d.threshold || "";
+  document.getElementById("ep-category").value = d.category || "";
+  document.getElementById("ep-active").checked = d.active === "1";
+  document.getElementById("ep-meta").textContent =
+    "Barcode " + (d.barcode || "") + " · " + (d.type || "") + " · qty changes via Restock";
+  setIconField(document.getElementById("edit-part"), d.icon || "");
+  openModal("edit-part");
 });
 
 // ---- filter the charge-panel job list to the selected client ----

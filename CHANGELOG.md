@@ -3,6 +3,22 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.4.0] — 2026-05-30
+- **Fix: stale assets** — the service worker is now network-first (cache only as an
+  offline fallback) and CSS/JS are version-busted, so updates apply immediately.
+  This was the root cause of broken logo/brand styling and the icon picker.
+- **Logo scaling & optional title** — header logo is constrained and never overflows
+  the window; the app-title text next to the logo is now optional (Settings →
+  Branding → “Show title text”) and aligned. Page no longer horizontally overflows.
+- **Item icon dropdown** — the emoji button grid is replaced by a tidy dropdown
+  (with a custom option), in both Add and Edit.
+- **Edit items after the fact** — items now have an **Edit** modal (name, icon,
+  description, category, costs, threshold, active); the items table is compact and
+  no longer overflows.
+- **Label customizer live preview** — Settings → Printing shows a sample label that
+  updates as you toggle fields.
+- Button-wrapping / alignment fixes (e.g. “Send now”).
+
 ## [1.3.0] — 2026-05-30
 - **Bring-your-own-cert / external proxy** — TLS now has three modes: bundled Caddy
   with Let's Encrypt, bundled Caddy with **your own certificate** (`Caddyfile.custom`

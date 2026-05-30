@@ -11,6 +11,7 @@
   --warn: #d29922;
 }
 * { box-sizing: border-box; }
+html, body { max-width: 100%; overflow-x: hidden; }
 body {
   margin: 0;
   font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
@@ -20,21 +21,23 @@ body {
 header {
   display: flex;
   align-items: center;
-  gap: 1.5rem;
-  padding: 0.75rem 1.25rem;
+  gap: 1.25rem;
+  padding: 0.6rem 1.25rem;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
   position: sticky;
   top: 0;
   z-index: 10;
+  flex-wrap: wrap;
+  max-width: 100%;
 }
-.brand { font-weight: 700; }
-nav { display: flex; gap: 1rem; flex: 1; }
-nav a, .user a { color: var(--muted); text-decoration: none; }
+nav { display: flex; gap: 1rem; flex: 1 1 auto; min-width: 0; flex-wrap: wrap; }
+nav a, .user a { color: var(--muted); text-decoration: none; white-space: nowrap; }
 nav a:hover { color: var(--text); }
 .user { display: flex; gap: .75rem; align-items: center; color: var(--muted); font-size: .9rem; }
 .logout { color: var(--accent) !important; }
 main { max-width: 1000px; margin: 0 auto; padding: 1.5rem 1.25rem 4rem; }
+button, .btn, .add-btn { white-space: nowrap; }
 h1 { margin-top: 0; }
 h2 { border-bottom: 1px solid var(--line); padding-bottom: .3rem; margin-top: 2rem; }
 small { color: var(--muted); display: block; margin-top: .25rem; }
@@ -153,9 +156,10 @@ dialog.modal h2 { margin-top: 0; }
 .emoji-pick button:hover { border-color: var(--accent); }
 
 /* branding */
-.brand { display: flex; align-items: center; gap: .5rem; color: var(--text); text-decoration: none; }
-.brand-logo { height: 26px; width: auto; display: block; }
-.brand-emoji { font-size: 1.2rem; }
+.brand { display: flex; align-items: center; gap: .5rem; color: var(--text); text-decoration: none; min-width: 0; flex: 0 1 auto; overflow: hidden; }
+.brand-logo { height: 34px; max-height: 34px; width: auto; max-width: 200px; object-fit: contain; display: block; }
+.brand-emoji { font-size: 1.4rem; line-height: 1; }
+.brand-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
 
 /* footer */
 .app-footer { text-align: center; color: var(--muted); font-size: .8rem; padding: 2rem 1rem 1.5rem; }
@@ -180,6 +184,27 @@ dialog.modal h2 { margin-top: 0; }
 
 /* sized label preview on screen */
 .label-sized .label { border: 1px dashed var(--line); margin: .35rem; }
+
+/* icon dropdown field */
+.icon-field { display: inline-flex; gap: .4rem; align-items: center; }
+.icon-field .icon-select { max-width: 12rem; }
+
+/* items table */
+.item-icon { font-size: 1.3rem; text-align: center; width: 2.2rem; }
+.item-name { font-weight: 600; }
+.item-desc { font-size: .8rem; max-width: 22rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* label customizer live preview */
+.label-preview-wrap { margin-top: .75rem; }
+.label-preview { display: inline-block; background: #fff; color: #000; border-radius: 6px; padding: .5rem .7rem; text-align: center; min-width: 180px; }
+.label-preview .lp-company { font-size: .72rem; font-weight: 700; }
+.label-preview .lp-name { font-size: .9rem; font-weight: 600; }
+.label-preview .lp-sub { font-size: .7rem; color: #333; }
+.label-preview .lp-bars { display: flex; gap: 2px; justify-content: center; height: 30px; margin: .35rem 0 .1rem; }
+.label-preview .lp-bars i { width: 2px; background: #000; height: 100%; }
+.label-preview .lp-bars i:nth-child(odd) { width: 4px; }
+.label-preview .lp-code { font-family: monospace; font-size: .7rem; letter-spacing: .08em; }
+.label-preview .lp-price { font-size: .85rem; font-weight: 700; }
 
 /* label printing */
 .label-sheet { display: flex; flex-wrap: wrap; gap: .4rem; }

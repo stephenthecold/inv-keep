@@ -38,27 +38,30 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 templates = Jinja2Templates(directory="app/templates")
 
-# Minimal service worker: cache the static shell, network-first for everything else
-# (data is dynamic). Having a fetch handler is what makes the app installable.
+# Network-FIRST service worker: always fetch fresh (so CSS/JS/template updates
+# apply immediately), falling back to cache only when offline. Static assets are
+# cached opportunistically for offline use. Having a fetch handler is also what
+# makes the app installable. Bump CACHE to invalidate any older cached assets.
 _SERVICE_WORKER_JS = """
-const CACHE = 'inv-keep-v1';
-const SHELL = ['/static/style.css', '/static/app.js',
-  '/static/icons/icon-192.png', '/static/icons/icon-512.png'];
-self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
-});
+const CACHE = 'inv-keep-v2';
+self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => {
-  e.waitUntil(caches.keys().then((ks) =>
-    Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys()
+    .then((ks) => Promise.all(ks.map((k) => caches.delete(k))))
+    .then(() => self.clients.claim()));
 });
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
-  if (SHELL.some((p) => req.url.endsWith(p))) {
-    e.respondWith(caches.match(req).then((r) => r || fetch(req)));
-    return;
-  }
-  e.respondWith(fetch(req).catch(() => caches.match(req)));
+  e.respondWith(
+    fetch(req).then((res) => {
+      if (req.url.includes('/static/') && res.ok) {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(req, copy));
+      }
+      return res;
+    }).catch(() => caches.match(req))
+  );
 });
 """.strip()
 
@@ -855,11 +858,13 @@ def settings_branding(
     request: Request,
     brand_accent: str = Form(""),
     brand_emoji: str = Form("📦"),
+    brand_show_title: str = Form(""),
     brand_footer: str = Form(""),
     db: Session = Depends(get_db),
 ):
     store.set(db, "brand_accent", brand_accent.strip())
     store.set(db, "brand_emoji", brand_emoji.strip() or "📦")
+    store.set(db, "brand_show_title", "1" if brand_show_title == "on" else "0")
     store.set(db, "brand_footer", brand_footer.strip())
     audit.record(db, current_user(request), "settings.branding", "settings", None, "Updated branding")
     db.commit()

@@ -21,6 +21,7 @@
   <form method="post" action="/settings/branding" class="grid-form">
     <label>Brand emoji (used when no logo) <input name="brand_emoji" value="{{ cfg.brand_emoji }}" maxlength="8" style="width:5rem"></label>
     <label>Accent colour <input name="brand_accent" type="color" value="{{ cfg.brand_accent or '#2f81f7' }}" style="width:4rem;padding:.2rem"></label>
+    <label class="check">Show title text next to logo <input type="checkbox" name="brand_show_title" {% if cfg.brand_show_title == '1' %}checked{% endif %}></label>
     <label class="wide">Footer text <input name="brand_footer" value="{{ cfg.brand_footer }}" placeholder="e.g. © Your Company"></label>
     <button type="submit">Save branding</button>
   </form>
@@ -62,7 +63,7 @@
   See docs/PRINTING.md.</small>
 
   <h3>What prints on each label</h3>
-  <form method="post" action="/settings/label-content" class="grid-form">
+  <form id="label-content-form" method="post" action="/settings/label-content" class="grid-form">
     <label class="check">Icon <input type="checkbox" name="label_show_icon" {% if cfg.label_show_icon == '1' %}checked{% endif %}></label>
     <label class="check">Name <input type="checkbox" name="label_show_name" {% if cfg.label_show_name == '1' %}checked{% endif %}></label>
     <label class="check">Barcode digits <input type="checkbox" name="label_show_code_text" {% if cfg.label_show_code_text == '1' %}checked{% endif %}></label>
@@ -73,6 +74,35 @@
     <label class="wide">Extra footer line <input name="label_extra_text" value="{{ cfg.label_extra_text }}" placeholder="e.g. Property of Acme — return if found"></label>
     <button type="submit">Save label content</button>
   </form>
+  <div class="label-preview-wrap">
+    <div class="muted">Live preview (sample item):</div>
+    <div id="label-preview" class="label-preview"></div>
+  </div>
+  <script>
+  (function(){
+    var f = document.getElementById('label-content-form');
+    var box = document.getElementById('label-preview');
+    if(!f||!box) return;
+    var cur = {{ cfg.currency | tojson }};
+    function on(n){ var el=f.querySelector('[name="'+n+'"]'); return el && el.checked; }
+    function val(n){ var el=f.querySelector('[name="'+n+'"]'); return el ? el.value : ''; }
+    function esc(s){ return (s||'').replace(/[&<>]/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
+    function render(){
+      var bars=''; for(var i=0;i<18;i++) bars+='<i></i>';
+      var h='';
+      if(val('label_company_text')) h+='<div class="lp-company">'+esc(val('label_company_text'))+'</div>';
+      if(on('label_show_name')||on('label_show_icon')) h+='<div class="lp-name">'+(on('label_show_icon')?'🔌 ':'')+(on('label_show_name')?'Sample Item':'')+'</div>';
+      if(on('label_show_category')) h+='<div class="lp-sub">Sample Category</div>';
+      if(on('label_show_description')) h+='<div class="lp-sub">Sample description</div>';
+      h+='<div class="lp-bars">'+bars+'</div>';
+      if(on('label_show_code_text')) h+='<div class="lp-code">PCO000123</div>';
+      if(on('label_show_price')) h+='<div class="lp-price">'+esc(cur)+'6.00</div>';
+      if(val('label_extra_text')) h+='<div class="lp-sub">'+esc(val('label_extra_text'))+'</div>';
+      box.innerHTML=h;
+    }
+    f.addEventListener('input', render); f.addEventListener('change', render); render();
+  })();
+  </script>
 </section>
 
 <!-- ---------------- Android (TWA) ---------------- -->
