@@ -50,6 +50,7 @@ Inv-Keep is configured in two layers:
 | `label_show_price` / `label_show_description` / `label_show_category` | `0` | Optionally add the client price, description, or category to each label. |
 | `label_company_text` | _(empty)_ | Header line printed on every label (e.g. company name). |
 | `label_extra_text` | _(empty)_ | Footer line printed on every label. |
+| `label_barcode_type` | `code128` | `code128` (1D) or `qr` (2D). Labels dynamically fill the size. |
 | `android_asset_links` | _(empty)_ | Digital Asset Links JSON served at `/.well-known/assetlinks.json` for the TWA APK. |
 
 ### White-label / Branding
@@ -58,14 +59,25 @@ Inv-Keep is configured in two layers:
 | `brand_accent` | _(empty)_ | Hex colour, e.g. `#16a34a`. Overrides the accent across the whole app (and PWA theme). |
 | `brand_emoji` | `📦` | Shown in the header when no logo is uploaded. |
 | `brand_logo` | _(empty)_ | Path to an uploaded logo (`/uploads/...`). Upload/remove in Settings. |
+| `brand_show_title` | `1` | Show the app-title text next to the logo. |
 | `brand_footer` | _(empty)_ | Optional footer text. |
 
-### Authentication
+### Authentication & RBAC
 | Setting | Default | Notes |
 |---|---|---|
 | `auth_mode` | `none` | `none` / `oidc` / `forward`. |
-| `oidc_discovery_url` / `oidc_client_id` / `oidc_client_secret` / `oidc_redirect_url` | _(empty)_ | OIDC (Authentik) settings. |
-| `forward_auth_user_header` / `forward_auth_email_header` | `x-authentik-*` | Header names trusted in forward-auth mode. |
+| `oidc_discovery_url` / `oidc_client_id` / `oidc_client_secret` / `oidc_redirect_url` | _(empty)_ | OIDC (Authentik/Entra) settings. |
+| `forward_auth_user_header` / `forward_auth_email_header` / `forward_auth_groups_header` | `x-authentik-*` | Header names trusted in forward-auth mode. |
+| `rbac_default_role` | `Admin` | Role for IdP users with no group match. **Admin by default (permissive)** so OIDC can't lock you out — tighten to Viewer/Operator. |
+| `rbac_admin_emails` | _(empty)_ | Comma-separated emails always granted the Admin role. |
+| `rbac_auto_create` | `1` | Auto-create a user record on first IdP login. |
+| `oidc_groups_claim` | `groups` | OIDC claim that holds the user's groups. |
+| `oidc_group_role_map` | _(empty)_ | Lines `group = RoleName` mapping IdP groups → roles. |
+
+Roles & permissions themselves are managed under **Users & roles** (not the settings
+store): built-in Admin/Manager/Operator/Viewer + custom roles, each with the permission
+keys `view`, `checkout`, `manage_items`, `manage_clients`, `view_audit`,
+`manage_settings`, `manage_users`.
 
 ### Email
 | Setting | Default | Notes |
@@ -76,12 +88,19 @@ Inv-Keep is configured in two layers:
 | `oauth_client_id` / `oauth_client_secret` / `oauth_tenant` | _(empty)_ / `common` | OAuth2 app credentials (Microsoft/Google). |
 | `oauth_refresh_token` / `oauth_access_token` / `oauth_token_expiry` | _(managed)_ | Stored automatically after **Connect mailbox**. |
 
-### Alerts
+### Alerts & scheduled reports
+Times use the **server clock** (UTC in Docker) and are checked **hourly**. Daily bills
+the previous day, weekly the previous 7 days, monthly the previous calendar month.
+
 | Setting | Default | Notes |
 |---|---|---|
-| `alert_low_stock_enabled` | `0` | Email when an item drops to/under its threshold. |
-| `alert_low_stock_recipients` | _(empty)_ | Comma-separated recipients. |
-| `alert_monthly_enabled` | `0` | Email the monthly report automatically. |
-| `alert_monthly_day` | `1` | Day of month (1–28) to send. |
+| `alert_low_stock_enabled` / `alert_low_stock_recipients` | `0` / _(empty)_ | Email once when an item crosses its threshold (re-arms on restock). |
+| `alert_daily_enabled` / `alert_daily_hour` / `alert_daily_recipients` | `0` / `6` / _(empty)_ | Daily report at the given hour (0–23). |
+| `alert_weekly_enabled` / `alert_weekly_weekday` / `alert_weekly_hour` / `alert_weekly_recipients` | `0` / `0` / `6` / _(empty)_ | Weekly report; weekday 0=Mon…6=Sun. |
+| `alert_monthly_enabled` | `0` | Enable the monthly report. |
+| `alert_monthly_mode` | `day` | `day` (on day-of-month) or `weekday` (nth weekday, e.g. first Monday). |
+| `alert_monthly_day` | `1` | Day of month (1–28) when `mode=day`. |
+| `alert_monthly_nth` / `alert_monthly_weekday` | `1` / `0` | When `mode=weekday`: nth = 1..4 or -1 (last), weekday 0=Mon…6=Sun. |
+| `alert_monthly_hour` | `6` | Hour (0–23) to send. |
 | `alert_monthly_recipients` | _(empty)_ | Comma-separated recipients. |
-| `alert_monthly_last_sent` | _(managed)_ | Internal de-dupe marker (`YYYY-MM`). |
+| `alert_*_last_sent` | _(managed)_ | Internal de-dupe markers. |
