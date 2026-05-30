@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ cfg.app_title }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  {% if cfg.brand_accent %}<style>:root{ --accent: {{ cfg.brand_accent }}; }</style>{% endif %}
+</head>
+<body>
+  <header>
+    <a class="brand" href="/">
+      {% if cfg.brand_logo %}<img class="brand-logo" src="{{ cfg.brand_logo }}" alt="{{ cfg.app_title }}">
+      {% else %}<span class="brand-emoji">{{ cfg.brand_emoji or '📦' }}</span>{% endif %}
+      <span>{{ cfg.app_title }}</span>
+    </a>
+    <nav>
+      <a href="/">Scan</a>
+      <a href="/parts">Items</a>
+      <a href="/categories">Categories</a>
+      <a href="/clients">Clients</a>
+      <a href="/jobs">Jobs</a>
+      <a href="/transactions">History</a>
+      <a href="/report">Report</a>
+      <a href="/audit">Audit</a>
+      <a href="/settings">Settings</a>
+    </nav>
+    <div class="user">
+      {% if user and user.username %}<span>{{ user.username }}</span>{% endif %}
+      {% if cfg.auth_mode == 'oidc' %}<a class="logout" href="/logout">Logout</a>{% endif %}
+    </div>
+  </header>
+  <main>
+    {% if msg %}<div class="flash {{ 'good' if ok else 'bad' }}">{{ msg }}</div>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="app-footer">
+    {% if cfg.brand_footer %}<span>{{ cfg.brand_footer }}</span> · {% endif %}
+    {{ cfg.app_title }} <span class="muted">v{{ version }}</span>
+  </footer>
+  <script src="/static/app.js"></script>
+</body>
+</html>

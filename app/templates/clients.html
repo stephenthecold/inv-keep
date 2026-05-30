@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Clients</h1>
+  <button class="add-btn" onclick="openModal('add-client')">+ Add new client</button>
+</div>
+<p class="muted">Companies you charge parts to. Attach <a href="/jobs">jobs</a> to a client and charge-outs against them.</p>
+
+<dialog id="add-client" class="modal">
+  <h2>Add client</h2>
+  <form method="post" action="/clients/add" class="grid-form">
+    <label>Name <input name="name" required></label>
+    <label>Account # <input name="reference"></label>
+    <label>Contact name <input name="contact_name"></label>
+    <label>Email <input name="email" type="email"></label>
+    <label>Phone <input name="phone"></label>
+    <label>Location / site <input name="location"></label>
+    <label class="wide">Address <textarea name="address" rows="2"></textarea></label>
+    <label class="wide">Notes <textarea name="notes" rows="2"></textarea></label>
+    <menu class="modal-actions">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit">Add client</button>
+    </menu>
+  </form>
+</dialog>
+
+{% for c in clients %}
+<details class="card {% if not c.active %}inactive{% endif %}">
+  <summary>
+    <strong>{{ c.name }}</strong>
+    {% if c.reference %}<span class="tag">{{ c.reference }}</span>{% endif %}
+    {% if c.email %}· {{ c.email }}{% endif %}
+    {% if c.phone %}· {{ c.phone }}{% endif %}
+    <span class="tag muted">{{ c.jobs|length }} job{{ '' if c.jobs|length == 1 else 's' }}</span>
+    {% if not c.active %}<span class="tag muted">inactive</span>{% endif %}
+  </summary>
+  <form method="post" action="/clients/{{ c.id }}/edit" class="grid-form">
+    <label>Name <input name="name" value="{{ c.name }}" required></label>
+    <label>Account # <input name="reference" value="{{ c.reference }}"></label>
+    <label>Contact name <input name="contact_name" value="{{ c.contact_name }}"></label>
+    <label>Email <input name="email" type="email" value="{{ c.email }}"></label>
+    <label>Phone <input name="phone" value="{{ c.phone }}"></label>
+    <label>Location / site <input name="location" value="{{ c.location }}"></label>
+    <label class="wide">Address <textarea name="address" rows="2">{{ c.address }}</textarea></label>
+    <label class="wide">Notes <textarea name="notes" rows="2">{{ c.notes }}</textarea></label>
+    <label class="check">Active <input type="checkbox" name="active" {% if c.active %}checked{% endif %}></label>
+    <button type="submit">Save</button>
+  </form>
+  {% if c.jobs %}
+  <div class="subgroup">
+    <strong>Jobs:</strong>
+    {% for j in c.jobs %}<span class="tag">{{ j.name }}{% if j.reference %} ({{ j.reference }}){% endif %}</span>{% endfor %}
+    <a href="/jobs">manage →</a>
+  </div>
+  {% endif %}
+</details>
+{% else %}
+<p class="muted">No clients yet.</p>
+{% endfor %}
+{% endblock %}

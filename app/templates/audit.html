@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Audit Log</h1>
+<p class="muted">Every sale (charge-out / void) and configuration change is recorded here.</p>
+
+<form method="get" class="filter">
+  <label>Action
+    <select name="action">
+      <option value="">All</option>
+      {% for a in actions %}
+      <option value="{{ a }}" {% if a == f_action %}selected{% endif %}>{{ a }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>User <input name="user" value="{{ f_user }}"></label>
+  <label>Month <input type="month" name="month" value="{{ f_month }}"></label>
+  <button type="submit">Filter</button>
+  <a href="/audit">Clear</a>
+</form>
+
+<table class="lines">
+  <thead><tr><th>When</th><th>User</th><th>Action</th><th>Entity</th><th>Detail</th></tr></thead>
+  <tbody>
+    {% for e in entries %}
+    <tr>
+      <td>{{ e.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      <td>{{ e.user }}</td>
+      <td><code>{{ e.action }}</code></td>
+      <td>{{ e.entity_type }}{% if e.entity_id %} #{{ e.entity_id }}{% endif %}</td>
+      <td>{{ e.summary }}</td>
+    </tr>
+    {% else %}
+    <tr class="empty"><td colspan="5">No audit entries.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

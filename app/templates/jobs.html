@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Jobs</h1>
+  <button class="add-btn" onclick="openModal('add-job')" {% if not clients %}disabled{% endif %}>+ Add new job</button>
+</div>
+<p class="muted">Jobs / tickets / work-orders, each attached to a client. Charge-outs can be logged against a job.</p>
+
+{% if not clients %}
+<div class="notice">Add a <a href="/clients">client</a> first — jobs must belong to a client.</div>
+{% endif %}
+
+<dialog id="add-job" class="modal">
+  <h2>Add job</h2>
+  <form method="post" action="/jobs/add" class="grid-form">
+    <label>Client
+      <select name="client_id" required>
+        {% for c in clients %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Job name <input name="name" required></label>
+    <label>Ticket / WO ref <input name="reference"></label>
+    <label class="wide">Notes <textarea name="notes" rows="2"></textarea></label>
+    <menu class="modal-actions">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit">Add job</button>
+    </menu>
+  </form>
+</dialog>
+
+<table class="lines">
+  <thead><tr><th>Client</th><th>Job</th><th>Ref</th><th>Active</th><th></th></tr></thead>
+  <tbody>
+    {% for j in jobs %}
+    <tr {% if not j.active %}class="voided"{% endif %}>
+      <td>
+        <form id="job-{{ j.id }}" method="post" action="/jobs/{{ j.id }}/edit"></form>
+        <select form="job-{{ j.id }}" name="client_id">
+          {% for c in clients %}<option value="{{ c.id }}" {% if c.id == j.client_id %}selected{% endif %}>{{ c.name }}</option>{% endfor %}
+        </select>
+      </td>
+      <td><input form="job-{{ j.id }}" name="name" value="{{ j.name }}"></td>
+      <td><input form="job-{{ j.id }}" name="reference" value="{{ j.reference }}" style="width:8rem"></td>
+      <td><input form="job-{{ j.id }}" type="checkbox" name="active" {% if j.active %}checked{% endif %}></td>
+      <td><button form="job-{{ j.id }}" type="submit">Save</button></td>
+    </tr>
+    {% else %}
+    <tr class="empty"><td colspan="5">No jobs yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

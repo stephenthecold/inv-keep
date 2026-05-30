@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Settings</h1>
+
+<p class="muted">Version <b>v{{ version }}</b></p>
+
+<!-- ---------------- General ---------------- -->
+<section class="card">
+  <h2>General</h2>
+  <form method="post" action="/settings/general" class="grid-form">
+    <label>App title <input name="app_title" value="{{ cfg.app_title }}"></label>
+    <label>Currency symbol <input name="currency" value="{{ cfg.currency }}" style="width:5rem"></label>
+    <label>Default low-stock threshold <input name="low_stock_threshold" type="number" value="{{ cfg.low_stock_threshold }}"></label>
+    <button type="submit">Save general</button>
+  </form>
+</section>
+
+<!-- ---------------- White-label / Branding ---------------- -->
+<section class="card">
+  <h2>White-label / Branding</h2>
+  <form method="post" action="/settings/branding" class="grid-form">
+    <label>Brand emoji (used when no logo) <input name="brand_emoji" value="{{ cfg.brand_emoji }}" maxlength="8" style="width:5rem"></label>
+    <label>Accent colour <input name="brand_accent" type="color" value="{{ cfg.brand_accent or '#2f81f7' }}" style="width:4rem;padding:.2rem"></label>
+    <label class="wide">Footer text <input name="brand_footer" value="{{ cfg.brand_footer }}" placeholder="e.g. © Your Company"></label>
+    <button type="submit">Save branding</button>
+  </form>
+
+  <div class="subgroup">
+    <div>
+      <div class="muted">Logo</div>
+      {% if cfg.brand_logo %}<img src="{{ cfg.brand_logo }}" alt="logo" style="max-height:48px;background:#fff;border-radius:6px;padding:4px">{% else %}<span class="muted">none — the brand emoji is shown</span>{% endif %}
+    </div>
+    <form method="post" action="/settings/branding/logo" enctype="multipart/form-data" class="filter">
+      <input type="file" name="logo" accept="image/png,image/jpeg,image/svg+xml,image/webp,image/gif" required>
+      <button type="submit">Upload logo</button>
+    </form>
+    {% if cfg.brand_logo %}
+    <form method="post" action="/settings/branding/logo/remove"><button class="ghost" type="submit">Remove logo</button></form>
+    {% endif %}
+  </div>
+  <small>The app title, emoji/logo, accent colour and footer appear across the whole app. Max logo size 2 MB.</small>
+</section>
+
+<!-- ---------------- Authentication ---------------- -->
+<section class="card">
+  <h2>Authentication</h2>
+  {% if disable_auth %}
+  <div class="flash bad">DISABLE_AUTH is set in the environment — auth is bypassed regardless of the settings below. Unset it to enforce these.</div>
+  {% endif %}
+  <form method="post" action="/settings/auth" class="grid-form">
+    <label>Mode
+      <select name="auth_mode" id="auth_mode" onchange="authMode()">
+        <option value="none"    {% if cfg.auth_mode == 'none' %}selected{% endif %}>None (no login)</option>
+        <option value="oidc"    {% if cfg.auth_mode == 'oidc' %}selected{% endif %}>Authentik / OIDC (app logs you in)</option>
+        <option value="forward" {% if cfg.auth_mode == 'forward' %}selected{% endif %}>Forward-auth (proxy/outpost headers)</option>
+      </select>
+    </label>
+
+    <div class="subgroup" id="oidc_auth_fields">
+      <label class="wide">OIDC discovery URL
+        <input name="oidc_discovery_url" value="{{ cfg.oidc_discovery_url }}" placeholder="https://auth.example.com/application/o/inv-keep/.well-known/openid-configuration">
+      </label>
+      <label>Client ID <input name="oidc_client_id" value="{{ cfg.oidc_client_id }}"></label>
+      <label>Client secret <input name="oidc_client_secret" type="password" placeholder="{% if cfg.oidc_client_secret %}•••••• (unchanged){% else %}not set{% endif %}"></label>
+      <label class="wide">Redirect URL override (optional)
+        <input name="oidc_redirect_url" value="{{ cfg.oidc_redirect_url }}" placeholder="leave blank to auto-detect">
+      </label>
+      <p class="muted">Register this redirect URI in Authentik:<br><code>{{ request.url_for('auth_callback') }}</code></p>
+    </div>
+
+    <div class="subgroup" id="forward_auth_fields">
+      <label>Username header <input name="forward_auth_user_header" value="{{ cfg.forward_auth_user_header }}"></label>
+      <label>Email header <input name="forward_auth_email_header" value="{{ cfg.forward_auth_email_header }}"></label>
+    </div>
+
+    <button type="submit">Save authentication</button>
+  </form>
+  <small>⚠️ If an OIDC misconfiguration locks you out, set the env var <code>DISABLE_AUTH=1</code> and restart to regain access, then fix the settings.</small>
+</section>
+
+<!-- ---------------- Email ---------------- -->
+<section class="card">
+  <h2>Email</h2>
+  <form method="post" action="/settings/email" class="grid-form">
+    <label>Send method
+      <select name="email_method" id="email_method" onchange="emailMode()">
+        <option value="none"   {% if cfg.email_method == 'none' %}selected{% endif %}>Disabled</option>
+        <option value="smtp"   {% if cfg.email_method == 'smtp' %}selected{% endif %}>SMTP (username + password)</option>
+        {% for key, p in providers.items() %}
+        <option value="{{ key }}" {% if cfg.email_method == key %}selected{% endif %}>{{ p.label }} (OAuth)</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>From address <input name="email_from" type="email" value="{{ cfg.email_from }}"></label>
+    <label>From name <input name="email_from_name" value="{{ cfg.email_from_name }}"></label>
+
+    <div class="subgroup" id="smtp_fields">
+      <label>SMTP host <input name="smtp_host" value="{{ cfg.smtp_host }}"></label>
+      <label>Port <input name="smtp_port" value="{{ cfg.smtp_port }}" style="width:5rem"></label>
+      <label>Username <input name="smtp_username" value="{{ cfg.smtp_username }}"></label>
+      <label>Password <input name="smtp_password" type="password" placeholder="{% if cfg.smtp_password %}•••••• (unchanged){% else %}not set{% endif %}"></label>
+      <label class="check">Use STARTTLS <input type="checkbox" name="smtp_use_tls" {% if cfg.smtp_use_tls == '1' %}checked{% endif %}></label>
+    </div>
+
+    <div class="subgroup" id="oauth_fields">
+      <label>OAuth client ID <input name="oauth_client_id" value="{{ cfg.oauth_client_id }}"></label>
+      <label>OAuth client secret <input name="oauth_client_secret" type="password" placeholder="{% if cfg.oauth_client_secret %}•••••• (unchanged){% else %}not set{% endif %}"></label>
+      <label>Tenant (Microsoft only) <input name="oauth_tenant" value="{{ cfg.oauth_tenant }}"></label>
+    </div>
+
+    <button type="submit">Save email</button>
+  </form>
+
+  <div class="subgroup" id="oauth_connect">
+    <p class="muted">
+      Register this redirect URI with your OAuth app:<br>
+      <code>{{ request.url_for('email_oauth_callback') }}</code>
+    </p>
+    <p>
+      Status:
+      {% if cfg.oauth_refresh_token %}<span class="tag good-tag">connected</span>{% else %}<span class="tag">not connected</span>{% endif %}
+      <a class="btn" href="/settings/email/oauth/connect">Connect / re-connect mailbox</a>
+    </p>
+    <small>Save your method + client ID/secret first, then click connect to grant mailbox access.</small>
+  </div>
+
+  <form method="post" action="/settings/email/test" class="filter">
+    <label>Send test email to <input name="test_to" type="email" required></label>
+    <button type="submit">Send test</button>
+  </form>
+</section>
+
+<!-- ---------------- Alerts ---------------- -->
+<section class="card">
+  <h2>Alerts</h2>
+  <form method="post" action="/settings/alerts" class="grid-form">
+    <label class="check">Low-stock email alerts <input type="checkbox" name="alert_low_stock_enabled" {% if cfg.alert_low_stock_enabled == '1' %}checked{% endif %}></label>
+    <label class="wide">Low-stock recipients (comma-separated) <input name="alert_low_stock_recipients" value="{{ cfg.alert_low_stock_recipients }}"></label>
+
+    <label class="check">Monthly report email <input type="checkbox" name="alert_monthly_enabled" {% if cfg.alert_monthly_enabled == '1' %}checked{% endif %}></label>
+    <label>Send on day of month <input name="alert_monthly_day" type="number" min="1" max="28" value="{{ cfg.alert_monthly_day }}" style="width:5rem"></label>
+    <label class="wide">Monthly recipients (comma-separated) <input name="alert_monthly_recipients" value="{{ cfg.alert_monthly_recipients }}"></label>
+    <button type="submit">Save alerts</button>
+  </form>
+
+  <form method="post" action="/settings/alerts/send-monthly" class="filter">
+    <label>Send monthly report now for <input type="month" name="month" value="{{ this_month }}"></label>
+    <label>to (optional override) <input name="to" placeholder="defaults to monthly recipients"></label>
+    <button type="submit">Send now</button>
+  </form>
+</section>
+
+<p class="muted"><small>Only the session secret, database location, and the DISABLE_AUTH break-glass flag stay in environment variables; everything above (including auth) is stored in the app database.</small></p>
+
+<script>
+function emailMode() {
+  var m = document.getElementById('email_method').value;
+  document.getElementById('smtp_fields').style.display = (m === 'smtp') ? '' : 'none';
+  var isOauth = m.indexOf('oauth') === 0;
+  document.getElementById('oauth_fields').style.display = isOauth ? '' : 'none';
+  document.getElementById('oauth_connect').style.display = isOauth ? '' : 'none';
+}
+emailMode();
+
+function authMode() {
+  var m = document.getElementById('auth_mode').value;
+  document.getElementById('oidc_auth_fields').style.display = (m === 'oidc') ? '' : 'none';
+  document.getElementById('forward_auth_fields').style.display = (m === 'forward') ? '' : 'none';
+}
+authMode();
+</script>
+{% endblock %}

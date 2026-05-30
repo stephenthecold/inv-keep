@@ -1,0 +1,14 @@
+services:
+  inv-keep:
+    build: .
+    # Or, once you publish an image, replace `build: .` with:
+    # image: ghcr.io/youruser/inv-keep:latest
+    container_name: inv-keep
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      # SQLite database persists here. Back this folder up.
+      - ./data:/code/data

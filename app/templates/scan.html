@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Scan or search to charge out</h1>
+
+{% if not clients %}
+<div class="notice">
+  No clients yet. <a href="/clients">Add a client</a> (and optionally a <a href="/jobs">job</a>) so you have something to charge parts to.
+</div>
+{% endif %}
+
+<div class="field search-wrap">
+  <label>Scan a barcode or start typing a part name</label>
+  <input type="text" id="scan" autocomplete="off" placeholder="Scan, or type to search…" autofocus>
+  <div id="suggest" class="suggest" hidden></div>
+  <small>Scan a barcode to pull the item up instantly, or type to search. You'll confirm quantity, client and job before it's charged.</small>
+</div>
+
+<!-- Charge-out panel (shown after a part is picked) -->
+<div id="charge-panel" class="charge-panel" hidden>
+  <div class="charge-head">
+    <div class="charge-id">
+      <span class="charge-icon" id="cp-icon"></span>
+      <div>
+        <div class="charge-name" id="cp-name">—</div>
+        <div class="muted" id="cp-desc"></div>
+        <div class="muted"><code id="cp-barcode"></code> · on hand: <b id="cp-qty"></b>
+          · charge <b id="cp-price"></b> <span class="muted">(cost <span id="cp-cost"></span>)</span></div>
+      </div>
+    </div>
+    <button type="button" class="ghost" onclick="cancelCharge()">✕</button>
+  </div>
+  <div class="grid-form">
+    <label>Quantity <input type="number" id="cp-quantity" value="1" min="1" style="width:6rem"></label>
+    <label>Client
+      <select id="cp-client" onchange="filterPanelJobs()">
+        {% for c in clients %}<option value="{{ c.id }}">{{ c.name }}{% if c.reference %} — {{ c.reference }}{% endif %}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Job
+      <select id="cp-job">
+        <option value="">— No specific job —</option>
+        {% for j in jobs %}<option value="{{ j.id }}" data-client="{{ j.client_id }}">{{ j.name }}{% if j.reference %} — {{ j.reference }}{% endif %}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="wide">Note (optional) <input type="text" id="cp-note"></label>
+  </div>
+  <div class="charge-actions">
+    <button type="button" id="cp-confirm" onclick="confirmCharge()">Charge out</button>
+    <span class="muted">Enter to confirm · Esc to cancel</span>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<h2>This session</h2>
+<table class="lines" id="session-table">
+  <thead>
+    <tr><th>Part</th><th>Client / Job</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Charge</th><th></th></tr>
+  </thead>
+  <tbody id="session-body">
+    <tr class="empty"><td colspan="6">Nothing charged yet.</td></tr>
+  </tbody>
+  <tfoot>
+    <tr><td colspan="4">Session total</td><td class="num" id="session-total">{{ cfg.currency }}0.00</td><td></td></tr>
+  </tfoot>
+</table>
+
+<h2>Recent activity</h2>
+<table class="lines">
+  <thead><tr><th>When</th><th>Part</th><th>Client</th><th>Job</th><th class="num">Qty</th><th>By</th></tr></thead>
+  <tbody>
+    {% for t in recent %}
+    <tr {% if t.voided %}class="voided"{% endif %}>
+      <td>{{ t.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      <td>{{ t.part.name }}</td>
+      <td>{{ t.client.name if t.client else '' }}</td>
+      <td>{{ t.job.name if t.job else '' }}</td>
+      <td class="num">{{ t.quantity }}</td>
+      <td>{{ t.scanned_by }}</td>
+    </tr>
+    {% else %}
+    <tr class="empty"><td colspan="6">No history yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<script>window.CURRENCY = {{ cfg.currency | tojson }};</script>
+{% endblock %}

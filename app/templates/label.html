@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="no-print">
+  <h1>{% if sheet %}Labels{% else %}Label{% endif %}</h1>
+  <p>
+    <button onclick="window.print()">🖨️ Print</button>
+    <a class="btn" href="/parts">Back to parts</a>
+  </p>
+  <p class="muted">Tip: in the print dialog set the paper size to match your label stock and turn off headers/footers.</p>
+</div>
+
+<div class="label-sheet">
+  {% for part, svg in parts_to_print %}
+  <div class="label">
+    <div class="label-name">{{ part.name }}</div>
+    <div class="label-barcode">{{ svg | safe }}</div>
+  </div>
+  {% else %}
+  <p class="muted no-print">Nothing to print. Add a part with a blank barcode to auto-generate one.</p>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Monthly Charge-Out Report</h1>
+
+<form method="get" class="filter">
+  <label>Month <input type="month" name="month" value="{{ month }}"></label>
+  <button type="submit">Show</button>
+  <a class="btn" href="/report.csv?month={{ month }}">⬇ Export CSV</a>
+</form>
+
+{% for c in report %}
+<div class="report-customer">
+  <h2>{{ c.name }}{% if c.reference %} <small>— {{ c.reference }}</small>{% endif %}</h2>
+  {% for job in c.jobs %}
+  <h3 class="report-job">{{ job.name }}{% if job.reference %} <small>— {{ job.reference }}</small>{% endif %}</h3>
+  <table class="lines">
+    <thead>
+      <tr><th>Part</th><th>Barcode</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Line charge</th></tr>
+    </thead>
+    <tbody>
+      {% for line in job.lines %}
+      <tr>
+        <td>{{ line.part }}</td>
+        <td><code>{{ line.barcode }}</code></td>
+        <td class="num">{{ line.quantity }}</td>
+        <td class="num">{{ cfg.currency }}{{ '%.2f'|format(line.unit_price) }}</td>
+        <td class="num">{{ cfg.currency }}{{ '%.2f'|format(line.charge) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr><td colspan="4">Job subtotal</td><td class="num">{{ cfg.currency }}{{ '%.2f'|format(job.charge) }}</td></tr>
+    </tfoot>
+  </table>
+  {% endfor %}
+  <div class="client-subtotal">
+    {{ c.name }} total: {{ cfg.currency }}{{ '%.2f'|format(c.charge) }}
+    <span class="muted">(cost {{ cfg.currency }}{{ '%.2f'|format(c.cost) }} · margin {{ cfg.currency }}{{ '%.2f'|format(c.margin) }})</span>
+  </div>
+</div>
+{% else %}
+<p class="muted">No charge-outs recorded for this month.</p>
+{% endfor %}
+
+{% if report %}
+<div class="grand-total">Billable total: {{ cfg.currency }}{{ '%.2f'|format(totals.charge) }}</div>
+<div class="muted" style="text-align:right">Cost: {{ cfg.currency }}{{ '%.2f'|format(totals.cost) }} · Margin: {{ cfg.currency }}{{ '%.2f'|format(totals.margin) }}</div>
+{% endif %}
+{% endblock %}
