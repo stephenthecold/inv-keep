@@ -3,6 +3,16 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.7.0] — 2026-05-30
+- **Label preview fixed** — the Settings live preview now reflects the chosen **code
+  type** (shows a QR when QR is selected) and **fills the label** (flex distribution
+  + the code grows to fill dead space), matching what prints.
+- **Smarter monthly schedule** — choose "on day N" *or* "on the first/second/third/
+  fourth/last <weekday> of every month" (e.g. first Monday).
+- **Records dropdown** — History, Report and Audit moved out of the account menu
+  into a single top-bar **Records ▾** dropdown; the account menu keeps Settings,
+  Users & roles and Log out.
+
 ## [1.6.0] — 2026-05-30
 - **Custom SVG icon set** — items can use crisp built-in line icons (network cable,
   power plug, connector, server, router, etc.) picked from a dropdown with a live

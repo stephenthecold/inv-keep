@@ -228,6 +228,20 @@ def build_report_html(db, start, end):
     return "".join(rows) if report else "<p>No charge-outs recorded for this period.</p>"
 
 
+def nth_weekday_date(year, month, nth, weekday):
+    """Date of the nth (1..4, or -1=last) `weekday` (0=Mon) in the month, or None."""
+    import calendar
+
+    days = [d for d in calendar.Calendar().itermonthdates(year, month)
+            if d.month == month and d.weekday() == weekday]
+    if not days:
+        return None
+    if nth == -1:
+        return days[-1]
+    idx = nth - 1
+    return days[idx] if 0 <= idx < len(days) else None
+
+
 def _send_report(db, recipients, subject, start, end, last_key, tag):
     html = build_report_html(db, start, end)
     ok, _ = send(db, recipients, subject, html)
@@ -245,12 +259,20 @@ def run_due_jobs(db, now=None):
     now = now or datetime.utcnow()
     midnight = datetime(now.year, now.month, now.day)
 
-    # ---- Monthly: on day-of-month at hour, billing the previous calendar month ----
+    # ---- Monthly: on a day-of-month OR an nth-weekday, billing the previous month ----
     if store.get_bool(db, "alert_monthly_enabled"):
-        day = max(1, min(28, store.get_int(db, "alert_monthly_day", 1)))
         hour = store.get_int(db, "alert_monthly_hour", 6)
         rec = store.get(db, "alert_monthly_recipients")
-        if rec and (now.day, now.hour) >= (day, hour):
+        mode = store.get(db, "alert_monthly_mode") or "day"
+        if mode == "weekday":
+            nth = store.get_int(db, "alert_monthly_nth", 1)
+            wd = max(0, min(6, store.get_int(db, "alert_monthly_weekday", 0)))
+            target = nth_weekday_date(now.year, now.month, nth, wd)
+            due = target is not None and now.day == target.day and now.hour >= hour
+        else:
+            day = max(1, min(28, store.get_int(db, "alert_monthly_day", 1)))
+            due = (now.day, now.hour) >= (day, hour)
+        if rec and due:
             py, pm = (now.year - 1, 12) if now.month == 1 else (now.year, now.month - 1)
             tag = f"{py:04d}-{pm:02d}"
             if store.get(db, "alert_monthly_last_sent") != tag:

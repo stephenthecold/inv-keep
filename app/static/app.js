@@ -44,22 +44,25 @@ function iconHTML(v) {
 // ---- modal helpers (used by list pages) ----
 function openModal(id) { const d = document.getElementById(id); if (d && d.showModal) d.showModal(); }
 
-// ---- account dropdown menu (top-right) ----
+// ---- generic header dropdown menus (account + records) ----
 (function () {
-  const btn = document.getElementById("account-btn");
-  const menu = document.getElementById("account-menu");
-  if (!btn || !menu) return;
-  const close = () => { menu.hidden = true; btn.setAttribute("aria-expanded", "false"); };
-  btn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const willOpen = menu.hidden;
-    menu.hidden = !willOpen;
-    btn.setAttribute("aria-expanded", String(willOpen));
-  });
+  const allMenus = () => document.querySelectorAll("[data-menu-pop]");
+  const closeAll = () => allMenus().forEach((m) => { m.hidden = true; });
   document.addEventListener("click", (e) => {
-    if (!menu.hidden && !menu.contains(e.target) && e.target !== btn) close();
+    const btn = e.target.closest("[data-menu]");
+    if (btn) {
+      e.stopPropagation();
+      const menu = document.querySelector(btn.dataset.menu);
+      if (!menu) return;
+      const willOpen = menu.hidden;
+      closeAll();
+      menu.hidden = !willOpen;
+      btn.setAttribute("aria-expanded", String(willOpen));
+      return;
+    }
+    if (!e.target.closest("[data-menu-pop]")) closeAll();
   });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAll(); });
 })();
 
 // ---- icon dropdown: pick a built-in SVG icon or a custom emoji ----

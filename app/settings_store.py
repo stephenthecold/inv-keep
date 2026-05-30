@@ -68,7 +68,10 @@ DEFAULTS = {
     "alert_low_stock_enabled": "0",
     "alert_low_stock_recipients": "",
     "alert_monthly_enabled": "0",
+    "alert_monthly_mode": "day",     # day = on day-of-month; weekday = nth weekday
     "alert_monthly_day": "1",
+    "alert_monthly_nth": "1",        # 1..4 or -1 (last)
+    "alert_monthly_weekday": "0",    # 0=Mon … 6=Sun
     "alert_monthly_hour": "6",
     "alert_monthly_recipients": "",
     "alert_monthly_last_sent": "",  # YYYY-MM that was last emailed

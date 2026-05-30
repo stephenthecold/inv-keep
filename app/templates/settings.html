@@ -111,33 +111,49 @@
     function on(n){ var el=f.querySelector('[name="'+n+'"]'); return el && el.checked; }
     function val(n){ var el=f.querySelector('[name="'+n+'"]'); return el ? el.value : ''; }
     function esc(s){ return (s||'').replace(/[&<>]/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
+    var codeSel = document.querySelector('[name="label_barcode_type"]');
     function applySize(){
       var s = SIZES[sizeSel ? sizeSel.value : ''] || {w:0,h:0};
       if(s.w && s.h){
-        var scale = Math.min(280/s.w, 360/s.h, 6);
+        var scale = Math.min(280/s.w, 300/s.h, 6);
         box.style.width = Math.round(s.w*scale)+'px';
         box.style.height = Math.round(s.h*scale)+'px';
-        box.style.overflow = 'hidden';
-        box.style.justifyContent = 'center';
       } else {
-        box.style.width=''; box.style.height=''; box.style.overflow=''; box.style.minWidth='180px';
+        box.style.width=''; box.style.height='auto'; box.style.minWidth='190px'; box.style.minHeight='150px';
       }
     }
+    function bars(){ var b=''; for(var i=0;i<24;i++) b+='<i></i>'; return '<div class="lp-bars">'+b+'</div>'; }
+    function qrMock(){
+      var N=21, cell=4, sz=N*cell, sq='', seed=7;
+      function finder(fx,fy){ sq+='<rect x="'+fx*cell+'" y="'+fy*cell+'" width="'+7*cell+'" height="'+7*cell+'"/>'
+        +'<rect x="'+(fx+1)*cell+'" y="'+(fy+1)*cell+'" width="'+5*cell+'" height="'+5*cell+'" fill="#fff"/>'
+        +'<rect x="'+(fx+2)*cell+'" y="'+(fy+2)*cell+'" width="'+3*cell+'" height="'+3*cell+'" fill="#000"/>'; }
+      finder(0,0); finder(N-7,0); finder(0,N-7);
+      for(var y=0;y<N;y++) for(var x=0;x<N;x++){
+        if((x<8&&y<8)||(x>N-9&&y<8)||(x<8&&y>N-9)) continue;
+        seed=(seed*1103515245+12345)&0x7fffffff;
+        if(seed%3===0) sq+='<rect x="'+x*cell+'" y="'+y*cell+'" width="'+cell+'" height="'+cell+'"/>';
+      }
+      return '<svg class="lp-qr" viewBox="0 0 '+sz+' '+sz+'" preserveAspectRatio="xMidYMid meet" fill="#000">'
+        +'<rect width="'+sz+'" height="'+sz+'" fill="#fff"/>'+sq+'</svg>';
+    }
     function render(){
-      var bars=''; for(var i=0;i<18;i++) bars+='<i></i>';
+      var isQR = codeSel && codeSel.value === 'qr';
+      var icon = on('label_show_icon') ? '<span class="lp-icon">'+iconHTML('svg:network-cable')+'</span>' : '';
       var h='';
       if(val('label_company_text')) h+='<div class="lp-company">'+esc(val('label_company_text'))+'</div>';
-      if(on('label_show_name')||on('label_show_icon')) h+='<div class="lp-name">'+(on('label_show_icon')?'🌐 ':'')+(on('label_show_name')?'Sample Item':'')+'</div>';
+      if(on('label_show_name')||on('label_show_icon')) h+='<div class="lp-name">'+icon+(on('label_show_name')?'Sample Item':'')+'</div>';
       if(on('label_show_category')) h+='<div class="lp-sub">Sample Category</div>';
       if(on('label_show_description')) h+='<div class="lp-sub">Sample description</div>';
-      h+='<div class="lp-bars">'+bars+'</div>';
+      h+='<div class="lp-code-area">'+(isQR ? qrMock() : bars())+'</div>';
       if(on('label_show_code_text')) h+='<div class="lp-code">PCO000123</div>';
       if(on('label_show_price')) h+='<div class="lp-price">'+esc(cur)+'6.00</div>';
       if(val('label_extra_text')) h+='<div class="lp-sub">'+esc(val('label_extra_text'))+'</div>';
       box.innerHTML=h;
     }
     f.addEventListener('input', render); f.addEventListener('change', render);
-    if(sizeSel) sizeSel.addEventListener('change', applySize);
+    if(sizeSel) sizeSel.addEventListener('change', function(){ applySize(); render(); });
+    if(codeSel) codeSel.addEventListener('change', render);
     applySize(); render();
   })();
   </script>
@@ -287,10 +303,23 @@
       <label class="wide">Recipients <input name="alert_weekly_recipients" value="{{ cfg.alert_weekly_recipients }}"></label>
     </div>
 
+    {% set nths = [(1,'first'),(2,'second'),(3,'third'),(4,'fourth'),(-1,'last')] %}
     <div class="subgroup">
       <strong class="wide">🗓️ Monthly report</strong>
       <label class="check">Enabled <input type="checkbox" name="alert_monthly_enabled" {% if cfg.alert_monthly_enabled == '1' %}checked{% endif %}></label>
-      <label>On day (1–28) <input name="alert_monthly_day" type="number" min="1" max="28" value="{{ cfg.alert_monthly_day }}" style="width:5rem"></label>
+      <label>Schedule
+        <select name="alert_monthly_mode" id="mm-mode" onchange="monthlyMode()">
+          <option value="day" {% if cfg.alert_monthly_mode != 'weekday' %}selected{% endif %}>On a day of the month</option>
+          <option value="weekday" {% if cfg.alert_monthly_mode == 'weekday' %}selected{% endif %}>On a weekday of the month</option>
+        </select>
+      </label>
+      <label id="mm-day">On day (1–28) <input name="alert_monthly_day" type="number" min="1" max="28" value="{{ cfg.alert_monthly_day }}" style="width:5rem"></label>
+      <label class="mm-wd">On the
+        <select name="alert_monthly_nth">{% for n, nm in nths %}<option value="{{ n }}" {% if cfg.alert_monthly_nth|string == n|string %}selected{% endif %}>{{ nm }}</option>{% endfor %}</select>
+      </label>
+      <label class="mm-wd">weekday
+        <select name="alert_monthly_weekday">{% for n, nm in weekdays %}<option value="{{ n }}" {% if cfg.alert_monthly_weekday|string == n|string %}selected{% endif %}>{{ nm }}</option>{% endfor %}</select>
+      </label>
       <label>At hour (0–23) <input name="alert_monthly_hour" type="number" min="0" max="23" value="{{ cfg.alert_monthly_hour }}" style="width:5rem"></label>
       <label class="wide">Recipients <input name="alert_monthly_recipients" value="{{ cfg.alert_monthly_recipients }}"></label>
     </div>
@@ -324,5 +353,12 @@ function authMode() {
   document.getElementById('forward_auth_fields').style.display = (m === 'forward') ? '' : 'none';
 }
 authMode();
+
+function monthlyMode() {
+  var wd = document.getElementById('mm-mode').value === 'weekday';
+  document.getElementById('mm-day').style.display = wd ? 'none' : '';
+  document.querySelectorAll('.mm-wd').forEach(function (el) { el.style.display = wd ? '' : 'none'; });
+}
+monthlyMode();
 </script>
 {% endblock %}

@@ -1174,7 +1174,10 @@ def settings_alerts(
     alert_low_stock_enabled: str = Form(""),
     alert_low_stock_recipients: str = Form(""),
     alert_monthly_enabled: str = Form(""),
+    alert_monthly_mode: str = Form("day"),
     alert_monthly_day: int = Form(1),
+    alert_monthly_nth: int = Form(1),
+    alert_monthly_weekday: int = Form(0),
     alert_monthly_hour: int = Form(6),
     alert_monthly_recipients: str = Form(""),
     alert_weekly_enabled: str = Form(""),
@@ -1192,7 +1195,10 @@ def settings_alerts(
     store.set(db, "alert_low_stock_enabled", "1" if alert_low_stock_enabled == "on" else "0")
     store.set(db, "alert_low_stock_recipients", alert_low_stock_recipients.strip())
     store.set(db, "alert_monthly_enabled", "1" if alert_monthly_enabled == "on" else "0")
+    store.set(db, "alert_monthly_mode", "weekday" if alert_monthly_mode == "weekday" else "day")
     store.set(db, "alert_monthly_day", max(1, min(28, alert_monthly_day)))
+    store.set(db, "alert_monthly_nth", alert_monthly_nth if alert_monthly_nth in (1, 2, 3, 4, -1) else 1)
+    store.set(db, "alert_monthly_weekday", max(0, min(6, alert_monthly_weekday)))
     store.set(db, "alert_monthly_hour", hr(alert_monthly_hour))
     store.set(db, "alert_monthly_recipients", alert_monthly_recipients.strip())
     store.set(db, "alert_weekly_enabled", "1" if alert_weekly_enabled == "on" else "0")

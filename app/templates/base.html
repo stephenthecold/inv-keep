@@ -28,20 +28,26 @@
       <a href="/categories">Categories</a>
       <a href="/clients">Clients</a>
       <a href="/jobs">Jobs</a>
+      <div class="navdrop">
+        <button type="button" class="navdrop-btn" data-menu="#records-menu" aria-haspopup="true" aria-expanded="false">Records <span class="caret">▾</span></button>
+        <div class="account-menu navdrop-menu" id="records-menu" data-menu-pop hidden>
+          <a href="/transactions">History</a>
+          <a href="/report">Report</a>
+          {% if can('view_audit') %}<a href="/audit">Audit</a>{% endif %}
+        </div>
+      </div>
     </nav>
     <div class="account">
-      <button type="button" class="account-btn" id="account-btn" aria-haspopup="true" aria-expanded="false">
+      <button type="button" class="account-btn" data-menu="#account-menu" aria-haspopup="true" aria-expanded="false">
         <span class="account-name">{{ user.username or 'Menu' }}</span>
         {% if user.role %}<span class="account-role">{{ user.role }}</span>{% endif %}
         <span class="caret">▾</span>
       </button>
-      <div class="account-menu" id="account-menu" hidden>
-        <a href="/transactions">History</a>
-        <a href="/report">Report</a>
-        {% if can('view_audit') %}<a href="/audit">Audit</a>{% endif %}
+      <div class="account-menu" id="account-menu" data-menu-pop hidden>
         {% if can('manage_users') %}<a href="/users">Users &amp; roles</a>{% endif %}
         {% if can('manage_settings') %}<a href="/settings">Settings</a>{% endif %}
         {% if cfg.auth_mode == 'oidc' %}<a class="logout" href="/logout">Log out</a>{% endif %}
+        {% if not (can('manage_users') or can('manage_settings') or cfg.auth_mode == 'oidc') %}<span class="muted" style="display:block;padding:.5rem .7rem">Signed in as {{ user.role or 'user' }}</span>{% endif %}
       </div>
     </div>
   </header>

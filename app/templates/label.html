@@ -15,8 +15,12 @@
       page-break-after: always; border: none; gap: 0.6mm; overflow: hidden;
     }
     .label > * { flex: 0 0 auto; width: 100%; text-align: center; }
-    .label-barcode { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; }
-    .label-barcode svg { width: {{ '60%' if barcode_type == 'qr' else '100%' }}; height: 100%; max-height: 100%; object-fit: contain; }
+    .label-barcode { flex: 1 1 auto; min-height: 0; width: 100%; display: flex; align-items: center; justify-content: center; }
+    {% if barcode_type == 'qr' %}
+    .label-barcode svg { height: 100%; width: auto; max-width: 100%; }
+    {% else %}
+    .label-barcode svg { width: 100%; height: auto; max-height: 100%; }
+    {% endif %}
     .label-company { font-size: {{ [sub_pt, 6]|max }}pt; font-weight: 700; }
     .label-name { font-size: {{ [name_pt, 7]|max }}pt; font-weight: 700; line-height: 1.05; }
     .label-sub  { font-size: {{ [sub_pt, 5]|max }}pt; line-height: 1.05; }
