@@ -198,7 +198,14 @@ def maybe_low_stock_alert(db, part):
 def build_monthly_html(db, year, month):
     from . import reports
 
-    report, totals = reports.build_report(db, year, month)
+    start, end = reports.month_bounds(year, month)
+    return build_report_html(db, start, end)
+
+
+def build_report_html(db, start, end):
+    from . import reports
+
+    report, totals = reports.build_report_range(db, start, end)
     cur = store.get(db, "currency")
     rows = []
     for c in report:
@@ -221,38 +228,72 @@ def build_monthly_html(db, year, month):
     return "".join(rows) if report else "<p>No charge-outs recorded for this period.</p>"
 
 
-def run_monthly_if_due(db, now=None):
-    """Send the previous month's report on the configured day, once."""
-    if not store.get_bool(db, "alert_monthly_enabled"):
-        return
-    now = now or datetime.utcnow()
-    day = store.get_int(db, "alert_monthly_day", 1)
-    if now.day < day:
-        return
-    # Previous month
-    if now.month == 1:
-        py, pm = now.year - 1, 12
-    else:
-        py, pm = now.year, now.month - 1
-    tag = f"{py:04d}-{pm:02d}"
-    if store.get(db, "alert_monthly_last_sent") == tag:
-        return
-    recipients = store.get(db, "alert_monthly_recipients")
-    if not recipients:
-        return
-    html = build_monthly_html(db, py, pm)
-    ok, _ = send(db, recipients, f"Monthly charge-out report — {tag}", html)
+def _send_report(db, recipients, subject, start, end, last_key, tag):
+    html = build_report_html(db, start, end)
+    ok, _ = send(db, recipients, subject, html)
     if ok:
-        store.set(db, "alert_monthly_last_sent", tag)
+        store.set(db, last_key, tag)
         db.commit()
 
 
+def run_due_jobs(db, now=None):
+    """Send scheduled report emails (monthly / weekly / daily) at their times, once each."""
+    from datetime import timedelta
+
+    from . import reports
+
+    now = now or datetime.utcnow()
+    midnight = datetime(now.year, now.month, now.day)
+
+    # ---- Monthly: on day-of-month at hour, billing the previous calendar month ----
+    if store.get_bool(db, "alert_monthly_enabled"):
+        day = max(1, min(28, store.get_int(db, "alert_monthly_day", 1)))
+        hour = store.get_int(db, "alert_monthly_hour", 6)
+        rec = store.get(db, "alert_monthly_recipients")
+        if rec and (now.day, now.hour) >= (day, hour):
+            py, pm = (now.year - 1, 12) if now.month == 1 else (now.year, now.month - 1)
+            tag = f"{py:04d}-{pm:02d}"
+            if store.get(db, "alert_monthly_last_sent") != tag:
+                start, end = reports.month_bounds(py, pm)
+                _send_report(db, rec, f"Monthly charge-out report — {tag}", start, end,
+                             "alert_monthly_last_sent", tag)
+
+    # ---- Weekly: on weekday at hour, billing the previous 7 days ----
+    if store.get_bool(db, "alert_weekly_enabled"):
+        wd = max(0, min(6, store.get_int(db, "alert_weekly_weekday", 0)))
+        hour = store.get_int(db, "alert_weekly_hour", 6)
+        rec = store.get(db, "alert_weekly_recipients")
+        if rec and now.weekday() == wd and now.hour >= hour:
+            iso = now.isocalendar()
+            tag = f"{iso[0]}-W{iso[1]:02d}"
+            if store.get(db, "alert_weekly_last_sent") != tag:
+                _send_report(db, rec, f"Weekly charge-out report — {tag}",
+                             midnight - timedelta(days=7), midnight,
+                             "alert_weekly_last_sent", tag)
+
+    # ---- Daily: at hour, billing the previous day ----
+    if store.get_bool(db, "alert_daily_enabled"):
+        hour = store.get_int(db, "alert_daily_hour", 6)
+        rec = store.get(db, "alert_daily_recipients")
+        if rec and now.hour >= hour:
+            tag = now.strftime("%Y-%m-%d")
+            if store.get(db, "alert_daily_last_sent") != tag:
+                _send_report(db, rec, f"Daily charge-out report — {tag}",
+                             midnight - timedelta(days=1), midnight,
+                             "alert_daily_last_sent", tag)
+
+
+# Backwards-compatible alias
+def run_monthly_if_due(db, now=None):
+    run_due_jobs(db, now)
+
+
 def scheduler_loop(stop_event):
-    """Daemon: wake hourly and run due monthly reports."""
+    """Daemon: wake hourly and run any due scheduled report emails."""
     while not stop_event.wait(3600):
         db = SessionLocal()
         try:
-            run_monthly_if_due(db)
+            run_due_jobs(db)
         except Exception:  # noqa: BLE001
             pass
         finally:

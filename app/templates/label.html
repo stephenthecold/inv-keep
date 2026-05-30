@@ -1,17 +1,28 @@
 {% extends "base.html" %}
 {% block content %}
 {% if page_w and page_h %}
+{# Dynamic fill: the barcode/QR flex-grows to fill leftover space (Snipe-IT style),
+   and font sizes scale with the label height so big labels don't sit half-empty. #}
+{% set name_pt = (page_h * 0.16)|round(1) %}
+{% set sub_pt  = (page_h * 0.11)|round(1) %}
 <style>
   @page { size: {{ page_w }}mm {{ page_h }}mm; margin: 1.5mm; }
   @media print {
     .label-sheet { display: block; }
     .label {
       width: {{ page_w - 3 }}mm; height: {{ page_h - 3 }}mm;
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      page-break-after: always; border: none; gap: 1mm; overflow: hidden;
+      display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+      page-break-after: always; border: none; gap: 0.6mm; overflow: hidden;
     }
-    .label-barcode svg { max-width: 100%; max-height: {{ (page_h * 0.62)|round(0,'floor') }}mm; height: auto; }
-    .label-name { font-size: {{ '9pt' if page_h >= 25 else '7pt' }}; line-height: 1.05; }
+    .label > * { flex: 0 0 auto; width: 100%; text-align: center; }
+    .label-barcode { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; }
+    .label-barcode svg { width: {{ '60%' if barcode_type == 'qr' else '100%' }}; height: 100%; max-height: 100%; object-fit: contain; }
+    .label-company { font-size: {{ [sub_pt, 6]|max }}pt; font-weight: 700; }
+    .label-name { font-size: {{ [name_pt, 7]|max }}pt; font-weight: 700; line-height: 1.05; }
+    .label-sub  { font-size: {{ [sub_pt, 5]|max }}pt; line-height: 1.05; }
+    .label-price { font-size: {{ [name_pt, 7]|max }}pt; font-weight: 700; }
+    .label-code-text { font-family: monospace; font-size: {{ [sub_pt, 5]|max }}pt; }
+    .label .ico { width: 1.1em; height: 1.1em; }
   }
 </style>
 {% endif %}
@@ -34,10 +45,10 @@
     <a class="btn ghost" href="/parts">Back to items</a>
   </form>
   <p class="muted">
-    Showing <b>{{ size_label }}</b>. In the print dialog, pick your thermal printer and make sure
-    its paper size matches (turn off headers/footers and any scaling/“fit to page”).
-    Set a default under <a href="/settings">Settings → Printing</a>.
-    See <a href="https://github.com">docs/PRINTING.md</a> for Rollo &amp; Brother setup.
+    Showing <b>{{ size_label }}</b> · {{ 'QR code' if barcode_type == 'qr' else 'Code128 barcode' }}.
+    The content scales to fill the label. In the print dialog pick your thermal printer, match the
+    paper size, and turn off headers/footers and scaling. Configure under
+    <a href="/settings">Settings → Printing</a>; see docs/PRINTING.md.
   </p>
 </div>
 
@@ -45,12 +56,13 @@
   {% for part, svg in parts_to_print %}
   <div class="label">
     {% if content.company %}<div class="label-company">{{ content.company }}</div>{% endif %}
-    {% if content.name or content.icon %}
-    <div class="label-name">{% if content.icon and part.icon %}{{ part.icon }} {% endif %}{% if content.name %}{{ part.name }}{% endif %}</div>
+    {% if (content.name and part.name) or (content.icon and part.icon) %}
+    <div class="label-name">{% if content.icon and part.icon %}{{ icon_html(part.icon) | safe }} {% endif %}{% if content.name %}{{ part.name }}{% endif %}</div>
     {% endif %}
     {% if content.category and part.category %}<div class="label-sub">{{ part.category.name }}</div>{% endif %}
     {% if content.description and part.description %}<div class="label-sub">{{ part.description }}</div>{% endif %}
     <div class="label-barcode">{{ svg | safe }}</div>
+    {% if barcode_type == 'qr' and content.name %}<div class="label-code-text">{{ part.barcode }}</div>{% endif %}
     {% if content.price %}<div class="label-price">{{ currency }}{{ '%.2f'|format(part.unit_price) }}</div>{% endif %}
     {% if content.extra %}<div class="label-sub">{{ content.extra }}</div>{% endif %}
   </div>

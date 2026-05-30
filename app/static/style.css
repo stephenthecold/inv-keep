@@ -42,6 +42,7 @@ nav a:hover { color: var(--text); }
 .account-btn { display: inline-flex; align-items: center; gap: .4rem; background: var(--panel-2); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: .4rem .7rem; cursor: pointer; font-size: .9rem; }
 .account-btn:hover { border-color: var(--accent); }
 .account-btn .caret { color: var(--muted); font-size: .7rem; }
+.account-role { font-size: .7rem; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 .4rem; }
 .account-menu { position: absolute; right: 0; top: calc(100% + .4rem); min-width: 170px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 28px rgba(0,0,0,.45); padding: .35rem; z-index: 40; }
 .account-menu a { display: block; padding: .5rem .7rem; border-radius: 6px; color: var(--text); text-decoration: none; white-space: nowrap; }
 .account-menu a:hover { background: var(--panel-2); }
@@ -195,9 +196,19 @@ dialog.modal h2 { margin-top: 0; }
 /* sized label preview on screen */
 .label-sized .label { border: 1px dashed var(--line); margin: .35rem; }
 
+/* item icons (built-in SVG set or emoji) */
+.ico { width: 1.3em; height: 1.3em; vertical-align: -0.2em; }
+.emoji-ico { font-size: 1.1em; line-height: 1; }
+.item-icon .ico { width: 1.6rem; height: 1.6rem; color: var(--text); }
+.item-icon .emoji-ico { font-size: 1.3rem; }
+.charge-icon .ico { width: 2.2rem; height: 2.2rem; }
+.sg-icon .ico { width: 1.2rem; height: 1.2rem; }
+
 /* icon dropdown field */
-.icon-field { display: inline-flex; gap: .4rem; align-items: center; }
-.icon-field .icon-select { max-width: 12rem; }
+.icon-field { display: inline-flex; gap: .45rem; align-items: center; }
+.icon-field .icon-select { max-width: 13rem; }
+.icon-preview { display: inline-flex; align-items: center; justify-content: center; width: 2rem; height: 2rem; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); }
+.icon-preview .ico { width: 1.4rem; height: 1.4rem; }
 
 /* items table */
 .item-icon { font-size: 1.3rem; text-align: center; width: 2.6rem; }

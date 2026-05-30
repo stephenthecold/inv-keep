@@ -23,7 +23,7 @@
       {% if (not cfg.brand_logo) or cfg.brand_show_title == '1' %}<span class="brand-title">{{ cfg.app_title }}</span>{% endif %}
     </a>
     <nav>
-      <a href="/">Scan</a>
+      {% if can('checkout') %}<a href="/">Scan</a>{% endif %}
       <a href="/parts">Items</a>
       <a href="/categories">Categories</a>
       <a href="/clients">Clients</a>
@@ -32,13 +32,15 @@
     <div class="account">
       <button type="button" class="account-btn" id="account-btn" aria-haspopup="true" aria-expanded="false">
         <span class="account-name">{{ user.username or 'Menu' }}</span>
+        {% if user.role %}<span class="account-role">{{ user.role }}</span>{% endif %}
         <span class="caret">▾</span>
       </button>
       <div class="account-menu" id="account-menu" hidden>
         <a href="/transactions">History</a>
         <a href="/report">Report</a>
-        <a href="/audit">Audit</a>
-        <a href="/settings">Settings</a>
+        {% if can('view_audit') %}<a href="/audit">Audit</a>{% endif %}
+        {% if can('manage_users') %}<a href="/users">Users &amp; roles</a>{% endif %}
+        {% if can('manage_settings') %}<a href="/settings">Settings</a>{% endif %}
         {% if cfg.auth_mode == 'oidc' %}<a class="logout" href="/logout">Log out</a>{% endif %}
       </div>
     </div>
@@ -51,6 +53,7 @@
     {% if cfg.brand_footer %}<span>{{ cfg.brand_footer }}</span> · {% endif %}
     {{ cfg.app_title }} <span class="muted">v{{ version }}</span>
   </footer>
+  <script>window.ICON_SET = {{ icon_set | tojson }};</script>
   <script src="/static/app.js?v={{ version }}"></script>
   <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}</script>
 </body>

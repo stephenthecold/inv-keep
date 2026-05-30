@@ -26,6 +26,21 @@ function money(n) {
   return (window.CURRENCY || "$") + Number(n).toFixed(2);
 }
 
+// Render an item icon value (emoji or "svg:<key>") to HTML.
+function iconHTML(v) {
+  if (!v) return "";
+  if (v.indexOf("svg:") === 0) {
+    const inner = window.ICON_SET && window.ICON_SET[v.slice(4)];
+    return inner
+      ? '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + inner + "</svg>"
+      : "";
+  }
+  const span = document.createElement("span");
+  span.className = "emoji-ico";
+  span.textContent = v;
+  return span.outerHTML;
+}
+
 // ---- modal helpers (used by list pages) ----
 function openModal(id) { const d = document.getElementById(id); if (d && d.showModal) d.showModal(); }
 
@@ -47,24 +62,47 @@ function openModal(id) { const d = document.getElementById(id); if (d && d.showM
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
 })();
 
-// ---- icon dropdown: selecting an emoji fills the paired text input ----
+// ---- icon dropdown: pick a built-in SVG icon or a custom emoji ----
 document.addEventListener("change", (e) => {
   const sel = e.target.closest(".icon-select");
   if (!sel) return;
-  const input = sel.parentElement.querySelector(".icon-input");
+  const field = sel.closest(".icon-field");
+  const input = field.querySelector(".icon-input");
+  const prev = field.querySelector(".icon-preview");
+  if (sel.value === "__custom") {
+    if (input) { input.hidden = false; input.value = ""; input.focus(); }
+    if (prev) prev.innerHTML = "";
+  } else if (sel.value.indexOf("svg:") === 0) {
+    if (input) { input.hidden = true; input.value = sel.value; }
+    if (prev) prev.innerHTML = iconHTML(sel.value);
+  } else {
+    if (input) { input.hidden = true; input.value = ""; }
+    if (prev) prev.innerHTML = "";
+  }
+});
+// Typing a custom emoji updates the preview.
+document.addEventListener("input", (e) => {
+  const input = e.target.closest(".icon-input");
   if (!input) return;
-  if (sel.value === "__custom") { input.value = ""; input.focus(); }
-  else { input.value = sel.value; }
+  const prev = input.closest(".icon-field").querySelector(".icon-preview");
+  if (prev) prev.innerHTML = iconHTML(input.value);
 });
 
-// Sync a select to a given icon value (used when opening the edit modal).
+// Set an icon field (select + input + preview) to a given value.
 function setIconField(scope, value) {
   const sel = scope.querySelector(".icon-select");
   const input = scope.querySelector(".icon-input");
+  const prev = scope.querySelector(".icon-preview");
   if (input) input.value = value || "";
+  if (prev) prev.innerHTML = iconHTML(value || "");
   if (!sel) return;
-  const match = Array.from(sel.options).some((o) => o.value === value);
-  sel.value = match && value ? value : (value ? "__custom" : "");
+  if (value && value.indexOf("svg:") === 0 && Array.from(sel.options).some((o) => o.value === value)) {
+    sel.value = value; if (input) input.hidden = true;
+  } else if (value) {
+    sel.value = "__custom"; if (input) input.hidden = false;
+  } else {
+    sel.value = ""; if (input) input.hidden = true;
+  }
 }
 
 // ---- edit-item modal: populate the shared dialog from the row's data-* ----
@@ -149,7 +187,7 @@ if (scan) {
       const row = document.createElement("div");
       const ic = p.image
         ? `<img class="sg-thumb" src="${p.image}" alt="">`
-        : (p.icon ? `<span class="sg-icon">${p.icon}</span>` : "");
+        : (p.icon ? `<span class="sg-icon">${iconHTML(p.icon)}</span>` : "");
       row.innerHTML = `${ic}<b>${p.name}</b> <span class="muted">· ${p.barcode} · on hand ${p.qty} · ${money(p.unit_price)}</span>`;
       row.onclick = () => { hideSuggest(); openCharge(p); };
       suggest.appendChild(row);
@@ -185,7 +223,7 @@ if (scan) {
       document.getElementById("cp-icon").textContent = "";
     } else {
       cpImg.style.display = "none";
-      document.getElementById("cp-icon").textContent = part.icon || "";
+      document.getElementById("cp-icon").innerHTML = iconHTML(part.icon || "");
     }
     document.getElementById("cp-name").textContent = part.name;
     document.getElementById("cp-desc").textContent = part.description || "";

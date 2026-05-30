@@ -17,8 +17,12 @@ def month_bounds(year: int, month: int):
 
 
 def build_report(db, year: int, month: int):
-    """Clients -> jobs -> line items for the month, plus charge/cost/margin totals."""
     start, end = month_bounds(year, month)
+    return build_report_range(db, start, end)
+
+
+def build_report_range(db, start, end):
+    """Clients -> jobs -> line items in [start, end), plus charge/cost/margin totals."""
     txns = (
         db.query(Transaction)
         .join(Part)

@@ -75,6 +75,22 @@ def generate_value(part_id: int) -> str:
     return f"{PREFIX}{part_id:06d}"
 
 
+def render_qr_svg(data: str) -> str:
+    """Return an inline SVG QR code (square, scales to its container)."""
+    import qrcode
+    import qrcode.image.svg
+
+    img = qrcode.make(data, image_factory=qrcode.image.svg.SvgPathImage, box_size=10, border=1)
+    buf = BytesIO()
+    img.save(buf)
+    svg = buf.getvalue().decode("utf-8")
+    if svg.startswith("<?xml"):
+        svg = svg.split("?>", 1)[1].lstrip()
+    # Make it scale to its parent box.
+    svg = svg.replace("<svg ", '<svg preserveAspectRatio="xMidYMid meet" style="width:100%;height:100%" ', 1)
+    return svg
+
+
 def render_svg(code: str, *, module_height: float = 12.0, font_size: int = 10, show_text: bool = True) -> str:
     """Return an inline SVG string of a Code128 barcode for `code`."""
     writer = SVGWriter()

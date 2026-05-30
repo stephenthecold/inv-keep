@@ -1,0 +1,141 @@
+"""Role-based access control: permissions, default roles, and login resolution.
+
+Roles carry a set of permission keys. Users (created on OIDC/forward login or
+managed locally) map to a role. A user's role can be set manually (locked) or
+derived from their IdP group claims via a configurable map.
+"""
+
+from . import settings_store as store
+from .models import Role, User
+
+# (key, human label) — the granular capabilities
+PERMISSIONS = [
+    ("view", "View inventory, reports & history"),
+    ("checkout", "Scan / charge out & void"),
+    ("manage_items", "Add/edit items & categories, restock"),
+    ("manage_clients", "Manage clients & jobs"),
+    ("view_audit", "View the audit log"),
+    ("manage_settings", "Change settings (branding, email, printing, auth)"),
+    ("manage_users", "Manage users, roles & permissions"),
+]
+ALL_PERMS = [p[0] for p in PERMISSIONS]
+
+DEFAULT_ROLES = {
+    "Admin":    {"perms": ALL_PERMS, "admin": True},
+    "Manager":  {"perms": ["view", "checkout", "manage_items", "manage_clients", "view_audit"], "admin": False},
+    "Operator": {"perms": ["view", "checkout"], "admin": False},
+    "Viewer":   {"perms": ["view"], "admin": False},
+}
+
+
+def seed_roles(db):
+    for name, info in DEFAULT_ROLES.items():
+        if not db.query(Role).filter(Role.name == name).first():
+            db.add(Role(name=name, permissions=",".join(info["perms"]),
+                        is_admin=info["admin"], builtin=True))
+    db.commit()
+
+
+def perms_for_role(role):
+    if role is None:
+        return set()
+    if role.is_admin:
+        return set(ALL_PERMS)
+    return {p.strip() for p in (role.permissions or "").split(",") if p.strip()}
+
+
+def _parse_group_map(raw):
+    """Lines like 'authentik-admins = Admin' -> {'authentik-admins': 'Admin'}."""
+    mapping = {}
+    for line in (raw or "").replace(";", "\n").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        sep = "=" if "=" in line else (":" if ":" in line else None)
+        if not sep:
+            continue
+        g, r = line.split(sep, 1)
+        mapping[g.strip()] = r.strip()
+    return mapping
+
+
+def _role_by_name(db, name):
+    if not name:
+        return None
+    return db.query(Role).filter(Role.name == name).first()
+
+
+def admin_dict(username="local", email=""):
+    return {"username": username, "email": email, "role": "Admin",
+            "perms": set(ALL_PERMS), "is_admin": True}
+
+
+def resolve_login(db, username, email, groups):
+    """Find/create the user, decide their role, return the auth dict for the request."""
+    seed_roles(db)
+    email = (email or "").strip()
+    username = (username or "").strip() or email or "user"
+    groups = groups or []
+
+    admin_emails = {e.strip().lower() for e in store.get(db, "rbac_admin_emails").replace(";", ",").split(",") if e.strip()}
+    default_role_name = store.get(db, "rbac_default_role") or "Admin"
+    auto_create = store.get_bool(db, "rbac_auto_create")
+    group_map = _parse_group_map(store.get(db, "oidc_group_role_map"))
+
+    # existing user by email (preferred) then username
+    user = None
+    if email:
+        user = db.query(User).filter(User.email == email).first()
+    if not user:
+        user = db.query(User).filter(User.username == username).first()
+
+    # Determine the role to apply (unless the user is locked to a manual role)
+    def derive_role():
+        if email and email.lower() in admin_emails:
+            return _role_by_name(db, "Admin")
+        for g in groups:
+            if g in group_map:
+                r = _role_by_name(db, group_map[g])
+                if r:
+                    return r
+        return _role_by_name(db, default_role_name) or _role_by_name(db, "Viewer")
+
+    if user and user.locked and user.role:
+        role = user.role
+    else:
+        role = derive_role()
+
+    if user is None:
+        if auto_create:
+            user = User(username=username, email=email, role_id=role.id if role else None,
+                        active=True, source="idp", locked=False)
+            db.add(user)
+            db.commit()
+        # else: not stored, but still grant the derived role for this session
+    else:
+        if not user.active:
+            return None  # deactivated user — deny
+        if not user.locked and role and user.role_id != role.id:
+            user.role_id = role.id
+            db.commit()
+
+    perms = perms_for_role(role)
+    return {"username": username, "email": email, "role": role.name if role else "",
+            "perms": perms, "is_admin": bool(role and role.is_admin)}
+
+
+# ---- per-request permission requirements -----------------------------------
+def required_perm(path, method):
+    if path.startswith("/api/checkout") or path.startswith("/api/void"):
+        return "checkout"
+    if path.startswith("/users"):
+        return "manage_users"
+    if path.startswith("/settings"):
+        return "manage_settings"
+    if path.startswith("/audit"):
+        return "view_audit"
+    if method == "POST" and (path.startswith("/parts") or path.startswith("/categories")):
+        return "manage_items"
+    if method == "POST" and (path.startswith("/clients") or path.startswith("/jobs")):
+        return "manage_clients"
+    return "view"

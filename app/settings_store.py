@@ -16,6 +16,7 @@ DEFAULTS = {
     "low_stock_threshold": "5",
     # Default label size preset key (see app/labels.py LABEL_SIZES)
     "label_size": "sheet",
+    "label_barcode_type": "code128",   # code128 | qr
     # Label content toggles + custom text (what prints on each label)
     "label_show_icon": "1",
     "label_show_name": "1",
@@ -41,6 +42,13 @@ DEFAULTS = {
     "oidc_redirect_url": env_settings.oidc_redirect_url,
     "forward_auth_user_header": env_settings.forward_auth_user_header,
     "forward_auth_email_header": env_settings.forward_auth_email_header,
+    # RBAC (users / roles / group mapping)
+    "rbac_default_role": "Admin",     # role for IdP users with no group match (Admin = permissive default)
+    "rbac_admin_emails": "",          # comma-separated emails always granted Admin
+    "rbac_auto_create": "1",          # auto-create a user record on first IdP login
+    "oidc_groups_claim": "groups",    # claim holding the user's groups
+    "oidc_group_role_map": "",        # lines "group = RoleName"
+    "forward_auth_groups_header": "x-authentik-groups",
     # Email
     "email_method": "none",  # none | smtp | oauth_microsoft | oauth_google
     "email_from": "",
@@ -61,8 +69,18 @@ DEFAULTS = {
     "alert_low_stock_recipients": "",
     "alert_monthly_enabled": "0",
     "alert_monthly_day": "1",
+    "alert_monthly_hour": "6",
     "alert_monthly_recipients": "",
     "alert_monthly_last_sent": "",  # YYYY-MM that was last emailed
+    "alert_weekly_enabled": "0",
+    "alert_weekly_weekday": "0",    # 0=Mon … 6=Sun
+    "alert_weekly_hour": "6",
+    "alert_weekly_recipients": "",
+    "alert_weekly_last_sent": "",
+    "alert_daily_enabled": "0",
+    "alert_daily_hour": "6",
+    "alert_daily_recipients": "",
+    "alert_daily_last_sent": "",
 }
 
 SECRET_KEYS = {

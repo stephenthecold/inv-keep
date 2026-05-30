@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Users &amp; roles</h1>
+<p class="muted">People who sign in via Authentik / Entra / OIDC appear here on first login.
+Assign a role, or tick <b>Lock</b> to keep their role from being overwritten by group mapping.
+Configure group→role mapping under <a href="/settings">Settings → Authentication</a>.</p>
+
+<h2>Users</h2>
+<div class="table-scroll">
+<table class="lines">
+  <thead><tr><th>User</th><th>Email</th><th>Source</th><th>Role</th><th>Active</th><th>Lock role</th><th></th></tr></thead>
+  <tbody>
+    {% for u in users %}
+    <tr {% if not u.active %}class="voided"{% endif %}>
+      <td><form id="u-{{ u.id }}" method="post" action="/users/{{ u.id }}/save"></form>{{ u.username }}</td>
+      <td>{{ u.email }}</td>
+      <td>{{ u.source }}</td>
+      <td>
+        <select form="u-{{ u.id }}" name="role_id">
+          <option value="">— none —</option>
+          {% for r in roles %}<option value="{{ r.id }}" {% if u.role_id == r.id %}selected{% endif %}>{{ r.name }}</option>{% endfor %}
+        </select>
+      </td>
+      <td><input form="u-{{ u.id }}" type="checkbox" name="active" {% if u.active %}checked{% endif %}></td>
+      <td><input form="u-{{ u.id }}" type="checkbox" name="locked" {% if u.locked %}checked{% endif %}></td>
+      <td><button form="u-{{ u.id }}" type="submit">Save</button></td>
+    </tr>
+    {% else %}
+    <tr class="empty"><td colspan="7">No users yet — they're created automatically on first IdP login. (In “no login” mode everyone is the local admin.)</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<div class="page-head" style="margin-top:2rem">
+  <h2 style="border:none">Roles</h2>
+  <button class="add-btn" onclick="openModal('add-role')">+ Add role</button>
+</div>
+
+<dialog id="add-role" class="modal">
+  <h2>Add role</h2>
+  <form method="post" action="/users/roles/add" class="grid-form">
+    <label class="wide">Name <input name="name" required placeholder="e.g. Warehouse"></label>
+    <div class="wide"><strong>Permissions</strong></div>
+    {% for key, label in permissions %}
+    <label class="check wide">{{ label }} <input type="checkbox" name="permissions" value="{{ key }}"></label>
+    {% endfor %}
+    <menu class="modal-actions">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit">Create role</button>
+    </menu>
+  </form>
+</dialog>
+
+{% for r in roles %}
+<details class="card">
+  <summary><strong>{{ r.name }}</strong>
+    {% if r.is_admin %}<span class="tag good-tag">all permissions</span>{% endif %}
+    {% if r.builtin %}<span class="tag muted">built-in</span>{% endif %}
+  </summary>
+  {% if r.is_admin %}
+  <p class="muted">The Admin role always has every permission and can't be edited.</p>
+  {% else %}
+  <form method="post" action="/users/roles/{{ r.id }}/save" class="grid-form">
+    {% set rperms = (r.permissions or '').split(',') %}
+    {% for key, label in permissions %}
+    <label class="check wide">{{ label }} <input type="checkbox" name="permissions" value="{{ key }}" {% if key in rperms %}checked{% endif %}></label>
+    {% endfor %}
+    <button type="submit">Save permissions</button>
+    {% if not r.builtin %}
+    <button type="submit" formaction="/users/roles/{{ r.id }}/delete" class="danger" formnovalidate
+      onclick="return confirm('Delete this role? Its users move to Viewer.')">Delete role</button>
+    {% endif %}
+  </form>
+  {% endif %}
+</details>
+{% endfor %}
+{% endblock %}

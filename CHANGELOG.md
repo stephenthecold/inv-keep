@@ -3,6 +3,22 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.6.0] — 2026-05-30
+- **Custom SVG icon set** — items can use crisp built-in line icons (network cable,
+  power plug, connector, server, router, etc.) picked from a dropdown with a live
+  preview; they render in the table, search, charge panel and on labels (custom
+  emoji still supported).
+- **Dynamic labels (Snipe-IT style)** — label content now flex-fills the label so
+  bigger labels aren't half-empty: the barcode grows and fonts scale to the size.
+  Added an optional **QR code** mode alongside Code128.
+- **More alert schedules** — daily / weekly / monthly report emails, each with its
+  own day/weekday + hour and recipients (checked hourly).
+- **Users, roles & permissions (RBAC)** — granular permissions (view, checkout,
+  manage items/clients/settings/users, view audit) grouped into roles
+  (Admin/Manager/Operator/Viewer + custom). Users signing in via Authentik / Entra /
+  OIDC are auto-created and mapped to roles by **IdP group claim** (configurable
+  map), with per-user override, always-admin emails, and nav/route enforcement.
+
 ## [1.5.0] — 2026-05-30
 - **Account menu** — History, Report, Audit and Settings moved into a clickable
   account dropdown (top-right), decluttering the main nav (Scan / Items /

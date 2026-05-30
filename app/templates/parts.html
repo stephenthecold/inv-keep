@@ -1,14 +1,14 @@
 {% extends "base.html" %}
-{% set ICONS = [('🌐','Network / Ethernet cable'),('🔌','Power cord / plug'),('🔗','Connector / coupler'),('🔋','Battery'),('🧰','Toolbox'),('🖥️','Computer'),('💾','Drive'),('📡','Antenna'),('🛜','Wi-Fi'),('🔧','Wrench'),('🔩','Bolt / fastener'),('💡','Bulb'),('🔦','Flashlight'),('📦','Box'),('🪛','Screwdriver'),('🧲','Magnet'),('📶','Signal'),('🖨️','Printer'),('⌨️','Keyboard'),('🖱️','Mouse'),('📱','Phone')] %}
 {% macro icon_field(current='') %}
 <label>Icon
   <span class="icon-field">
+    <span class="icon-preview">{{ icon_html(current) }}</span>
     <select class="icon-select">
       <option value="">— none —</option>
-      {% for e, nm in ICONS %}<option value="{{ e }}" {% if e == current %}selected{% endif %}>{{ e }} {{ nm }}</option>{% endfor %}
-      <option value="__custom" {% if current and current not in ICONS|map(attribute=0)|list %}selected{% endif %}>Custom…</option>
+      {% for key, nm in icon_choices %}<option value="svg:{{ key }}" {% if current == 'svg:' + key %}selected{% endif %}>{{ nm }}</option>{% endfor %}
+      <option value="__custom" {% if current and not current.startswith('svg:') %}selected{% endif %}>Custom emoji…</option>
     </select>
-    <input name="icon" class="icon-input" value="{{ current }}" maxlength="8" style="width:3.4rem;text-align:center" placeholder="emoji">
+    <input name="icon" class="icon-input" value="{{ current }}" maxlength="12" style="width:3.4rem;text-align:center" placeholder="emoji" {% if current.startswith('svg:') or not current %}hidden{% endif %}>
   </span>
 </label>
 {% endmacro %}
@@ -88,7 +88,7 @@
   <tbody>
     {% for p in parts %}
     <tr {% if not p.active %}class="voided"{% endif %}>
-      <td class="item-icon">{% if p.image %}<img class="item-thumb" src="{{ p.image }}" alt="">{% else %}{{ p.icon }}{% endif %}</td>
+      <td class="item-icon">{% if p.image %}<img class="item-thumb" src="{{ p.image }}" alt="">{% else %}{{ icon_html(p.icon) | safe }}{% endif %}</td>
       <td>
         <div class="item-name">{{ p.name }}{% if not p.active %} <span class="tag muted">inactive</span>{% endif %}</div>
         {% if p.description %}<div class="muted item-desc">{{ p.description }}</div>{% endif %}

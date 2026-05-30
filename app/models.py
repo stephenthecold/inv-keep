@@ -130,6 +130,32 @@ class Transaction(Base):
         return self.total_charge - self.total_cost
 
 
+class Role(Base):
+    __tablename__ = "roles"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, unique=True, nullable=False)
+    permissions = Column(Text, default="")   # comma-separated permission keys
+    is_admin = Column(Boolean, nullable=False, default=False)  # grants all permissions
+    builtin = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    username = Column(String, default="")
+    email = Column(String, default="", index=True)
+    role_id = Column(Integer, ForeignKey("roles.id"), nullable=True)
+    active = Column(Boolean, nullable=False, default=True)
+    locked = Column(Boolean, nullable=False, default=False)  # role set manually (don't auto-map)
+    source = Column(String, default="idp")  # idp | local
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    role = relationship("Role")
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
 

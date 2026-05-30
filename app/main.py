@@ -3,7 +3,7 @@ import secrets
 import threading
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import (
@@ -19,15 +19,22 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import audit, auth, emailer, labels, reports
+from . import audit, auth, emailer, icons, labels, rbac, reports
 from . import settings_store as store
 from .config import settings
 from .database import Base, SessionLocal, engine, ensure_columns, get_db
-from .models import AuditLog, Category, Client, Job, Part, Transaction
+from .models import AuditLog, Category, Client, Job, Part, Role, Transaction, User
 from .version import __version__
 
 Base.metadata.create_all(bind=engine)
 ensure_columns()
+
+# Seed the built-in roles (Admin/Manager/Operator/Viewer) if missing.
+_seed_db = SessionLocal()
+try:
+    rbac.seed_roles(_seed_db)
+finally:
+    _seed_db.close()
 
 # Uploaded brand assets live alongside the database (under the mounted ./data volume).
 UPLOAD_DIR = os.path.join("data", "uploads")
@@ -67,6 +74,7 @@ app = FastAPI(title=settings.app_title)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 templates = Jinja2Templates(directory="app/templates")
+templates.env.globals["icon_html"] = icons.render_html
 
 # Network-FIRST service worker: always fetch fresh (so CSS/JS/template updates
 # apply immediately), falling back to cache only when offline. Static assets are
@@ -127,6 +135,20 @@ async def auth_middleware(request: Request, call_next):
             return RedirectResponse("/login")
         return JSONResponse({"detail": "Unauthorized"}, status_code=401)
     request.state.user = user
+
+    # Permission enforcement
+    perm = rbac.required_perm(path, request.method)
+    perms = user.get("perms", set())
+    if not user.get("is_admin") and perm not in perms:
+        if path.startswith("/api/"):
+            return JSONResponse({"ok": False, "error": "forbidden", "need": perm}, status_code=403)
+        return HTMLResponse(
+            f"<html><body style='font-family:system-ui;max-width:560px;margin:4rem auto;color:#333'>"
+            f"<h2>Not permitted</h2><p>Your role (<b>{user.get('role','')}</b>) doesn't have the "
+            f"<code>{perm}</code> permission. Ask an administrator for access.</p>"
+            f"<p><a href='/'>← Back</a></p></body></html>",
+            status_code=403,
+        )
     return await call_next(request)
 
 
@@ -142,10 +164,14 @@ def ctx(request: Request, db: Session, **kwargs):
         "settings": settings,
         "cfg": store.all_settings(db),
         "version": __version__,
+        "icon_set": icons.ICON_SET,
+        "icon_choices": icons.ICON_CHOICES,
         "now": datetime.utcnow(),
-        "msg": request.query_params.get("msg", ""),
-        "ok": request.query_params.get("ok", "1") != "0",
     }
+    u = base["user"]
+    base["can"] = lambda p: bool(u.get("is_admin")) or p in u.get("perms", set())
+    base["msg"] = request.query_params.get("msg", "")
+    base["ok"] = request.query_params.get("ok", "1") != "0"
     base.update(kwargs)
     return base
 
@@ -287,9 +313,14 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
     except Exception as e:  # noqa: BLE001
         return _auth_error_page(e)
     info = token.get("userinfo") or {}
+    claim = store.get(db, "oidc_groups_claim") or "groups"
+    groups = info.get(claim) or []
+    if isinstance(groups, str):
+        groups = [g.strip() for g in groups.replace(";", ",").split(",") if g.strip()]
     request.session["user"] = {
         "username": info.get("preferred_username") or info.get("email") or "user",
         "email": info.get("email", ""),
+        "groups": list(groups),
     }
     return RedirectResponse("/")
 
@@ -547,7 +578,17 @@ def _label_ctx(request, db, parts, sheet):
     size_key = request.query_params.get("size") or store.get(db, "label_size") or "sheet"
     preset = labels.size_preset(size_key)
     show_code = store.get_bool(db, "label_show_code_text")
-    rendered = [(p, labels.render_svg(p.barcode, show_text=show_code)) for p in parts]
+    btype = store.get(db, "label_barcode_type") or "code128"
+    # Scale the 1D barcode height to the label so big labels fill instead of empty.
+    ph = preset["h"]
+    module_height = max(8.0, min(ph * 0.42, 60.0)) if ph else 14.0
+
+    def _render(p):
+        if btype == "qr":
+            return labels.render_qr_svg(p.barcode)
+        return labels.render_svg(p.barcode, show_text=show_code, module_height=module_height)
+
+    rendered = [(p, _render(p)) for p in parts]
     content = {
         "icon": store.get_bool(db, "label_show_icon"),
         "name": store.get_bool(db, "label_show_name"),
@@ -560,6 +601,7 @@ def _label_ctx(request, db, parts, sheet):
     return dict(
         parts_to_print=rendered,
         sheet=sheet,
+        barcode_type=btype,
         size_groups=labels.grouped_sizes(),
         size_key=size_key,
         page_w=preset["w"],
@@ -789,6 +831,71 @@ def audit_page(request: Request, db: Session = Depends(get_db)):
     )
 
 
+# ============================================================ users & roles
+@app.get("/users", response_class=HTMLResponse)
+def users_page(request: Request, db: Session = Depends(get_db)):
+    users = db.query(User).order_by(User.username).all()
+    roles = db.query(Role).order_by(Role.is_admin.desc(), Role.name).all()
+    return templates.TemplateResponse(
+        "users.html", ctx(request, db, users=users, roles=roles, permissions=rbac.PERMISSIONS)
+    )
+
+
+@app.post("/users/{user_id}/save")
+def users_save(
+    user_id: int,
+    request: Request,
+    role_id: str = Form(""),
+    active: str = Form(""),
+    locked: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    u = db.get(User, user_id)
+    if u:
+        u.role_id = int(role_id) if role_id else None
+        u.active = active == "on"
+        u.locked = locked == "on"
+        audit.record(db, current_user(request), "user.edit", "user", u.id, f"Updated {u.username or u.email}")
+        db.commit()
+    return redirect("/users", "User saved.")
+
+
+@app.post("/users/roles/add")
+def roles_add(request: Request, name: str = Form(...), permissions: List[str] = Form([]), db: Session = Depends(get_db)):
+    name = name.strip()
+    if name and not db.query(Role).filter(Role.name == name).first():
+        valid = [p for p in permissions if p in rbac.ALL_PERMS]
+        db.add(Role(name=name, permissions=",".join(valid), is_admin=False, builtin=False))
+        audit.record(db, current_user(request), "role.create", "role", None, f"Created role {name}")
+        db.commit()
+    else:
+        return redirect("/users", "Role name missing or already exists.", ok=False)
+    return redirect("/users", "Role created.")
+
+
+@app.post("/users/roles/{role_id}/save")
+def roles_save(role_id: int, request: Request, permissions: List[str] = Form([]), db: Session = Depends(get_db)):
+    role = db.get(Role, role_id)
+    if role and not role.is_admin:  # Admin always keeps all permissions
+        role.permissions = ",".join(p for p in permissions if p in rbac.ALL_PERMS)
+        audit.record(db, current_user(request), "role.edit", "role", role.id, f"Edited role {role.name}")
+        db.commit()
+    return redirect("/users", "Role saved.")
+
+
+@app.post("/users/roles/{role_id}/delete")
+def roles_delete(role_id: int, request: Request, db: Session = Depends(get_db)):
+    role = db.get(Role, role_id)
+    if role and not role.builtin:
+        default = db.query(Role).filter(Role.name == "Viewer").first()
+        for u in db.query(User).filter(User.role_id == role.id).all():
+            u.role_id = default.id if default else None
+        audit.record(db, current_user(request), "role.delete", "role", role.id, f"Deleted role {role.name}")
+        db.delete(role)
+        db.commit()
+    return redirect("/users", "Role deleted.")
+
+
 # ============================================================ reports
 def _parse_month(value: str):
     if value:
@@ -830,7 +937,8 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
         "settings.html",
         ctx(request, db, providers=emailer.PROVIDERS, this_month=datetime.utcnow().strftime("%Y-%m"),
             disable_auth=settings.disable_auth, size_groups=labels.grouped_sizes(),
-            currencies=CURRENCIES, label_sizes=labels.LABEL_SIZES),
+            currencies=CURRENCIES, label_sizes=labels.LABEL_SIZES,
+            roles=db.query(Role).order_by(Role.name).all()),
     )
 
 
@@ -851,11 +959,12 @@ def settings_general(
 
 
 @app.post("/settings/printing")
-def settings_printing(request: Request, label_size: str = Form("sheet"), db: Session = Depends(get_db)):
+def settings_printing(request: Request, label_size: str = Form("sheet"), label_barcode_type: str = Form("code128"), db: Session = Depends(get_db)):
     if label_size not in labels.LABEL_SIZES:
         label_size = "sheet"
     store.set(db, "label_size", label_size)
-    audit.record(db, current_user(request), "settings.printing", "settings", None, f"Default label size {label_size}")
+    store.set(db, "label_barcode_type", "qr" if label_barcode_type == "qr" else "code128")
+    audit.record(db, current_user(request), "settings.printing", "settings", None, f"Label {label_size}/{label_barcode_type}")
     db.commit()
     return redirect("/settings", "Printing settings saved.")
 
@@ -953,6 +1062,12 @@ def settings_auth(
     oidc_redirect_url: str = Form(""),
     forward_auth_user_header: str = Form(""),
     forward_auth_email_header: str = Form(""),
+    forward_auth_groups_header: str = Form(""),
+    oidc_groups_claim: str = Form("groups"),
+    oidc_group_role_map: str = Form(""),
+    rbac_default_role: str = Form("Admin"),
+    rbac_admin_emails: str = Form(""),
+    rbac_auto_create: str = Form(""),
     db: Session = Depends(get_db),
 ):
     if auth_mode not in ("none", "oidc", "forward"):
@@ -963,6 +1078,12 @@ def settings_auth(
     store.set(db, "oidc_redirect_url", oidc_redirect_url.strip())
     store.set(db, "forward_auth_user_header", forward_auth_user_header.strip() or "x-authentik-username")
     store.set(db, "forward_auth_email_header", forward_auth_email_header.strip() or "x-authentik-email")
+    store.set(db, "forward_auth_groups_header", forward_auth_groups_header.strip() or "x-authentik-groups")
+    store.set(db, "oidc_groups_claim", oidc_groups_claim.strip() or "groups")
+    store.set(db, "oidc_group_role_map", oidc_group_role_map.strip())
+    store.set(db, "rbac_default_role", rbac_default_role.strip() or "Admin")
+    store.set(db, "rbac_admin_emails", rbac_admin_emails.strip())
+    store.set(db, "rbac_auto_create", "1" if rbac_auto_create == "on" else "0")
     if oidc_client_secret:
         store.set(db, "oidc_client_secret", oidc_client_secret)
     audit.record(db, current_user(request), "settings.auth", "settings", None, f"Auth mode set to {auth_mode}")
@@ -1054,14 +1175,33 @@ def settings_alerts(
     alert_low_stock_recipients: str = Form(""),
     alert_monthly_enabled: str = Form(""),
     alert_monthly_day: int = Form(1),
+    alert_monthly_hour: int = Form(6),
     alert_monthly_recipients: str = Form(""),
+    alert_weekly_enabled: str = Form(""),
+    alert_weekly_weekday: int = Form(0),
+    alert_weekly_hour: int = Form(6),
+    alert_weekly_recipients: str = Form(""),
+    alert_daily_enabled: str = Form(""),
+    alert_daily_hour: int = Form(6),
+    alert_daily_recipients: str = Form(""),
     db: Session = Depends(get_db),
 ):
+    def hr(v):
+        return max(0, min(23, v))
+
     store.set(db, "alert_low_stock_enabled", "1" if alert_low_stock_enabled == "on" else "0")
     store.set(db, "alert_low_stock_recipients", alert_low_stock_recipients.strip())
     store.set(db, "alert_monthly_enabled", "1" if alert_monthly_enabled == "on" else "0")
     store.set(db, "alert_monthly_day", max(1, min(28, alert_monthly_day)))
+    store.set(db, "alert_monthly_hour", hr(alert_monthly_hour))
     store.set(db, "alert_monthly_recipients", alert_monthly_recipients.strip())
+    store.set(db, "alert_weekly_enabled", "1" if alert_weekly_enabled == "on" else "0")
+    store.set(db, "alert_weekly_weekday", max(0, min(6, alert_weekly_weekday)))
+    store.set(db, "alert_weekly_hour", hr(alert_weekly_hour))
+    store.set(db, "alert_weekly_recipients", alert_weekly_recipients.strip())
+    store.set(db, "alert_daily_enabled", "1" if alert_daily_enabled == "on" else "0")
+    store.set(db, "alert_daily_hour", hr(alert_daily_hour))
+    store.set(db, "alert_daily_recipients", alert_daily_recipients.strip())
     audit.record(db, current_user(request), "settings.alerts", "settings", None, "Updated alert settings")
     db.commit()
     return redirect("/settings", "Alert settings saved.")

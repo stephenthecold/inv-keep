@@ -64,6 +64,12 @@
         {% endfor %}
       </select>
     </label>
+    <label>Code type
+      <select name="label_barcode_type">
+        <option value="code128" {% if cfg.label_barcode_type != 'qr' %}selected{% endif %}>Code128 barcode (1D)</option>
+        <option value="qr" {% if cfg.label_barcode_type == 'qr' %}selected{% endif %}>QR code (2D)</option>
+      </select>
+    </label>
     <button type="submit">Save printing</button>
   </form>
   <small>Used as the default on the label pages. Grouped by brand: Brother, DYMO, Zebra, Rollo.
@@ -182,6 +188,23 @@
       <label>Email header <input name="forward_auth_email_header" value="{{ cfg.forward_auth_email_header }}"></label>
     </div>
 
+    <div class="subgroup">
+      <strong class="wide">Roles &amp; group mapping</strong>
+      <label>Default role (no group match)
+        <select name="rbac_default_role">
+          {% for r in roles %}<option value="{{ r.name }}" {% if cfg.rbac_default_role == r.name %}selected{% endif %}>{{ r.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="check">Auto-create users on first login <input type="checkbox" name="rbac_auto_create" {% if cfg.rbac_auto_create == '1' %}checked{% endif %}></label>
+      <label class="wide">Always-admin emails (comma-separated) <input name="rbac_admin_emails" value="{{ cfg.rbac_admin_emails }}" placeholder="you@company.com"></label>
+      <label>Groups claim (OIDC) <input name="oidc_groups_claim" value="{{ cfg.oidc_groups_claim }}"></label>
+      <label>Groups header (forward-auth) <input name="forward_auth_groups_header" value="{{ cfg.forward_auth_groups_header }}"></label>
+      <label class="wide">Group → role map (one per line, e.g. <code>authentik-admins = Admin</code>)
+        <textarea name="oidc_group_role_map" rows="3" placeholder="netops = Manager&#10;techs = Operator&#10;everyone = Viewer">{{ cfg.oidc_group_role_map }}</textarea>
+      </label>
+      <small class="wide">Manage the roles themselves under <a href="/users">Users &amp; roles</a>. Default role is <b>Admin</b> until you tighten it — set it to Viewer/Operator and map your admin group (or list admin emails) so you don't lock yourself out.</small>
+    </div>
+
     <button type="submit">Save authentication</button>
   </form>
   <small>⚠️ If an OIDC misconfiguration locks you out, set the env var <code>DISABLE_AUTH=1</code> and restart to regain access, then fix the settings.</small>
@@ -242,15 +265,39 @@
 <!-- ---------------- Alerts ---------------- -->
 <section class="card">
   <h2>Alerts</h2>
+  {% set weekdays = [(0,'Monday'),(1,'Tuesday'),(2,'Wednesday'),(3,'Thursday'),(4,'Friday'),(5,'Saturday'),(6,'Sunday')] %}
   <form method="post" action="/settings/alerts" class="grid-form">
     <label class="check">Low-stock email alerts <input type="checkbox" name="alert_low_stock_enabled" {% if cfg.alert_low_stock_enabled == '1' %}checked{% endif %}></label>
     <label class="wide">Low-stock recipients (comma-separated) <input name="alert_low_stock_recipients" value="{{ cfg.alert_low_stock_recipients }}"></label>
 
-    <label class="check">Monthly report email <input type="checkbox" name="alert_monthly_enabled" {% if cfg.alert_monthly_enabled == '1' %}checked{% endif %}></label>
-    <label>Send on day of month <input name="alert_monthly_day" type="number" min="1" max="28" value="{{ cfg.alert_monthly_day }}" style="width:5rem"></label>
-    <label class="wide">Monthly recipients (comma-separated) <input name="alert_monthly_recipients" value="{{ cfg.alert_monthly_recipients }}"></label>
+    <div class="subgroup">
+      <strong class="wide">📅 Daily report</strong>
+      <label class="check">Enabled <input type="checkbox" name="alert_daily_enabled" {% if cfg.alert_daily_enabled == '1' %}checked{% endif %}></label>
+      <label>At hour (0–23) <input name="alert_daily_hour" type="number" min="0" max="23" value="{{ cfg.alert_daily_hour }}" style="width:5rem"></label>
+      <label class="wide">Recipients <input name="alert_daily_recipients" value="{{ cfg.alert_daily_recipients }}"></label>
+    </div>
+
+    <div class="subgroup">
+      <strong class="wide">🗓️ Weekly report</strong>
+      <label class="check">Enabled <input type="checkbox" name="alert_weekly_enabled" {% if cfg.alert_weekly_enabled == '1' %}checked{% endif %}></label>
+      <label>On
+        <select name="alert_weekly_weekday">{% for n, nm in weekdays %}<option value="{{ n }}" {% if cfg.alert_weekly_weekday|string == n|string %}selected{% endif %}>{{ nm }}</option>{% endfor %}</select>
+      </label>
+      <label>At hour (0–23) <input name="alert_weekly_hour" type="number" min="0" max="23" value="{{ cfg.alert_weekly_hour }}" style="width:5rem"></label>
+      <label class="wide">Recipients <input name="alert_weekly_recipients" value="{{ cfg.alert_weekly_recipients }}"></label>
+    </div>
+
+    <div class="subgroup">
+      <strong class="wide">🗓️ Monthly report</strong>
+      <label class="check">Enabled <input type="checkbox" name="alert_monthly_enabled" {% if cfg.alert_monthly_enabled == '1' %}checked{% endif %}></label>
+      <label>On day (1–28) <input name="alert_monthly_day" type="number" min="1" max="28" value="{{ cfg.alert_monthly_day }}" style="width:5rem"></label>
+      <label>At hour (0–23) <input name="alert_monthly_hour" type="number" min="0" max="23" value="{{ cfg.alert_monthly_hour }}" style="width:5rem"></label>
+      <label class="wide">Recipients <input name="alert_monthly_recipients" value="{{ cfg.alert_monthly_recipients }}"></label>
+    </div>
     <button type="submit">Save alerts</button>
   </form>
+  <small>Times are in the server's clock (UTC in Docker) and checked hourly. Daily bills the
+  previous day; weekly the previous 7 days; monthly the previous calendar month.</small>
 
   <form method="post" action="/settings/alerts/send-monthly" class="filter">
     <label>Send monthly report now for <input type="month" name="month" value="{{ this_month }}"></label>
