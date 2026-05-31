@@ -49,9 +49,11 @@ if docker compose version >/dev/null 2>&1; then COMPOSE="docker compose"
 elif command -v docker-compose >/dev/null 2>&1; then COMPOSE="docker-compose"
 fi
 
+VERSION="$(grep -m1 '^__version__' app/version.py 2>/dev/null | awk -F'"' '{print $2}')"
 say ""
-say "${BOLD}Inv-Keep installer${RESET}"
-say "${DIM}This writes .env and starts the app with Docker Compose.${RESET}"
+say "${BOLD}Inv-Keep installer${RESET}${DIM}${VERSION:+  (v${VERSION})}${RESET}"
+say "${DIM}This writes .env and starts the app with Docker Compose. Everything${RESET}"
+say "${DIM}else — timezone, markup %, email, alerts, RBAC — is set under Settings.${RESET}"
 say ""
 
 command -v docker >/dev/null 2>&1 || warn "Docker not found on PATH — install Docker Desktop / Engine before starting the stack."
@@ -117,6 +119,10 @@ if yesno "Configure OIDC login now?" "n"; then
 fi
 
 SESSION_SECRET="$(gen_secret)"
+# Defensive: the app refuses to start with a placeholder / <32-char secret.
+if [ ${#SESSION_SECRET} -lt 32 ]; then
+  die "gen_secret produced a session secret shorter than 32 chars (${#SESSION_SECRET}). Install openssl or python3 and rerun."
+fi
 
 # --- write .env ---
 say ""
@@ -166,8 +172,22 @@ if yesno "Build and start Inv-Keep now?" "y"; then
   ok "Inv-Keep is starting."
   say ""
   say "Open:  ${BOLD}${BASE_URL}${RESET}"
-  [ "$AUTH_MODE" = "oidc" ] && say "Login via your IdP. Break-glass if locked out: set DISABLE_AUTH=1 in .env and restart."
-  say "Configure email, alerts, branding and label sizes under Settings."
+  say ""
+  say "${BOLD}First things to do in the UI:${RESET}"
+  say "  ${DIM}1. Settings → General — set your timezone, currency, default markup %.${RESET}"
+  say "  ${DIM}2. Clients → add the companies you bill. Jobs → ticket / WO refs.${RESET}"
+  say "  ${DIM}3. Items → add your stock (or scan a new barcode to be prompted).${RESET}"
+  say "  ${DIM}4. Home (scan) → barcode a known item to open the cart, set client/job once,${RESET}"
+  say "  ${DIM}   keep scanning, submit. Auto-numbered ORD-YYYYMM-NNNN per order.${RESET}"
+  say "  ${DIM}5. Records → Report for monthly billing · Map for charge-out locations.${RESET}"
+  if [ "$AUTH_MODE" = "oidc" ]; then
+    say ""
+    say "${BOLD}OIDC reminder:${RESET}"
+    say "  ${DIM}- The default RBAC role for new logins is Admin (permissive — change in Settings).${RESET}"
+    say "  ${DIM}- Add YOUR verified IdP email to 'Always-admin emails' in Settings → Authentication${RESET}"
+    say "  ${DIM}  before tightening the default role, so you don't lock yourself out.${RESET}"
+    say "  ${DIM}- Break-glass if locked out: set DISABLE_AUTH=1 in .env and restart.${RESET}"
+  fi
 else
   say "Skipped startup. Start later with:"
   if [ "$USE_SSL" = "1" ]; then say "  ${BOLD}$COMPOSE --profile ssl up -d --build${RESET}"; else say "  ${BOLD}$COMPOSE up -d --build${RESET}"; fi
