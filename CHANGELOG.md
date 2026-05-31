@@ -3,6 +3,35 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.11.0] — 2026-05-31
+- **Distributable Docker stack.** New GitHub Actions workflow
+  (`.github/workflows/release.yml`) builds a multi-arch image
+  (`linux/amd64` + `linux/arm64`) on every `v*` tag push and publishes it
+  to `ghcr.io/stephenthecold/inv-keep:{vX.Y.Z, vX.Y, latest}`.
+  `docker-compose.yml` now defaults to **pulling** that image (pin a
+  version with `INV_KEEP_VERSION=v1.11.0` in `.env`). A new
+  `docker-compose.dev.yml` override re-adds `build: .` for local-source
+  development. Upgrades are now `docker compose pull && docker compose up -d`
+  — the `./data` volume mount survives recreates and `ensure_columns()`
+  handles additive migrations on startup.
+- **Container healthcheck.** The compose service now defines a 30-second
+  healthcheck that hits `/health`, so `docker compose ps` and orchestrators
+  can tell unhealthy from down.
+- **Backup + restore tooling.**
+  - **Admin-only UI**: Settings → Backup → **Download backup now** streams
+    a `.tar.gz` containing a consistent SQLite `.backup` snapshot of every
+    `*.db` plus `uploads/`. Action recorded as `settings.backup` in the
+    audit log.
+  - **Shell scripts**: `scripts/backup.sh` (cron-friendly, `BACKUP_KEEP=N`
+    prunes old backups by age) and `scripts/restore.sh` (verifies bundle,
+    stops the container, swaps `./data/` aside as a safety copy, restarts).
+  - **Docs**: new `docs/BACKUPS.md` covers the UI / scripted / volume-
+    snapshot options + restore procedure + a safer "back-up-then-upgrade"
+    recipe with rollback.
+- **Repo tidy.** Test DBs (`data/app.db`, `data/preview.db`) and item
+  upload artifacts from the build process wiped — fresh installs start
+  empty as intended.
+
 ## [1.10.1] — 2026-05-31
 - **Security: XSS fix in map popups and cart re-renders.** The Leaflet popup
   HTML and the JS cart row / search-suggest renderers were concatenating

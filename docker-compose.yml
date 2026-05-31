@@ -1,8 +1,11 @@
 services:
   inv-keep:
-    build: .
-    # Or, once you publish an image, replace `build: .` with:
-    # image: ghcr.io/youruser/inv-keep:latest
+    # Default: pull the published image from GitHub Container Registry.
+    # Pin to a specific release by exporting INV_KEEP_VERSION=v1.11.0; `latest`
+    # is the default (re-pull with `docker compose pull && up -d`).
+    image: ghcr.io/stephenthecold/inv-keep:${INV_KEEP_VERSION:-latest}
+    # For local development / bringing your own changes, use the dev override:
+    #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
     container_name: inv-keep
     restart: unless-stopped
     env_file:
@@ -14,7 +17,14 @@ services:
       - "${APP_PORT:-8000}:8000"
     volumes:
       # SQLite DB + uploaded brand assets persist here. Back this folder up.
+      # See docs/BACKUPS.md.
       - ./data:/code/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   # Optional automatic-HTTPS reverse proxy. Enable with:  docker compose --profile ssl up -d
   # Requires HOSTNAME + ACME_EMAIL in .env, ports 80/443 free, and DNS pointing here.

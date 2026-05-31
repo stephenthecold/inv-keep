@@ -359,6 +359,22 @@
   </form>
 </section>
 
+{% if user.is_admin %}
+<!-- ---------------- Backup ---------------- -->
+<section class="card">
+  <h2>Backup</h2>
+  <p class="muted">Downloads a <code>.tar.gz</code> containing a consistent
+  SQLite snapshot (uses <code>sqlite3.backup</code>, safe while the app is
+  running) of every <code>*.db</code> file plus the <code>uploads/</code>
+  folder. Keep these somewhere off the server.</p>
+  <a class="btn" href="/settings/backup" download>⬇ Download backup now</a>
+  <small class="muted" style="display:block;margin-top:.5rem">
+    For scheduled / automated backups, run <code>./scripts/backup.sh</code> on
+    the host (cron-friendly). To restore, see <a href="https://github.com/stephenthecold/inv-keep/blob/main/docs/BACKUPS.md">docs/BACKUPS.md</a>.
+  </small>
+</section>
+{% endif %}
+
 <p class="muted"><small>Only the session secret, database location, and the DISABLE_AUTH break-glass flag stay in environment variables; everything above (including auth) is stored in the app database.</small></p>
 
 <script>

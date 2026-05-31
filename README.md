@@ -183,9 +183,41 @@ for **Rollo** (4×6, 2.25×1.25 in) and **Brother** (P-touch 12/18/24 mm tapes, 
 62×29 mm / continuous). Set a default under Settings → Printing. See
 **[docs/PRINTING.md](docs/PRINTING.md)**.
 
+## Upgrading
+
+The default `docker-compose.yml` pulls the published image from GitHub
+Container Registry, so upgrades are just:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+The `./data` volume mount survives container recreates; schema migrations run
+automatically on startup. Pin a specific version with
+`INV_KEEP_VERSION=v1.11.0` (in `.env` or as an env var). See
+[docs/BACKUPS.md](docs/BACKUPS.md) for a safer "back-up-then-upgrade"
+recipe with rollback.
+
 ## Backups
-Everything lives in `./data/` — `app.db` plus any uploaded brand logo under
-`./data/uploads`. Back up that folder (or snapshot the volume).
+
+Everything lives in `./data/` — `*.db` plus any uploaded brand logo / item
+photos under `./data/uploads`.
+
+Three ways to get a consistent snapshot:
+
+1. **Settings → Backup → Download backup now** (admin-only) — streams a
+   `.tar.gz` over HTTP.
+2. **Shell script** — `./scripts/backup.sh` produces
+   `./backups/inv-keep-<timestamp>.tar.gz` using SQLite's online `.backup`
+   (safe while the app is running). Cron-friendly; supports
+   `BACKUP_KEEP=N` to prune.
+3. **Volume snapshot** — if your host already snapshots the underlying
+   volume (ZFS / Btrfs / restic / etc.), you're covered.
+
+Restore with `./scripts/restore.sh <bundle>.tar.gz` — stops the container,
+saves the current `./data/` aside, lays down the bundle, restarts.
+
+Full walk-through in [docs/BACKUPS.md](docs/BACKUPS.md).
 
 ## Run locally without Docker
 ```bash
@@ -199,6 +231,7 @@ uvicorn app.main:app --reload
 - [CONFIGURATION.md](CONFIGURATION.md) — every environment variable and in-app setting
 - [CHANGELOG.md](CHANGELOG.md) — versioned list of changes
 - [docs/DEPLOY.md](docs/DEPLOY.md) — hostname, ports, SSL (Let's Encrypt / own cert / external), installer
+- [docs/BACKUPS.md](docs/BACKUPS.md) — backup / restore / upgrade-with-rollback
 - [docs/ANDROID.md](docs/ANDROID.md) — Android AIO scanners / PWA / APK
 - [docs/PRINTING.md](docs/PRINTING.md) — Brother, DYMO, Zebra & Rollo thermal printing
 

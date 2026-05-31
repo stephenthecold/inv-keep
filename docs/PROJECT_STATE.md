@@ -3,7 +3,7 @@
 **Read this first.** It is the durable substitute for the build chat. Reading this +
 [CONFIGURATION.md](../CONFIGURATION.md) + [CHANGELOG.md](../CHANGELOG.md) reconstructs
 the whole project; you do **not** need the original conversation. Current version:
-**v1.10.0** (tags `v1.0.0` … `v1.10.0`, one per release).
+**v1.11.0** (tags `v1.0.0` … `v1.11.0`, one per release).
 
 ## What it is
 A small, self-hosted, MSP-oriented inventory **charge-out** app. Scan an item →
@@ -73,11 +73,18 @@ app/
   static/            style.css, app.js (cart + Leaflet popups), icons/ (PWA PNGs),
                      vendor/leaflet/ (1.9.4: CSS/JS + marker images)
 install.sh           interactive installer (hostname/port/TLS/email/OIDC -> .env -> compose)
-docker-compose.yml   app + optional caddy (profile "ssl")
+docker-compose.yml   pulls ghcr.io/stephenthecold/inv-keep:${INV_KEEP_VERSION:-latest}
+                     + optional caddy (profile "ssl") + container healthcheck
+docker-compose.dev.yml  override that adds build: . for local-build dev
+scripts/quickstart.sh  one-line bootstrap (git clone → install.sh)
+scripts/backup.sh    consistent SQLite .backup + uploads → ./backups/inv-keep-<ts>.tar.gz
+scripts/restore.sh   verify + stop container + swap data/ + restart
 Caddyfile / Caddyfile.custom   Let's Encrypt / bring-your-own-cert (certs/)
 android/             twa-manifest.json + README (full APK framework via Bubblewrap)
-.github/workflows/   ci.yml (checks), android.yml (build TWA APK)
-docs/                PROJECT_STATE(this), CONFIGURATION, CHANGELOG, DEPLOY, ANDROID, PRINTING
+.github/workflows/   ci.yml (checks + regression tests), release.yml (multi-arch
+                     ghcr.io image build on v* tag push), android.yml (TWA APK)
+docs/                PROJECT_STATE(this), CONFIGURATION, CHANGELOG, DEPLOY,
+                     BACKUPS, ANDROID, PRINTING
 scripts/make_icons.py  regenerate PWA icons (needs Pillow; results committed)
 ```
 
@@ -202,11 +209,23 @@ scripts/make_icons.py  regenerate PWA icons (needs Pillow; results committed)
   only affects display, not the scheduler.
 
 ## Run / build / deploy / release
-- Install: `./install.sh` (or `-y`). Manual: `docker compose up -d --build`
-  (`--profile ssl` for HTTPS). TLS: Let's Encrypt | own cert (`Caddyfile.custom` +
-  `certs/`) | external proxy. See [DEPLOY.md](DEPLOY.md).
-- Local dev: `DATABASE_URL=sqlite:///./data/app.db SESSION_SECRET=<32+chars> ./.venv/bin/uvicorn app.main:app --reload`.
-- Cut a release: bump `app/version.py` → add CHANGELOG entry → `git tag -a vX.Y.Z`.
+- Install (one-line): `git clone https://github.com/stephenthecold/inv-keep.git && cd inv-keep && ./install.sh`
+  (or the curl-pipe form once the repo is public; see README).
+- Install (interactive): `./install.sh` (or `-y`).
+- Distribution: published as a multi-arch image at
+  `ghcr.io/stephenthecold/inv-keep:{vX.Y.Z, vX.Y, latest}` by
+  `.github/workflows/release.yml` on every `v*` tag push.
+- Upgrade: `docker compose pull && docker compose up -d` — data persists
+  via the `./data` volume mount; `ensure_columns()` runs additive
+  migrations on startup.
+- Local dev with own changes: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build`
+  (uses the local `Dockerfile`, tags the build with the same image name so
+  it's interchangeable with the published one).
+- Local dev without Docker: `DATABASE_URL=sqlite:///./data/app.db SESSION_SECRET=<32+chars> ./.venv/bin/uvicorn app.main:app --reload`.
+- Backup / restore: `./scripts/backup.sh` + `./scripts/restore.sh`, plus
+  admin-only UI download at Settings → Backup. See [BACKUPS.md](BACKUPS.md).
+- Cut a release: bump `app/version.py` → CHANGELOG entry → commit → `git tag -a vX.Y.Z` → `git push --tags`.
+  The tag push triggers `release.yml` which builds + pushes the image.
 
 ## How each release was verified (do the same)
 `./.venv/bin/python -m py_compile app/*.py` · `node --check app/static/app.js` ·

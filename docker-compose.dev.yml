@@ -1,0 +1,14 @@
+# Dev override: build the image from the local Dockerfile instead of pulling
+# the published one. Use with:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+#
+# Useful when iterating on the code without waiting for a tag + CI build.
+# When both `image:` and `build:` are present, compose builds the image and
+# tags it with the `image:` name from docker-compose.yml — so the resulting
+# local image is interchangeable with the published one.
+
+services:
+  inv-keep:
+    build:
+      context: .

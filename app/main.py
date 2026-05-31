@@ -1450,6 +1450,84 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
     )
 
 
+@app.get("/settings/backup", name="settings_backup")
+def settings_backup(request: Request, db: Session = Depends(get_db)):
+    """Admin-only: stream a tar.gz of every *.db (consistent online-snapshot via
+    sqlite3 .backup) plus the uploads/ folder. Audit-logged so backup pulls
+    show up alongside other admin actions."""
+    user = current_user(request)
+    if not user.get("is_admin"):
+        return JSONResponse({"detail": "Admin only"}, status_code=403)
+
+    import io as _io
+    import sqlite3 as _sqlite3
+    import tarfile as _tarfile
+    import tempfile as _tempfile
+
+    # Resolve the data dir from the configured DATABASE_URL (sqlite:////code/data/app.db
+    # under Docker; sqlite:///./data/app.db locally). Fallback: ./data.
+    db_url = settings.database_url or ""
+    if db_url.startswith("sqlite:////"):
+        db_path = "/" + db_url[len("sqlite:////"):]
+    elif db_url.startswith("sqlite:///"):
+        db_path = db_url[len("sqlite:///"):]
+    else:
+        db_path = "data/app.db"
+    data_dir = os.path.dirname(db_path) or "data"
+
+    ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    fname = f"inv-keep-{ts}.tar.gz"
+
+    with _tempfile.TemporaryDirectory() as workdir:
+        # Snapshot every *.db in the data dir.
+        snapped = []
+        try:
+            for entry in os.listdir(data_dir):
+                if entry.endswith(".db"):
+                    src = os.path.join(data_dir, entry)
+                    dst = os.path.join(workdir, entry)
+                    src_conn = _sqlite3.connect(src)
+                    try:
+                        dst_conn = _sqlite3.connect(dst)
+                        try:
+                            src_conn.backup(dst_conn)
+                        finally:
+                            dst_conn.close()
+                    finally:
+                        src_conn.close()
+                    snapped.append(entry)
+        except FileNotFoundError:
+            return JSONResponse({"detail": f"Data dir not found at {data_dir}"}, status_code=500)
+
+        info = (
+            "inv-keep backup\n"
+            f"created_at_utc: {datetime.utcnow().isoformat(timespec='seconds')}Z\n"
+            f"app_version: {__version__}\n"
+            f"databases: {', '.join(snapped) or '(none)'}\n"
+        )
+        with open(os.path.join(workdir, "BACKUP_INFO.txt"), "w", encoding="utf-8") as fh:
+            fh.write(info)
+
+        # Build the tarball in-memory and stream it as the response.
+        buf = _io.BytesIO()
+        with _tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            for entry in os.listdir(workdir):
+                tf.add(os.path.join(workdir, entry), arcname=entry)
+            uploads_dir = os.path.join(data_dir, "uploads")
+            if os.path.isdir(uploads_dir):
+                tf.add(uploads_dir, arcname="uploads")
+        body = buf.getvalue()
+
+    audit.record(db, user, "settings.backup", "settings", None,
+                 f"Downloaded backup ({len(body)} bytes, {len(snapped)} db file(s))")
+    db.commit()
+    return Response(
+        content=body,
+        media_type="application/gzip",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 @app.post("/settings/general")
 def settings_general(
     request: Request,
