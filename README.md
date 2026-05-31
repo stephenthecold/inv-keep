@@ -78,7 +78,32 @@ only read once to seed the defaults on a brand-new database.
 - **Monthly report** is emailed automatically on a configurable day of the month (a background
   scheduler checks hourly), or on demand with **Send now**.
 
-## Quick start — interactive installer (recommended)
+## Quick install (one line)
+
+If you have **git** and **Docker** installed, this clones the repo and runs the
+interactive installer:
+
+```bash
+git clone https://github.com/stephenthecold/inv-keep.git && cd inv-keep && ./install.sh
+```
+
+Or the curl-pipe form (downloads `scripts/quickstart.sh` from the repo —
+**requires the repo to be public** or a PAT in `~/.git-credentials`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/stephenthecold/inv-keep/main/scripts/quickstart.sh | bash
+```
+
+For all-defaults / no prompts, set `INV_KEEP_YES=1`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/stephenthecold/inv-keep/main/scripts/quickstart.sh | INV_KEEP_YES=1 bash
+```
+
+Other overrides (env vars): `INV_KEEP_DIR` (target dir, default `./inv-keep`),
+`INV_KEEP_REPO` (fork URL), `INV_KEEP_REF` (tag like `v1.10.1` or a branch).
+
+## Interactive installer
 
 ```bash
 ./install.sh
