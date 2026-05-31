@@ -3,6 +3,34 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.10.1] — 2026-05-31
+- **Security: XSS fix in map popups and cart re-renders.** The Leaflet popup
+  HTML and the JS cart row / search-suggest renderers were concatenating
+  user-controlled fields (part name, client name, scanned-by) into HTML
+  templates, so a malicious item / client name could fire script when a marker
+  popup was opened or when the cart refreshed. Switched to DOM construction +
+  `textContent` for every user-supplied string in
+  `app/templates/transactions.html`, `app/templates/map.html`, and the cart
+  `render()` / `renderSuggest()` functions in `app/static/app.js`. Icons +
+  server-controlled image paths + numeric fields stay literal.
+- **Security: NaN / Infinity bypass on geo capture.** `lat &lt; -90 or lat &gt;
+  90` is False for NaN, so a malicious client could POST `{"lat": NaN}` and
+  have it stored. `tojson` of NaN then broke the entire `/map` page.
+  Replaced the range check with an `_finite()` helper that rejects NaN /
+  Infinity before the range comparison; applied in both `/api/cart/scan` and
+  `/api/cart/custom`.
+- **Order-number race**: `/api/cart/submit` now retries up to 3× on
+  `IntegrityError` from the `Order.number` UNIQUE constraint, so a concurrent
+  submit returns a clean error rather than a 500.
+- **Markup % no longer leaked to non-admins**: the `window.DEFAULT_MARKUP_PCT`
+  JS global is only emitted when `user.is_admin`. Managers still get
+  client-price autofill suggestion if it's wired, but the % value isn't in
+  the rendered HTML they can view-source.
+- **Better cart-cancel audit summary**: now records line count, restored
+  dollar value, and client/job — parallels the submit summary.
+- Minor cleanup: removed a redundant `elif` branch in `api_cart_set` that
+  duplicated the else case.
+
 ## [1.10.0] — 2026-05-30
 - **Custom items in the cart** — new **+ Custom item** button on the order
   card opens a modal for ad-hoc / off-catalog purchases (name, description,

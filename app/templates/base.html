@@ -15,7 +15,7 @@
   <link rel="icon" href="/static/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   {% if cfg.brand_accent %}<style>:root{ --accent: {{ cfg.brand_accent }}; }</style>{% endif %}
-  <script>window.ICON_SET = {{ icon_set | tojson }}; window.CURRENCY = {{ (cfg.currency or '$') | tojson }}; window.DEFAULT_MARKUP_PCT = {{ (cfg.default_markup_pct or '0') | tojson }};</script>
+  <script>window.ICON_SET = {{ icon_set | tojson }}; window.CURRENCY = {{ (cfg.currency or '$') | tojson }};{% if user.is_admin %} window.DEFAULT_MARKUP_PCT = {{ (cfg.default_markup_pct or '0') | tojson }};{% endif %}</script>
 </head>
 <body>
   <header>

@@ -27,15 +27,25 @@
     attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     maxZoom: 19,
   }).addTo(map);
+  function popupFor(p) {
+    var d = document.createElement('div');
+    function row(text, opts) {
+      if (text == null || text === '') return;
+      var el = document.createElement((opts && opts.tag) || 'div');
+      if (opts && opts.cls) el.className = opts.cls;
+      el.textContent = text;
+      d.appendChild(el);
+    }
+    if (p.order) row(p.order, {tag: 'b'});
+    row(p.qty + '× ' + (p.part || '(item)'));
+    if (p.client) row(p.client + (p.job ? ' / ' + p.job : ''));
+    row(currency + p.charge.toFixed(2));
+    row(p.when + (p.by ? ' · ' + p.by : ''), {tag: 'small', cls: 'muted'});
+    return d;
+  }
   var group = L.featureGroup();
   pts.forEach(function(p){
-    var lines = [];
-    if (p.order) lines.push('<b>' + p.order + '</b>');
-    lines.push((p.qty + '× ') + (p.part || '(item)'));
-    if (p.client) lines.push(p.client + (p.job ? ' / ' + p.job : ''));
-    lines.push(currency + p.charge.toFixed(2));
-    lines.push('<small class="muted">' + p.when + (p.by ? ' · ' + p.by : '') + '</small>');
-    L.marker([p.lat, p.lng]).bindPopup(lines.join('<br>')).addTo(group);
+    L.marker([p.lat, p.lng]).bindPopup(popupFor(p)).addTo(group);
   });
   group.addTo(map);
   map.fitBounds(group.getBounds().pad(0.2), { maxZoom: 16 });

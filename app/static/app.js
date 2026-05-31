@@ -220,25 +220,68 @@ if (scan && cart) {
     if (!c.lines.length) {
       const tr = document.createElement("tr");
       tr.className = "empty";
-      tr.innerHTML = `<td colspan="7">Cart is empty — scan an item below.</td>`;
+      const td = document.createElement("td");
+      td.colSpan = 7;
+      td.textContent = "Cart is empty — scan an item below.";
+      tr.appendChild(td);
       body.appendChild(tr);
     } else {
+      // Build each cell via the DOM so user-controlled fields (part name,
+      // barcode, image path) can't break out as HTML.
       c.lines.forEach((ln) => {
         const tr = document.createElement("tr");
-        const icoCell = ln.image
-          ? `<img class="item-thumb" src="${ln.image}" alt="">`
-          : (ln.icon ? iconHTML(ln.icon) : "");
-        const qtyCell = ln.type === "unique"
-          ? `<span>${ln.quantity}</span>`
-          : `<input type="number" min="1" value="${ln.quantity}" data-line="${ln.id}" class="line-qty" style="width:5rem">`;
-        tr.innerHTML = `
-          <td class="item-icon">${icoCell}</td>
-          <td>${ln.part}</td>
-          <td><code>${ln.barcode}</code></td>
-          <td class="num">${qtyCell}</td>
-          <td class="num">${money(ln.unit_price)}</td>
-          <td class="num">${money(ln.charge)}</td>
-          <td><button class="ghost line-remove" data-line="${ln.id}" title="Remove">✕</button></td>`;
+        // icon / image cell — image src is server-controlled (/uploads/items/N.ext)
+        const tdIcon = document.createElement("td");
+        tdIcon.className = "item-icon";
+        if (ln.image) {
+          const img = document.createElement("img");
+          img.className = "item-thumb";
+          img.src = ln.image;
+          img.alt = "";
+          tdIcon.appendChild(img);
+        } else if (ln.icon) {
+          // iconHTML returns sanitized SVG / escaped emoji from a known set.
+          tdIcon.innerHTML = iconHTML(ln.icon);
+        }
+        tr.appendChild(tdIcon);
+        // part name + barcode (textContent — these are the XSS vectors)
+        const tdName = document.createElement("td");
+        tdName.textContent = ln.part;
+        tr.appendChild(tdName);
+        const tdBc = document.createElement("td");
+        const code = document.createElement("code");
+        code.textContent = ln.barcode;
+        tdBc.appendChild(code);
+        tr.appendChild(tdBc);
+        // qty
+        const tdQty = document.createElement("td");
+        tdQty.className = "num";
+        if (ln.type === "unique") {
+          const sp = document.createElement("span");
+          sp.textContent = ln.quantity;
+          tdQty.appendChild(sp);
+        } else {
+          const inp = document.createElement("input");
+          inp.type = "number";
+          inp.min = "1";
+          inp.value = ln.quantity;
+          inp.dataset.line = ln.id;
+          inp.className = "line-qty";
+          inp.style.width = "5rem";
+          tdQty.appendChild(inp);
+        }
+        tr.appendChild(tdQty);
+        // money cells — numeric, safe
+        const tdUnit = document.createElement("td"); tdUnit.className = "num"; tdUnit.textContent = money(ln.unit_price); tr.appendChild(tdUnit);
+        const tdCh = document.createElement("td"); tdCh.className = "num"; tdCh.textContent = money(ln.charge); tr.appendChild(tdCh);
+        const tdAct = document.createElement("td");
+        const btn = document.createElement("button");
+        btn.className = "ghost line-remove";
+        btn.dataset.line = ln.id;
+        btn.title = "Remove";
+        btn.textContent = "✕";
+        tdAct.appendChild(btn);
+        tr.appendChild(tdAct);
         body.appendChild(tr);
       });
     }
@@ -271,10 +314,26 @@ if (scan && cart) {
     suggest.innerHTML = "";
     results.forEach((p) => {
       const row = document.createElement("div");
-      const ic = p.image
-        ? `<img class="sg-thumb" src="${p.image}" alt="">`
-        : (p.icon ? `<span class="sg-icon">${iconHTML(p.icon)}</span>` : "");
-      row.innerHTML = `${ic}<b>${p.name}</b> <span class="muted">· ${p.barcode} · on hand ${p.qty} · ${money(p.unit_price)}</span>`;
+      // image / icon (server-controlled or trusted icon set)
+      if (p.image) {
+        const img = document.createElement("img");
+        img.className = "sg-thumb"; img.src = p.image; img.alt = "";
+        row.appendChild(img);
+      } else if (p.icon) {
+        const span = document.createElement("span");
+        span.className = "sg-icon";
+        span.innerHTML = iconHTML(p.icon);
+        row.appendChild(span);
+      }
+      // name (textContent — primary XSS vector)
+      const nameEl = document.createElement("b");
+      nameEl.textContent = p.name;
+      row.appendChild(nameEl);
+      // metadata line (barcode is user-controlled too)
+      const meta = document.createElement("span");
+      meta.className = "muted";
+      meta.textContent = " · " + p.barcode + " · on hand " + p.qty + " · " + money(p.unit_price);
+      row.appendChild(meta);
       row.onclick = () => { hideSuggest(); addToCart(p.barcode); };
       suggest.appendChild(row);
     });

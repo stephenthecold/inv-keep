@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -510,15 +511,29 @@ class CartLineIn(BaseModel):
     quantity: int
 
 
+def _finite(v):
+    """True if v is a finite real number. Guards against NaN / Infinity
+    sneaking in via JSON — every comparison against NaN returns False, so a
+    range check alone is bypassable."""
+    if v is None:
+        return False
+    try:
+        return math.isfinite(float(v))
+    except (TypeError, ValueError):
+        return False
+
+
 def _sanitize_geo(payload):
     lat, lng, acc = payload.lat, payload.lng, payload.geo_accuracy_m
-    if lat is not None and (lat < -90 or lat > 90):
+    if not (_finite(lat) and -90 <= lat <= 90):
         lat = None
-    if lng is not None and (lng < -180 or lng > 180):
+    if not (_finite(lng) and -180 <= lng <= 180):
         lng = None
     if lat is None or lng is None:
         return None, None, None
-    return lat, lng, (acc if acc and acc > 0 else None)
+    if not (_finite(acc) and acc > 0):
+        acc = None
+    return lat, lng, acc
 
 
 @app.get("/api/cart")
@@ -621,15 +636,14 @@ async def api_cart_custom(
         part.image = img_path
     # Decrement stock to 0 — the qty we "bought" is what we're billing.
     part.quantity_on_hand -= qty
-    g_lat, g_lng, g_acc = (lat if lat is not None else None,
-                           lng if lng is not None else None,
-                           geo_accuracy_m)
-    if g_lat is not None and (g_lat < -90 or g_lat > 90):
-        g_lat = None
-    if g_lng is not None and (g_lng < -180 or g_lng > 180):
-        g_lng = None
+    # Reuse the strict finite-check from _sanitize_geo so a NaN/Infinity in
+    # the multipart body can't poison Transaction.lat.
+    g_lat = lat if (_finite(lat) and -90 <= lat <= 90) else None
+    g_lng = lng if (_finite(lng) and -180 <= lng <= 180) else None
     if g_lat is None or g_lng is None:
         g_lat = g_lng = g_acc = None
+    else:
+        g_acc = geo_accuracy_m if (_finite(geo_accuracy_m) and geo_accuracy_m > 0) else None
     txn = Transaction(
         order_id=cart.id,
         part_id=part.id,
@@ -667,7 +681,8 @@ def api_cart_set(payload: CartSetIn, request: Request, db: Session = Depends(get
         if not job or job.client_id != cart.customer_id:
             return {"ok": False, "error": "bad_job"}
         cart.job_id = job.id
-    elif payload.job_id == 0 or payload.job_id is None:
+    else:
+        # 0 or None → caller is clearing the job association.
         cart.job_id = None
     # Backfill the new client/job onto open transactions so submitted lines
     # carry the right customer/job at report time.
@@ -728,16 +743,31 @@ def api_cart_submit(request: Request, db: Session = Depends(get_db)):
         return {"ok": False, "error": "empty_cart"}
     if not cart.customer_id:
         return {"ok": False, "error": "no_client"}
-    cart.number = orders.next_order_number(db)
-    cart.status = "submitted"
-    cart.submitted_by = user.get("username", "")
-    cart.submitted_at = datetime.utcnow()
+    # next_order_number is SELECT-max+1 with no row lock, so two concurrent
+    # submits can both compute the same value. Retry on the UNIQUE-constraint
+    # violation; SQLite serializes commits so a single retry almost always
+    # wins, and 3 is generous head-room.
     charge, _cost, _margin = orders.cart_totals(lines)
-    summary = (f"{cart.number}: {len(lines)} line(s) → "
-               f"{cart.client.name}{(' / ' + cart.job.name) if cart.job else ''} "
-               f"({reports_money(db, charge)})")
-    audit.record(db, user, "order.submit", "order", cart.id, summary)
-    db.commit()
+    for attempt in range(3):
+        cart.number = orders.next_order_number(db)
+        cart.status = "submitted"
+        cart.submitted_by = user.get("username", "")
+        cart.submitted_at = datetime.utcnow()
+        summary = (f"{cart.number}: {len(lines)} line(s) → "
+                   f"{cart.client.name}{(' / ' + cart.job.name) if cart.job else ''} "
+                   f"({reports_money(db, charge)})")
+        audit.record(db, user, "order.submit", "order", cart.id, summary)
+        try:
+            db.commit()
+            break
+        except IntegrityError:
+            db.rollback()
+            # Re-load the cart row so we can re-stamp; status was rolled back too.
+            cart = orders.open_cart_for(db, user.get("username", ""))
+            if cart is None:
+                return {"ok": False, "error": "no_open_cart"}
+    else:
+        return {"ok": False, "error": "number_collision"}
     return {"ok": True, "order": {"id": cart.id, "number": cart.number, "subtotal": charge,
                                   "lines": len(lines)}}
 
@@ -748,14 +778,19 @@ def api_cart_cancel(request: Request, db: Session = Depends(get_db)):
     cart = orders.open_cart_for(db, user.get("username", ""))
     if cart is None:
         return {"ok": False, "error": "no_open_cart"}
-    # Restore stock for every non-voided line, mark voided, then close cart.
-    for ln in orders.cart_lines(db, cart):
+    # Snapshot first so the audit summary has line count + restored value.
+    lines = orders.cart_lines(db, cart)
+    charge, _cost, _margin = orders.cart_totals(lines)
+    for ln in lines:
         ln.part.quantity_on_hand += ln.quantity
         ln.voided = True
     cart.status = "cancelled"
     cart.voided_by = user.get("username", "")
     cart.voided_at = datetime.utcnow()
-    audit.record(db, user, "order.cancel", "order", cart.id, f"Cancelled cart #{cart.id}")
+    where = (cart.client.name + (f" / {cart.job.name}" if cart.job else "")) if cart.client else "(no client)"
+    summary = (f"Cancelled cart #{cart.id}: {len(lines)} line(s), "
+               f"restored {reports_money(db, charge)} of stock → {where}")
+    audit.record(db, user, "order.cancel", "order", cart.id, summary)
     db.commit()
     return {"ok": True}
 
