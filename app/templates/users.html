@@ -12,7 +12,7 @@ Configure group→role mapping under <a href="/settings">Settings → Authentica
   <tbody>
     {% for u in users %}
     <tr {% if not u.active %}class="voided"{% endif %}>
-      <td><form id="u-{{ u.id }}" method="post" action="/users/{{ u.id }}/save"></form>{{ u.username }}</td>
+      <td><form id="u-{{ u.id }}" method="post" action="/users/{{ u.id }}/save"><input type="hidden" name="_csrf" value="{{ csrf_token }}"></form>{{ u.username }}</td>
       <td>{{ u.email }}</td>
       <td>{{ u.source }}</td>
       <td>
@@ -40,6 +40,7 @@ Configure group→role mapping under <a href="/settings">Settings → Authentica
 <dialog id="add-role" class="modal">
   <h2>Add role</h2>
   <form method="post" action="/users/roles/add" class="grid-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label class="wide">Name <input name="name" required placeholder="e.g. Warehouse"></label>
     <div class="wide"><strong>Permissions</strong></div>
     {% for key, label in permissions %}
@@ -62,6 +63,7 @@ Configure group→role mapping under <a href="/settings">Settings → Authentica
   <p class="muted">The Admin role always has every permission and can't be edited.</p>
   {% else %}
   <form method="post" action="/users/roles/{{ r.id }}/save" class="grid-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     {% set rperms = (r.permissions or '').split(',') %}
     {% for key, label in permissions %}
     <label class="check wide">{{ label }} <input type="checkbox" name="permissions" value="{{ key }}" {% if key in rperms %}checked{% endif %}></label>

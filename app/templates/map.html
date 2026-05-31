@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+<h1>Charge-out map</h1>
+<p class="muted">Showing: <b>{{ range_label }}</b> — {{ markers|length }} point{{ '' if markers|length == 1 else 's' }}.</p>
+
+<form method="get" class="filter">
+  <label>Month <input type="month" name="month" value="{{ month }}"></label>
+  <span class="muted">— or —</span>
+  <label>From <input type="date" name="date_from" value="{{ date_from }}"></label>
+  <label>To <input type="date" name="date_to" value="{{ date_to }}"></label>
+  <button type="submit">Show</button>
+  <a class="btn ghost" href="/transactions{% if month %}?month={{ month }}{% endif %}">← History</a>
+</form>
+
+{% if not markers %}
+<div class="notice">No geo-tagged charge-outs in this window. Geo is captured on scan when the browser allows it; older transactions may not have coordinates.</div>
+{% else %}
+<div id="map" class="map-full"></div>
+<script src="/static/vendor/leaflet/leaflet.js"></script>
+<script>
+(function(){
+  var pts = {{ markers | tojson }};
+  var currency = {{ currency | tojson }};
+  var map = L.map('map');
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxZoom: 19,
+  }).addTo(map);
+  var group = L.featureGroup();
+  pts.forEach(function(p){
+    var lines = [];
+    if (p.order) lines.push('<b>' + p.order + '</b>');
+    lines.push((p.qty + '× ') + (p.part || '(item)'));
+    if (p.client) lines.push(p.client + (p.job ? ' / ' + p.job : ''));
+    lines.push(currency + p.charge.toFixed(2));
+    lines.push('<small class="muted">' + p.when + (p.by ? ' · ' + p.by : '') + '</small>');
+    L.marker([p.lat, p.lng]).bindPopup(lines.join('<br>')).addTo(group);
+  });
+  group.addTo(map);
+  map.fitBounds(group.getBounds().pad(0.2), { maxZoom: 16 });
+})();
+</script>
+{% endif %}
+{% endblock %}

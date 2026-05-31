@@ -1,28 +1,70 @@
 {% extends "base.html" %}
 {% block content %}
+<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
 <h1>History</h1>
 
 <form method="get" class="filter">
   <label>Month <input type="month" name="month" value="{{ month }}"></label>
   <button type="submit">Filter</button>
   <a href="/transactions">Clear</a>
+  {% if markers %}<a class="btn ghost" href="/map{% if month %}?month={{ month }}{% endif %}">Full-page map →</a>{% endif %}
 </form>
+
+{% if markers %}
+<details class="map-section" open>
+  <summary>📍 Map of {{ markers|length }} charge-out{{ '' if markers|length == 1 else 's' }} with location</summary>
+  <div id="txn-map" class="txn-map"></div>
+</details>
+<script src="/static/vendor/leaflet/leaflet.js"></script>
+<script>
+(function(){
+  var pts = {{ markers | tojson }};
+  var currency = {{ currency | tojson }};
+  if (!pts.length) return;
+  var map = L.map('txn-map');
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxZoom: 19,
+  }).addTo(map);
+  var group = L.featureGroup();
+  pts.forEach(function(p){
+    var lines = [];
+    if (p.order) lines.push('<b>' + p.order + '</b>');
+    lines.push((p.qty + '× ') + (p.part || '(item)'));
+    if (p.client) lines.push(p.client + (p.job ? ' / ' + p.job : ''));
+    lines.push(currency + p.charge.toFixed(2));
+    lines.push('<small class="muted">' + p.when + (p.by ? ' · ' + p.by : '') + '</small>');
+    L.marker([p.lat, p.lng]).bindPopup(lines.join('<br>')).addTo(group);
+  });
+  group.addTo(map);
+  map.fitBounds(group.getBounds().pad(0.2), { maxZoom: 16 });
+})();
+</script>
+{% endif %}
 
 <table class="lines">
   <thead>
-    <tr><th>When</th><th>Part</th><th>Client</th><th>Job</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Charge</th><th>By</th><th></th></tr>
+    <tr><th>When</th><th>Order</th><th>Part</th><th>Client</th><th>Job</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Charge</th><th>By</th><th>Loc</th><th></th></tr>
   </thead>
   <tbody>
     {% for t in txns %}
     <tr {% if t.voided %}class="voided"{% endif %} id="txn-{{ t.id }}">
-      <td>{{ t.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      <td>{{ t.created_at | local_dt(cfg.timezone) }}</td>
+      <td>{% if t.order and t.order.number %}<code>{{ t.order.number }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>
       <td>{{ t.part.name }}</td>
       <td>{{ t.client.name if t.client else '' }}</td>
       <td>{{ t.job.name if t.job else '' }}{% if t.job and t.job.reference %} <small>({{ t.job.reference }})</small>{% endif %}</td>
       <td class="num">{{ t.quantity }}</td>
-      <td class="num">{{ cfg.currency }}{{ '%.2f'|format(t.unit_price_at_time) }}</td>
-      <td class="num">{{ cfg.currency }}{{ '%.2f'|format(t.total_charge) }}</td>
+      <td class="num">{{ t.unit_price_at_time | money(cfg.currency) }}</td>
+      <td class="num">{{ t.total_charge | money(cfg.currency) }}</td>
       <td>{{ t.scanned_by }}</td>
+      <td>
+        {% if t.lat is not none and t.lng is not none %}
+        <a href="https://www.openstreetmap.org/?mlat={{ t.lat }}&mlon={{ t.lng }}#map=17/{{ t.lat }}/{{ t.lng }}"
+           target="_blank" rel="noopener"
+           title="{{ '%.5f'|format(t.lat) }}, {{ '%.5f'|format(t.lng) }}{% if t.geo_accuracy_m %} (±{{ '%.0f'|format(t.geo_accuracy_m) }}m){% endif %}">📍</a>
+        {% else %}<span class="muted">—</span>{% endif %}
+      </td>
       <td>
         {% if not t.voided %}
         <button class="void-btn" data-id="{{ t.id }}">Void</button>
@@ -30,7 +72,7 @@
       </td>
     </tr>
     {% else %}
-    <tr class="empty"><td colspan="9">No transactions.</td></tr>
+    <tr class="empty"><td colspan="11">No transactions.</td></tr>
     {% endfor %}
   </tbody>
 </table>

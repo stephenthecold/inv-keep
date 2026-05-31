@@ -3,6 +3,79 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.10.0] — 2026-05-30
+- **Custom items in the cart** — new **+ Custom item** button on the order
+  card opens a modal for ad-hoc / off-catalog purchases (name, description,
+  optional photo, cost, client price, qty). Server creates an archived
+  `Part` on the fly so the line still flows through reports / audit / voids
+  like any other transaction; the catalog stays clean (Items page hides
+  archived parts by default, **Show archived** toggle reveals them).
+- **Map of charge-outs** — every transaction with a captured location is now
+  pinnable on an embedded Leaflet + OpenStreetMap map. There's a collapsible
+  map at the top of /transactions and a full-page **/map** view (linked
+  from the Records dropdown). Both honour the same month / date-range
+  filters as the report. Leaflet 1.9.4 is **vendored** under
+  `app/static/vendor/leaflet/` — fully self-hosted, no CDN.
+
+## [1.9.0] — 2026-05-30
+- **Cart-based charge-out flow** — scanning a known item now opens a persistent
+  **Current order** card on the home page. Set Client + Job once (asked after
+  your first scan), then keep scanning items into the same cart; tweak qty
+  inline or remove lines, and hit **Submit Order** when done. Each submitted
+  order gets an auto-generated number **ORD-YYYYMM-NNNN** (counter resets
+  monthly) that's stamped on every line. **Cancel** restores stock and
+  discards the cart. One open cart per signed-in user; closing the browser
+  doesn't lose the work — the cart reopens on next visit.
+- **Order # on /transactions and the home page Recent activity** — every line
+  now shows its `ORD-…` number (or `—` for legacy single-scan rows).
+- **Reports + History exclude open-cart lines** — only submitted (or legacy)
+  transactions count toward totals; a cart in progress doesn't pollute the
+  monthly bill.
+- Removed `/api/checkout`; the cart API (`/api/cart/scan`, `/api/cart/set`,
+  `/api/cart/line/{id}`, `/api/cart/submit`, `/api/cart/cancel`) replaces it.
+- **Schema**: new `orders` table; `transactions.order_id` (nullable FK);
+  `transactions.customer_id` relaxed to nullable so a cart line can exist
+  before the client is picked. Upgrade is automatic via `ensure_columns()` —
+  including a one-time SQLite table rebuild to lift the old NOT NULL.
+
+## [1.8.0] — 2026-05-30
+- **Report — multi-client filter + date range** — the Charge-Out report now takes
+  any combination of clients (multi-select dropdown, default = all) and either a
+  month or an explicit From/To date window. CSV export honours the same filter.
+- **Timezone-aware timestamps** — new General setting (curated IANA list,
+  default UTC); audit log, transactions and scan-page recent activity render
+  in the configured zone. Storage stays UTC; conversion is at the template layer
+  via a new `local_dt` filter.
+- **Geo capture on charge-out** — the browser is asked (best-effort, 4 s cap) for
+  the device location before each `/api/checkout` POST; lat/lng/accuracy persist
+  on the Transaction row and surface as a 📍 pin (OpenStreetMap link) on
+  /transactions and in the audit summary. Denial / unsupported = the charge-out
+  still goes through silently.
+- **Default client markup %** — a new General setting (admin-only — hidden from
+  managers); when adding an item the Client price field auto-fills as
+  `our cost × (1 + markup%)`, rounded **up** to the nearest cent. Editing the
+  price manually disables autofill for that item. Managers still get the
+  autofill silently; only admins see and control the percentage.
+- **Dollar values round up to the cent** — display + CSV totals are ceiling-rounded
+  (`$1.231 → $1.24`) so client-facing numbers never under-bill. Stored values
+  keep full precision; rounding is at the presentation layer.
+- **Cleaner item icons** — every built-in SVG icon redrawn for recognition at
+  small sizes; the patch-cable icon in particular is now a clear RJ45 plug +
+  trailing cable. No data migration needed.
+- **Fix: Add-Item modal didn't auto-open from a scan** — `openModal` was being
+  called before `app.js` had loaded; wrapped in `DOMContentLoaded`.
+- **Security hardening** — refuses to start with the placeholder `SESSION_SECRET`
+  (raises at import time); OIDC email is only trusted if `email_verified=true`;
+  session cookie now `Secure` + `SameSite=Lax`; SVG dropped from logo upload
+  whitelist (stored-XSS); `html.escape` on the auth error page; 8 MB request-body
+  cap in middleware (pre-DoS guard); `brand_accent` regex-validated; Dockerfile
+  drops to a non-root user; `/logout` is now POST; audit-log summaries strip
+  control chars.
+- **CSRF protection** — pure ASGI middleware verifies a per-session token on
+  every state-changing request via `X-CSRF-Token` header (for JSON/AJAX) or
+  hidden `_csrf` form field (for HTML forms). Closes the cross-site write hole
+  in `forward` auth mode where the proxy attaches SSO cookies cross-site.
+
 ## [1.7.0] — 2026-05-30
 - **Label preview fixed** — the Settings live preview now reflects the chosen **code
   type** (shows a QR when QR is selected) and **fills the label** (flex distribution

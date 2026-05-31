@@ -19,8 +19,9 @@
 
 {% block content %}
 <div class="page-head">
-  <h1>Items</h1>
+  <h1>Items {% if show_archived %}<small class="muted">— including archived</small>{% endif %}</h1>
   <div class="head-actions">
+    <a class="btn ghost" href="{% if show_archived %}/parts{% else %}/parts?archived=1{% endif %}">{% if show_archived %}Hide archived{% else %}Show archived{% endif %}</a>
     <a class="btn ghost" href="/labels">🏷️ Print labels</a>
     <button class="add-btn" onclick="openModal('add-part')">+ Add new item</button>
   </div>
@@ -30,6 +31,7 @@
 <dialog id="add-part" class="modal">
   <h2>Add item</h2>
   <form method="post" action="/parts/add" class="grid-form" enctype="multipart/form-data">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label>Name <input name="name" required></label>
     {{ icon_field() }}
     <label>Photo (optional) <input type="file" name="image" accept="image/png,image/jpeg,image/webp,image/gif"></label>
@@ -39,8 +41,10 @@
       <select name="type"><option value="bulk">Bulk (qty by SKU)</option><option value="unique">Unique (one item)</option></select>
     </label>
     <label>Category <select name="category_id">{{ category_options() }}</select></label>
-    <label>Our cost <input name="unit_cost" type="number" step="0.01" value="0"></label>
-    <label>Client price <input name="unit_price" type="number" step="0.01" value="0"></label>
+    <label>Our cost <input name="unit_cost" type="number" step="0.01" value="0" id="add-cost"></label>
+    <label>Client price <input name="unit_price" type="number" step="0.01" value="0" id="add-price">
+      {% if user.is_admin and cfg.default_markup_pct and cfg.default_markup_pct != '0' %}<small class="muted" id="add-markup-hint">auto = cost + {{ cfg.default_markup_pct }}% (edit to override)</small>{% endif %}
+    </label>
     <label>Qty on hand <input name="quantity_on_hand" type="number" value="0"></label>
     <label>Low-stock at <input name="low_stock_threshold" type="number" placeholder="default"></label>
     <menu class="modal-actions">
@@ -55,6 +59,7 @@
 <dialog id="edit-part" class="modal">
   <h2>Edit item</h2>
   <form id="edit-part-form" method="post" action="" enctype="multipart/form-data">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <div class="muted" id="ep-meta" style="margin-bottom:.5rem"></div>
     <div class="grid-form">
       <label>Name <input name="name" id="ep-name" required></label>
@@ -96,8 +101,8 @@
       <td><code>{{ p.barcode }}</code>{% if p.barcode_generated %} <a href="/parts/{{ p.id }}/label" title="Print label">🏷️</a>{% endif %}</td>
       <td>{{ cat_names.get(p.category_id, '') }}</td>
       <td class="num {% if p.quantity_on_hand <= 0 %}low{% endif %}">{{ p.quantity_on_hand }}</td>
-      <td class="num">{{ cfg.currency }}{{ '%.2f'|format(p.unit_cost) }}</td>
-      <td class="num">{{ cfg.currency }}{{ '%.2f'|format(p.unit_price) }}</td>
+      <td class="num">{{ p.unit_cost | money(cfg.currency) }}</td>
+      <td class="num">{{ p.unit_price | money(cfg.currency) }}</td>
       <td class="actions-col">
         <div class="item-actions">
           <button type="button" class="edit-part"
@@ -107,6 +112,7 @@
             data-threshold="{{ p.low_stock_threshold if p.low_stock_threshold is not none else '' }}"
             data-active="{{ '1' if p.active else '0' }}" data-barcode="{{ p.barcode }}" data-type="{{ p.type }}">Edit</button>
           <form method="post" action="/parts/{{ p.id }}/restock" class="restock-form" title="Add stock">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
             <input name="amount" type="number" value="10" aria-label="restock amount"><button type="submit">+ Stock</button>
           </form>
         </div>
@@ -119,5 +125,29 @@
 </table>
 </div>
 
-{% if prefill %}<script>openModal('add-part');</script>{% endif %}
+{% if prefill %}<script>document.addEventListener('DOMContentLoaded', function(){ openModal('add-part'); });</script>{% endif %}
+<script>
+(function(){
+  // Markup autofill on the Add-item form. Pulls default % from window.DEFAULT_MARKUP_PCT
+  // (set in base.html). User edits to the price field disable the autofill so we
+  // never clobber an explicit price.
+  var cost = document.getElementById('add-cost');
+  var price = document.getElementById('add-price');
+  if (!cost || !price) return;
+  var pct = parseFloat(window.DEFAULT_MARKUP_PCT || '0') || 0;
+  if (pct <= 0) return;
+  var autoActive = true;
+  function recompute(){
+    if (!autoActive) return;
+    var c = parseFloat(cost.value || '0') || 0;
+    price.value = ceilCents(c * (1 + pct/100)).toFixed(2);
+  }
+  cost.addEventListener('input', recompute);
+  price.addEventListener('input', function(){
+    autoActive = false;
+    var hint = document.getElementById('add-markup-hint');
+    if (hint) hint.textContent = 'manual override — auto-fill disabled';
+  });
+})();
+</script>
 {% endblock %}

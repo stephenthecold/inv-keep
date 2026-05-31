@@ -1,4 +1,12 @@
 // ---- shared helpers ----
+function csrfToken() {
+  const m = document.querySelector('meta[name="csrf-token"]');
+  return m ? m.getAttribute("content") || "" : "";
+}
+function csrfHeaders(extra) {
+  return Object.assign({ "X-CSRF-Token": csrfToken() }, extra || {});
+}
+
 function toast(msg, ok) {
   let el = document.getElementById("toast");
   if (!el) return;
@@ -22,8 +30,30 @@ function beep(ok) {
   } catch (e) {}
 }
 
+function ceilCents(n) {
+  // Round UP to the nearest cent, mirroring server-side money_filter.
+  // The -1e-9 guards against 1.20 stored as 1.1999... drifting to 1.21.
+  return Math.ceil(Number(n) * 100 - 1e-9) / 100;
+}
+
+function tryGetGeo(timeoutMs) {
+  // Best-effort geolocation. Resolves to {lat, lng, accuracy} or null on
+  // denial / timeout / unsupported. NEVER throws — callers proceed regardless.
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve(null);
+    let done = false;
+    const finish = (val) => { if (!done) { done = true; resolve(val); } };
+    setTimeout(() => finish(null), timeoutMs || 4000);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => finish({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }),
+      () => finish(null),
+      { enableHighAccuracy: false, timeout: timeoutMs || 4000, maximumAge: 30_000 }
+    );
+  });
+}
+
 function money(n) {
-  return (window.CURRENCY || "$") + Number(n).toFixed(2);
+  return (window.CURRENCY || "$") + ceilCents(n).toFixed(2);
 }
 
 // Render an item icon value (emoji or "svg:<key>") to HTML.
@@ -137,38 +167,93 @@ document.addEventListener("click", (e) => {
   openModal("edit-part");
 });
 
-// ---- filter the charge-panel job list to the selected client ----
-function filterPanelJobs() {
-  const clientEl = document.getElementById("cp-client");
-  const jobEl = document.getElementById("cp-job");
-  if (!clientEl || !jobEl) return;
-  const cid = clientEl.value;
-  for (const opt of jobEl.options) {
-    if (!opt.value) { opt.hidden = false; continue; }
-    opt.hidden = opt.dataset.client !== cid;
-  }
-  const cur = jobEl.selectedOptions[0];
-  if (cur && cur.value && cur.dataset.client !== cid) jobEl.value = "";
-}
-
-// ---- scan / search / charge home page ----
+// ---- scan / cart on the home page ----
 const scan = document.getElementById("scan");
-if (scan) {
-  let sessionTotal = 0;
-  let currentPart = null;
+const cart = document.getElementById("cart");
+if (scan && cart) {
   const suggest = document.getElementById("suggest");
-  const panel = document.getElementById("charge-panel");
+  const clientSel = document.getElementById("cart-client");
+  const jobSel = document.getElementById("cart-job");
+  const body = document.getElementById("cart-body");
+  const subtotalEl = document.getElementById("cart-subtotal");
+  const statusEl = document.getElementById("cart-status");
+  const submitBtn = document.getElementById("cart-submit");
+  const cancelBtn = document.getElementById("cart-cancel");
 
-  const panelOpen = () => panel && !panel.hidden;
-  const refocusScan = () => { if (!panelOpen()) scan.focus(); };
+  // Keep keyboard-wedge scanners working: any stray click on the page
+  // refocuses the scan input unless the user is interacting with a
+  // form element / link.
   document.addEventListener("click", (e) => {
     const t = e.target;
-    if (t.closest("#charge-panel") || t.closest("#suggest")) return;
+    if (t.closest("#suggest")) return;
     if (["SELECT", "INPUT", "BUTTON", "TEXTAREA", "A"].includes(t.tagName)) return;
-    refocusScan();
+    scan.focus();
   });
 
-  // -- live search --
+  // -- helpers --
+  function filterJobsToClient(clientId) {
+    if (!jobSel) return;
+    for (const opt of jobSel.options) {
+      if (!opt.value) { opt.hidden = false; continue; }
+      opt.hidden = clientId ? (opt.dataset.client !== String(clientId)) : true;
+    }
+    const cur = jobSel.selectedOptions[0];
+    if (cur && cur.value && cur.dataset.client !== String(clientId)) jobSel.value = "";
+  }
+
+  function render(c) {
+    if (!c || !c.open) {
+      cart.hidden = true;
+      body.innerHTML = "";
+      subtotalEl.textContent = money(0);
+      return;
+    }
+    cart.hidden = false;
+    statusEl.textContent = c.number
+      ? "Order " + c.number
+      : "Order # will be assigned on submit";
+    clientSel.value = c.client_id ? String(c.client_id) : "";
+    filterJobsToClient(c.client_id);
+    jobSel.value = c.job_id ? String(c.job_id) : "";
+
+    body.innerHTML = "";
+    if (!c.lines.length) {
+      const tr = document.createElement("tr");
+      tr.className = "empty";
+      tr.innerHTML = `<td colspan="7">Cart is empty — scan an item below.</td>`;
+      body.appendChild(tr);
+    } else {
+      c.lines.forEach((ln) => {
+        const tr = document.createElement("tr");
+        const icoCell = ln.image
+          ? `<img class="item-thumb" src="${ln.image}" alt="">`
+          : (ln.icon ? iconHTML(ln.icon) : "");
+        const qtyCell = ln.type === "unique"
+          ? `<span>${ln.quantity}</span>`
+          : `<input type="number" min="1" value="${ln.quantity}" data-line="${ln.id}" class="line-qty" style="width:5rem">`;
+        tr.innerHTML = `
+          <td class="item-icon">${icoCell}</td>
+          <td>${ln.part}</td>
+          <td><code>${ln.barcode}</code></td>
+          <td class="num">${qtyCell}</td>
+          <td class="num">${money(ln.unit_price)}</td>
+          <td class="num">${money(ln.charge)}</td>
+          <td><button class="ghost line-remove" data-line="${ln.id}" title="Remove">✕</button></td>`;
+        body.appendChild(tr);
+      });
+    }
+    subtotalEl.textContent = money(c.subtotal);
+    submitBtn.disabled = !(c.lines.length && c.client_id);
+  }
+
+  async function refresh() {
+    const r = await fetch("/api/cart");
+    const d = await r.json();
+    render(d.cart);
+  }
+  refresh();
+
+  // -- live search dropdown (unchanged feel) --
   let searchTimer = null;
   scan.addEventListener("input", () => {
     clearTimeout(searchTimer);
@@ -176,13 +261,11 @@ if (scan) {
     if (!q) { hideSuggest(); return; }
     searchTimer = setTimeout(() => runSearch(q), 180);
   });
-
   async function runSearch(q) {
     const res = await fetch("/api/search?q=" + encodeURIComponent(q));
     const data = await res.json();
     renderSuggest(data.results || []);
   }
-
   function renderSuggest(results) {
     if (!results.length) { hideSuggest(); return; }
     suggest.innerHTML = "";
@@ -192,14 +275,14 @@ if (scan) {
         ? `<img class="sg-thumb" src="${p.image}" alt="">`
         : (p.icon ? `<span class="sg-icon">${iconHTML(p.icon)}</span>` : "");
       row.innerHTML = `${ic}<b>${p.name}</b> <span class="muted">· ${p.barcode} · on hand ${p.qty} · ${money(p.unit_price)}</span>`;
-      row.onclick = () => { hideSuggest(); openCharge(p); };
+      row.onclick = () => { hideSuggest(); addToCart(p.barcode); };
       suggest.appendChild(row);
     });
     suggest.hidden = false;
   }
   function hideSuggest() { suggest.hidden = true; suggest.innerHTML = ""; }
 
-  // Enter in the scan box → resolve exact barcode, else search.
+  // Enter / scanner submit: resolve exact barcode → add to cart; else search.
   scan.addEventListener("keydown", async (e) => {
     if (e.key !== "Enter") return;
     e.preventDefault();
@@ -209,118 +292,160 @@ if (scan) {
     const data = await res.json();
     const results = data.results || [];
     const exact = results.find((p) => p.barcode.toLowerCase() === q.toLowerCase());
-    if (exact) { hideSuggest(); openCharge(exact); return; }
-    if (results.length === 1) { hideSuggest(); openCharge(results[0]); return; }
+    if (exact) { hideSuggest(); addToCart(exact.barcode); return; }
+    if (results.length === 1) { hideSuggest(); addToCart(results[0].barcode); return; }
     if (results.length) { renderSuggest(results); return; }
     beep(false);
     toast("No match — opening Add Item…", false);
     setTimeout(() => (window.location = "/parts?barcode=" + encodeURIComponent(q)), 900);
   });
 
-  // -- charge panel --
-  function openCharge(part) {
-    currentPart = part;
-    const cpImg = document.getElementById("cp-image");
-    if (part.image) {
-      cpImg.src = part.image; cpImg.style.display = "";
-      document.getElementById("cp-icon").textContent = "";
-    } else {
-      cpImg.style.display = "none";
-      document.getElementById("cp-icon").innerHTML = iconHTML(part.icon || "");
-    }
-    document.getElementById("cp-name").textContent = part.name;
-    document.getElementById("cp-desc").textContent = part.description || "";
-    document.getElementById("cp-barcode").textContent = part.barcode;
-    document.getElementById("cp-qty").textContent = part.qty;
-    document.getElementById("cp-price").textContent = money(part.unit_price);
-    document.getElementById("cp-cost").textContent = money(part.unit_cost);
-    const qtyEl = document.getElementById("cp-quantity");
-    qtyEl.value = "1";
-    qtyEl.disabled = part.type === "unique";
-    filterPanelJobs();
-    panel.hidden = false;
-    qtyEl.focus();
-    qtyEl.select();
-  }
-
-  window.cancelCharge = function () {
-    panel.hidden = true;
-    currentPart = null;
-    scan.value = "";
-    hideSuggest();
-    scan.focus();
-  };
-
-  window.confirmCharge = async function () {
-    if (!currentPart) return;
-    const clientEl = document.getElementById("cp-client");
-    if (!clientEl || !clientEl.value) { toast("Pick a client first", false); beep(false); return; }
-    const jobEl = document.getElementById("cp-job");
-    const jobId = jobEl && jobEl.value ? parseInt(jobEl.value, 10) : null;
-    const quantity = parseInt(document.getElementById("cp-quantity").value || "1", 10) || 1;
-    const note = document.getElementById("cp-note").value;
-
-    const res = await fetch("/api/checkout", {
+  async function addToCart(barcode) {
+    const geo = await tryGetGeo(4000);
+    const body = { barcode, quantity: 1 };
+    if (geo) { body.lat = geo.lat; body.lng = geo.lng; body.geo_accuracy_m = geo.accuracy; }
+    const res = await fetch("/api/cart/scan", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ barcode: currentPart.barcode, client_id: parseInt(clientEl.value, 10), job_id: jobId, quantity, note }),
+      headers: csrfHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(body),
     });
-    const data = await res.json();
-    if (!data.ok) {
+    const d = await res.json();
+    if (!d.ok) {
       beep(false);
-      if (data.error === "insufficient_stock") toast(`Out of stock: ${data.part} (have ${data.available})`, false);
-      else toast("Could not charge that part", false);
+      if (d.error === "insufficient_stock") toast(`Out of stock: ${d.part} (have ${d.available})`, false);
+      else if (d.error === "unknown_barcode") toast(`Unknown barcode ${d.barcode}`, false);
+      else toast("Could not add to cart", false);
       return;
     }
     beep(true);
-    addLine(data.line);
-    const dest = data.line.client + (data.line.job ? " / " + data.line.job : "");
-    toast(`${data.line.part} ×${data.line.quantity} → ${dest}`, true);
-    document.getElementById("cp-note").value = "";
-    panel.hidden = true;
-    currentPart = null;
+    render(d.cart);
+    if (d.fresh && !d.cart.client_id) {
+      toast("Cart started — pick a client to continue", true);
+      clientSel.focus();
+    } else {
+      toast(`Added — cart subtotal ${money(d.cart.subtotal)}`, true);
+    }
     scan.value = "";
     scan.focus();
-  };
-
-  // Enter confirms / Esc cancels while inside the panel.
-  panel.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); confirmCharge(); }
-    if (e.key === "Escape") { e.preventDefault(); cancelCharge(); }
-  });
-
-  function addLine(line) {
-    const body = document.getElementById("session-body");
-    const empty = body.querySelector(".empty");
-    if (empty) empty.remove();
-    const dest = line.client + (line.job ? " / " + line.job : "");
-    const tr = document.createElement("tr");
-    tr.id = "sl-" + line.id;
-    tr.innerHTML = `
-      <td>${line.part}</td>
-      <td>${dest}</td>
-      <td class="num">${line.quantity}</td>
-      <td class="num">${money(line.unit_price)}</td>
-      <td class="num">${money(line.charge)}</td>
-      <td><button class="undo" data-id="${line.id}" data-total="${line.charge}">undo</button></td>`;
-    body.prepend(tr);
-    sessionTotal += line.charge;
-    document.getElementById("session-total").textContent = money(sessionTotal);
   }
 
-  document.addEventListener("click", async (e) => {
-    if (!e.target.classList.contains("undo")) return;
-    const id = e.target.dataset.id;
-    const res = await fetch("/api/void/" + id, { method: "POST" });
-    const data = await res.json();
-    if (data.ok) {
-      sessionTotal -= parseFloat(e.target.dataset.total);
-      document.getElementById("session-total").textContent = money(sessionTotal);
-      document.getElementById("sl-" + id).classList.add("voided");
-      e.target.remove();
-      toast("Reversed", true);
+  // Client / Job selectors push to the server immediately.
+  async function pushTarget() {
+    const cid = clientSel.value ? parseInt(clientSel.value, 10) : null;
+    filterJobsToClient(cid);
+    const jid = jobSel.value ? parseInt(jobSel.value, 10) : null;
+    const res = await fetch("/api/cart/set", {
+      method: "POST",
+      headers: csrfHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ client_id: cid, job_id: jid }),
+    });
+    const d = await res.json();
+    if (d.ok) render(d.cart);
+  }
+  clientSel.addEventListener("change", pushTarget);
+  jobSel.addEventListener("change", pushTarget);
+
+  // Qty edits + remove on cart lines.
+  body.addEventListener("change", async (e) => {
+    if (!e.target.classList.contains("line-qty")) return;
+    const id = e.target.dataset.line;
+    const newQty = Math.max(1, parseInt(e.target.value || "1", 10) || 1);
+    const res = await fetch("/api/cart/line/" + id, {
+      method: "POST",
+      headers: csrfHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ quantity: newQty }),
+    });
+    const d = await res.json();
+    if (d.ok) { render(d.cart); }
+    else {
+      beep(false);
+      toast(d.error === "insufficient_stock" ? `Only ${d.available} on hand` : "Could not update qty", false);
+      refresh();
     }
   });
+  body.addEventListener("click", async (e) => {
+    if (!e.target.classList.contains("line-remove")) return;
+    const id = e.target.dataset.line;
+    const res = await fetch("/api/cart/line/" + id + "/remove", {
+      method: "POST",
+      headers: csrfHeaders(),
+    });
+    const d = await res.json();
+    if (d.ok) render(d.cart);
+  });
+
+  submitBtn.addEventListener("click", async () => {
+    submitBtn.disabled = true;
+    const res = await fetch("/api/cart/submit", { method: "POST", headers: csrfHeaders() });
+    const d = await res.json();
+    if (!d.ok) {
+      submitBtn.disabled = false;
+      beep(false);
+      const msg = d.error === "no_client" ? "Pick a client first" :
+                  d.error === "empty_cart" ? "Cart is empty" :
+                  "Could not submit";
+      toast(msg, false);
+      return;
+    }
+    beep(true);
+    toast(`${d.order.number} submitted — ${d.order.lines} line(s), ${money(d.order.subtotal)}`, true);
+    // Brief delay so the toast is visible, then reload to refresh Recent activity.
+    setTimeout(() => location.reload(), 1100);
+  });
+
+  cancelBtn.addEventListener("click", async () => {
+    if (!confirm("Cancel this cart? Stock will be returned and the order discarded.")) return;
+    const res = await fetch("/api/cart/cancel", { method: "POST", headers: csrfHeaders() });
+    const d = await res.json();
+    if (d.ok) { toast("Cart cancelled", true); refresh(); }
+  });
+
+  // -- custom (off-catalog) item form --
+  const customForm = document.getElementById("custom-form");
+  if (customForm) {
+    // Mirror the markup autofill from the Items page so a custom-item price
+    // suggests itself based on the configured markup %.
+    const cCost = document.getElementById("custom-cost");
+    const cPrice = document.getElementById("custom-price");
+    let cAuto = true;
+    cCost.addEventListener("input", () => {
+      if (!cAuto) return;
+      const pct = parseFloat(window.DEFAULT_MARKUP_PCT || "0") || 0;
+      if (pct <= 0) return;
+      cPrice.value = ceilCents(parseFloat(cCost.value || "0") * (1 + pct / 100)).toFixed(2);
+    });
+    cPrice.addEventListener("input", () => { cAuto = false; });
+
+    customForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(customForm);
+      const geo = await tryGetGeo(4000);
+      if (geo) {
+        fd.append("lat", geo.lat);
+        fd.append("lng", geo.lng);
+        fd.append("geo_accuracy_m", geo.accuracy);
+      }
+      const res = await fetch("/api/cart/custom", {
+        method: "POST",
+        headers: { "X-CSRF-Token": csrfToken() },  // don't override multipart Content-Type
+        body: fd,
+      });
+      const d = await res.json();
+      if (!d.ok) {
+        beep(false);
+        toast(d.error === "name_required" ? "Name is required" : "Could not add custom item", false);
+        return;
+      }
+      beep(true);
+      toast(`Custom item added — subtotal ${money(d.cart.subtotal)}`, true);
+      render(d.cart);
+      customForm.reset();
+      cAuto = true;
+      document.getElementById("add-custom").close();
+      if (d.fresh && !d.cart.client_id) clientSel.focus();
+      else scan.focus();
+    });
+  }
 }
 
 // ---- transactions page void ----
@@ -328,7 +453,7 @@ document.addEventListener("click", async (e) => {
   if (!e.target.classList.contains("void-btn")) return;
   if (!confirm("Void this transaction and return stock?")) return;
   const id = e.target.dataset.id;
-  const res = await fetch("/api/void/" + id, { method: "POST" });
+  const res = await fetch("/api/void/" + id, { method: "POST", headers: csrfHeaders() });
   const data = await res.json();
   if (data.ok) {
     document.getElementById("txn-" + id).classList.add("voided");

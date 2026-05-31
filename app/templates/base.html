@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="csrf-token" content="{{ csrf_token }}">
   <title>{{ cfg.app_title }}</title>
   <link rel="stylesheet" href="/static/style.css?v={{ version }}">
   <link rel="manifest" href="/manifest.webmanifest">
@@ -14,6 +15,7 @@
   <link rel="icon" href="/static/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   {% if cfg.brand_accent %}<style>:root{ --accent: {{ cfg.brand_accent }}; }</style>{% endif %}
+  <script>window.ICON_SET = {{ icon_set | tojson }}; window.CURRENCY = {{ (cfg.currency or '$') | tojson }}; window.DEFAULT_MARKUP_PCT = {{ (cfg.default_markup_pct or '0') | tojson }};</script>
 </head>
 <body>
   <header>
@@ -33,6 +35,7 @@
         <div class="account-menu navdrop-menu" id="records-menu" data-menu-pop hidden>
           <a href="/transactions">History</a>
           <a href="/report">Report</a>
+          <a href="/map">Map</a>
           {% if can('view_audit') %}<a href="/audit">Audit</a>{% endif %}
         </div>
       </div>
@@ -46,7 +49,7 @@
       <div class="account-menu" id="account-menu" data-menu-pop hidden>
         {% if can('manage_users') %}<a href="/users">Users &amp; roles</a>{% endif %}
         {% if can('manage_settings') %}<a href="/settings">Settings</a>{% endif %}
-        {% if cfg.auth_mode == 'oidc' %}<a class="logout" href="/logout">Log out</a>{% endif %}
+        {% if cfg.auth_mode == 'oidc' %}<form method="post" action="/logout" class="logout-form"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="logout" type="submit">Log out</button></form>{% endif %}
         {% if not (can('manage_users') or can('manage_settings') or cfg.auth_mode == 'oidc') %}<span class="muted" style="display:block;padding:.5rem .7rem">Signed in as {{ user.role or 'user' }}</span>{% endif %}
       </div>
     </div>
@@ -59,7 +62,6 @@
     {% if cfg.brand_footer %}<span>{{ cfg.brand_footer }}</span> · {% endif %}
     {{ cfg.app_title }} <span class="muted">v{{ version }}</span>
   </footer>
-  <script>window.ICON_SET = {{ icon_set | tojson }};</script>
   <script src="/static/app.js?v={{ version }}"></script>
   <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}</script>
 </body>

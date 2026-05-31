@@ -14,6 +14,15 @@ DEFAULTS = {
     "app_title": env_settings.app_title,
     "currency": env_settings.currency,
     "low_stock_threshold": "5",
+    # Markup applied to our cost to suggest a client price when adding an item.
+    # Stored as a percent string (e.g. "35" = 35%). Client side computes
+    # ceil_cents(unit_cost * (1 + markup/100)) into the price field; user may
+    # still edit per-item before saving. Blank / 0 = no autofill.
+    "default_markup_pct": "0",
+    # IANA timezone (e.g. "America/New_York"). All stored timestamps stay UTC;
+    # this only controls what users SEE in the audit log / transactions list.
+    # Blank defaults to UTC.
+    "timezone": "UTC",
     # Default label size preset key (see app/labels.py LABEL_SIZES)
     "label_size": "sheet",
     "label_barcode_type": "code128",   # code128 | qr

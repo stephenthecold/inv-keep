@@ -1,19 +1,45 @@
+# -- Local data + uploads (per-deployment, never tracked) --
 data/*.db
 data/uploads/
-.venv/
+
+# -- Env / secrets --
 .env
-# Custom TLS certs (keep the certs/ folder + its README, ignore the key material)
+.env.*
+!.env.example
+
+# -- Custom TLS certs (keep the certs/ folder + its README, ignore key material) --
 certs/*.pem
 certs/*.key
 certs/*.crt
+
+# -- Python --
+.venv/
+venv/
 __pycache__/
 *.pyc
-# Android TWA build artifacts (Bubblewrap)
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# -- Android TWA build artifacts (Bubblewrap) --
 android/*.keystore
 android/*.apk
 android/*.aab
 android/app/
 android/.gradle/
 android/build/
+
+# -- IDE / OS noise --
 .DS_Store
 **/.DS_Store
+Thumbs.db
+desktop.ini   # OneDrive
+.vscode/
+.idea/
+
+# -- Claude Code per-machine state --
+.claude/
+
+# -- Misc temp --
+*.log
+*.tmp

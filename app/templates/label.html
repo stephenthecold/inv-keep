@@ -67,7 +67,7 @@
     {% if content.description and part.description %}<div class="label-sub">{{ part.description }}</div>{% endif %}
     <div class="label-barcode">{{ svg | safe }}</div>
     {% if barcode_type == 'qr' and content.name %}<div class="label-code-text">{{ part.barcode }}</div>{% endif %}
-    {% if content.price %}<div class="label-price">{{ currency }}{{ '%.2f'|format(part.unit_price) }}</div>{% endif %}
+    {% if content.price %}<div class="label-price">{{ part.unit_price | money(currency) }}</div>{% endif %}
     {% if content.extra %}<div class="label-sub">{{ content.extra }}</div>{% endif %}
   </div>
   {% else %}

@@ -13,6 +13,7 @@
 <dialog id="add-job" class="modal">
   <h2>Add job</h2>
   <form method="post" action="/jobs/add" class="grid-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label>Client
       <select name="client_id" required>
         {% for c in clients %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
@@ -34,7 +35,7 @@
     {% for j in jobs %}
     <tr {% if not j.active %}class="voided"{% endif %}>
       <td>
-        <form id="job-{{ j.id }}" method="post" action="/jobs/{{ j.id }}/edit"></form>
+        <form id="job-{{ j.id }}" method="post" action="/jobs/{{ j.id }}/edit"><input type="hidden" name="_csrf" value="{{ csrf_token }}"></form>
         <select form="job-{{ j.id }}" name="client_id">
           {% for c in clients %}<option value="{{ c.id }}" {% if c.id == j.client_id %}selected{% endif %}>{{ c.name }}</option>{% endfor %}
         </select>

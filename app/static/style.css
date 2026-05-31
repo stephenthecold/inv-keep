@@ -51,9 +51,11 @@ nav a:hover { color: var(--text); }
 .account-btn .caret { color: var(--muted); font-size: .7rem; }
 .account-role { font-size: .7rem; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 .4rem; }
 .account-menu { position: absolute; right: 0; top: calc(100% + .4rem); min-width: 170px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 28px rgba(0,0,0,.45); padding: .35rem; z-index: 40; }
-.account-menu a { display: block; padding: .5rem .7rem; border-radius: 6px; color: var(--text); text-decoration: none; white-space: nowrap; }
-.account-menu a:hover { background: var(--panel-2); }
-.account-menu a.logout { color: var(--accent); }
+.account-menu a, .account-menu .logout-form button { display: block; padding: .5rem .7rem; border-radius: 6px; color: var(--text); text-decoration: none; white-space: nowrap; }
+.account-menu a:hover, .account-menu .logout-form button:hover { background: var(--panel-2); }
+.account-menu a.logout, .account-menu .logout-form button.logout { color: var(--accent); }
+.account-menu .logout-form { margin: 0; }
+.account-menu .logout-form button { width: 100%; text-align: left; background: none; border: 0; font: inherit; cursor: pointer; }
 main { max-width: 1000px; margin: 0 auto; padding: 1.5rem 1.25rem 4rem; }
 button, .btn, .add-btn { white-space: nowrap; }
 h1 { margin-top: 0; }
@@ -98,7 +100,12 @@ tfoot td { font-weight: 700; }
 .grid-form { display: flex; flex-wrap: wrap; gap: .75rem; align-items: flex-end; margin-top: .75rem; }
 .grid-form label { display: flex; flex-direction: column; font-size: .85rem; color: var(--muted); gap: .25rem; }
 .inline { display: inline; }
-.filter { display: flex; gap: .75rem; align-items: center; margin: 1rem 0; }
+.filter { display: flex; gap: .75rem; align-items: center; margin: 1rem 0; flex-wrap: wrap; }
+.report-filter .report-clients { position: relative; }
+.report-filter .report-clients > summary { cursor: pointer; padding: .35rem .6rem; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); list-style: none; }
+.report-filter .report-clients > summary::-webkit-details-marker { display: none; }
+.report-filter .report-clients-list { position: absolute; top: calc(100% + .4rem); left: 0; min-width: 240px; max-height: 320px; overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: .5rem .7rem; box-shadow: 0 10px 28px rgba(0,0,0,.45); z-index: 30; }
+.report-filter .report-clients-list .check { display: flex; gap: .5rem; align-items: center; padding: .25rem 0; white-space: nowrap; }
 
 .notice { background: var(--panel); border-left: 3px solid var(--warn); padding: .75rem 1rem; border-radius: 6px; margin: 1rem 0; }
 .muted { color: var(--muted); }
@@ -157,15 +164,21 @@ dialog.modal h2 { margin-top: 0; }
 .suggest > div:last-child { border-bottom: none; }
 .suggest > div:hover, .suggest > div.active { background: var(--panel-2); }
 
-/* charge-out panel */
-.charge-panel { border: 2px solid var(--accent); border-radius: 12px; padding: 1rem 1.25rem; margin: 1rem 0; background: var(--panel); }
-.charge-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: .75rem; }
-.charge-id { display: flex; gap: .75rem; align-items: center; }
-.charge-icon { font-size: 2.2rem; line-height: 1; }
-.charge-icon:empty { display: none; }
-.charge-name { font-size: 1.3rem; font-weight: 700; }
-.charge-actions { margin-top: 1rem; display: flex; gap: 1rem; align-items: center; }
-.charge-actions button { font-size: 1.05rem; padding: .6rem 1.4rem; }
+/* embedded Leaflet map */
+.map-section { margin: 1rem 0; border: 1px solid var(--line); border-radius: 10px; padding: .5rem .75rem; background: var(--panel); }
+.map-section > summary { cursor: pointer; font-weight: 600; padding: .25rem 0; list-style: none; }
+.map-section > summary::-webkit-details-marker { display: none; }
+.map-section .txn-map { height: 360px; margin-top: .5rem; border-radius: 8px; }
+.map-full { position: relative; height: calc(100vh - 200px); min-height: 480px; border-radius: 10px; }
+
+/* shopping-cart card on the scan page */
+.cart-card { border: 2px solid var(--accent); border-radius: 12px; padding: 1rem 1.25rem; margin: 1rem 0; background: var(--panel); }
+.cart-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: .75rem; flex-wrap: wrap; }
+.cart-actions { display: flex; gap: .5rem; }
+.cart-targets { margin-bottom: .75rem; }
+.cart-lines { margin-top: .5rem; }
+.cart-lines .line-qty { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: .25rem .5rem; }
+.cart-lines .line-remove { padding: .15rem .5rem; font-size: .85rem; }
 .sg-icon { display: inline-block; width: 1.4rem; text-align: center; margin-right: .2rem; }
 
 /* emoji picker */

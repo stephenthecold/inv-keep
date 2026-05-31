@@ -9,3 +9,6 @@ httpx==0.28.1
 pydantic-settings==2.7.1
 python-barcode==0.15.1
 qrcode==8.0
+# zoneinfo fallback for systems without an OS tzdb (Windows + minimal Docker
+# bases). On Linux with /usr/share/zoneinfo this is a no-op.
+tzdata>=2024.1

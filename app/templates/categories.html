@@ -9,6 +9,7 @@
 <dialog id="add-category" class="modal">
   <h2>Add category</h2>
   <form method="post" action="/categories/add" class="grid-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label>Name <input name="name" required></label>
     <label>Parent
       <select name="parent_id">
@@ -32,7 +33,7 @@
     {% for cid, label, depth, c in tree %}
     <tr>
       <td>
-        <form id="cat-{{ cid }}" method="post" action="/categories/{{ cid }}/edit"></form>
+        <form id="cat-{{ cid }}" method="post" action="/categories/{{ cid }}/edit"><input type="hidden" name="_csrf" value="{{ csrf_token }}"></form>
         <span style="display:inline-block;width:{{ depth * 1.4 }}rem"></span>
         <input form="cat-{{ cid }}" name="name" value="{{ c.name }}">
       </td>
@@ -50,6 +51,7 @@
       <td>
         <button form="cat-{{ cid }}" type="submit">Save</button>
         <form method="post" action="/categories/{{ cid }}/delete" class="inline" onsubmit="return confirm('Delete this category?')">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
           <button class="danger" type="submit">Delete</button>
         </form>
       </td>

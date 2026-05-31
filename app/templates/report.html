@@ -1,11 +1,24 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Monthly Charge-Out Report</h1>
+<h1>Charge-Out Report</h1>
+<p class="muted">Showing: <b>{{ range_label }}</b>{% if selected_client_ids %} — {{ selected_client_ids|length }} client{{ '' if selected_client_ids|length == 1 else 's' }} selected{% endif %}</p>
 
-<form method="get" class="filter">
+<form method="get" class="filter report-filter">
   <label>Month <input type="month" name="month" value="{{ month }}"></label>
+  <span class="muted">— or —</span>
+  <label>From <input type="date" name="date_from" value="{{ date_from }}"></label>
+  <label>To <input type="date" name="date_to" value="{{ date_to }}"></label>
+  <details class="report-clients">
+    <summary>Clients ({% if selected_client_ids %}{{ selected_client_ids|length }}{% else %}all{% endif %})</summary>
+    <div class="report-clients-list">
+      <label class="check"><input type="checkbox" id="report-clients-all" {% if not selected_client_ids %}checked{% endif %}> <b>All clients</b></label>
+      {% for c in all_clients %}
+      <label class="check"><input type="checkbox" name="client_id" value="{{ c.id }}" {% if c.id in selected_client_ids %}checked{% endif %}> {{ c.name }}{% if c.reference %} <span class="muted">{{ c.reference }}</span>{% endif %}</label>
+      {% endfor %}
+    </div>
+  </details>
   <button type="submit">Show</button>
-  <a class="btn" href="/report.csv?month={{ month }}">⬇ Export CSV</a>
+  <a class="btn" href="/report.csv?{% if date_from and date_to %}date_from={{ date_from }}&date_to={{ date_to }}{% else %}month={{ month }}{% endif %}{% for cid in selected_client_ids %}&client_id={{ cid }}{% endfor %}">⬇ Export CSV</a>
 </form>
 
 {% for c in report %}
@@ -23,19 +36,19 @@
         <td>{{ line.part }}</td>
         <td><code>{{ line.barcode }}</code></td>
         <td class="num">{{ line.quantity }}</td>
-        <td class="num">{{ cfg.currency }}{{ '%.2f'|format(line.unit_price) }}</td>
-        <td class="num">{{ cfg.currency }}{{ '%.2f'|format(line.charge) }}</td>
+        <td class="num">{{ line.unit_price | money(cfg.currency) }}</td>
+        <td class="num">{{ line.charge | money(cfg.currency) }}</td>
       </tr>
       {% endfor %}
     </tbody>
     <tfoot>
-      <tr><td colspan="4">Job subtotal</td><td class="num">{{ cfg.currency }}{{ '%.2f'|format(job.charge) }}</td></tr>
+      <tr><td colspan="4">Job subtotal</td><td class="num">{{ job.charge | money(cfg.currency) }}</td></tr>
     </tfoot>
   </table>
   {% endfor %}
   <div class="client-subtotal">
-    {{ c.name }} total: {{ cfg.currency }}{{ '%.2f'|format(c.charge) }}
-    <span class="muted">(cost {{ cfg.currency }}{{ '%.2f'|format(c.cost) }} · margin {{ cfg.currency }}{{ '%.2f'|format(c.margin) }})</span>
+    {{ c.name }} total: {{ c.charge | money(cfg.currency) }}
+    <span class="muted">(cost {{ c.cost | money(cfg.currency) }} · margin {{ c.margin | money(cfg.currency) }})</span>
   </div>
 </div>
 {% else %}
@@ -43,7 +56,28 @@
 {% endfor %}
 
 {% if report %}
-<div class="grand-total">Billable total: {{ cfg.currency }}{{ '%.2f'|format(totals.charge) }}</div>
-<div class="muted" style="text-align:right">Cost: {{ cfg.currency }}{{ '%.2f'|format(totals.cost) }} · Margin: {{ cfg.currency }}{{ '%.2f'|format(totals.margin) }}</div>
+<div class="grand-total">Billable total: {{ totals.charge | money(cfg.currency) }}</div>
+<div class="muted" style="text-align:right">Cost: {{ totals.cost | money(cfg.currency) }} · Margin: {{ totals.margin | money(cfg.currency) }}</div>
 {% endif %}
+<script>
+(function(){
+  // "All clients" checkbox is a UI-only toggle: ticking it clears the per-client
+  // boxes (the form then submits with no client_id= params → "all" on the server).
+  // Ticking any specific client unticks "All".
+  var all = document.getElementById('report-clients-all');
+  if (!all) return;
+  var boxes = document.querySelectorAll('input[name="client_id"]');
+  all.addEventListener('change', function(){
+    if (all.checked) boxes.forEach(function(b){ b.checked = false; });
+  });
+  boxes.forEach(function(b){
+    b.addEventListener('change', function(){
+      if (b.checked) all.checked = false;
+      // If user untoggles the last one, snap back to "All".
+      var anyChecked = Array.from(boxes).some(function(x){ return x.checked; });
+      if (!anyChecked) all.checked = true;
+    });
+  });
+})();
+</script>
 {% endblock %}

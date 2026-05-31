@@ -1,8 +1,12 @@
+import html
+import math
 import os
+import re
 import secrets
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone as _tz
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
@@ -19,11 +23,20 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import audit, auth, emailer, icons, labels, rbac, reports
+from . import audit, auth, csrf, emailer, icons, labels, orders, rbac, reports
 from . import settings_store as store
 from .config import settings
+
+_PLACEHOLDER_SECRET = "change-me-generate-a-random-value"
+if (not settings.session_secret
+        or settings.session_secret == _PLACEHOLDER_SECRET
+        or len(settings.session_secret) < 32):
+    raise RuntimeError(
+        "SESSION_SECRET must be a random value of 32+ characters. "
+        "Generate one with:  python -c \"import secrets; print(secrets.token_hex(32))\""
+    )
 from .database import Base, SessionLocal, engine, ensure_columns, get_db
-from .models import AuditLog, Category, Client, Job, Part, Role, Transaction, User
+from .models import AuditLog, Category, Client, Job, Order, Part, Role, Transaction, User
 from .version import __version__
 
 Base.metadata.create_all(bind=engine)
@@ -53,6 +66,25 @@ CURRENCIES = [
 ]
 
 _IMG_EXT = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
+_MAX_ITEM_IMG = 4 * 1024 * 1024  # 4 MB
+
+# Curated IANA timezone list for the Settings dropdown. Users with anything more
+# exotic can hand-edit the DB; this covers >90% of MSP deployments.
+TIMEZONES = [
+    "UTC",
+    "America/New_York", "America/Chicago", "America/Denver", "America/Phoenix",
+    "America/Los_Angeles", "America/Anchorage", "Pacific/Honolulu",
+    "America/Toronto", "America/Vancouver", "America/Edmonton", "America/Halifax",
+    "America/Mexico_City", "America/Bogota", "America/Sao_Paulo",
+    "Europe/London", "Europe/Dublin", "Europe/Paris", "Europe/Berlin",
+    "Europe/Amsterdam", "Europe/Madrid", "Europe/Rome", "Europe/Stockholm",
+    "Europe/Helsinki", "Europe/Warsaw", "Europe/Moscow",
+    "Africa/Johannesburg", "Africa/Cairo", "Africa/Lagos",
+    "Asia/Dubai", "Asia/Kolkata", "Asia/Bangkok", "Asia/Singapore",
+    "Asia/Hong_Kong", "Asia/Shanghai", "Asia/Tokyo", "Asia/Seoul",
+    "Australia/Perth", "Australia/Adelaide", "Australia/Sydney", "Australia/Brisbane",
+    "Pacific/Auckland",
+]
 
 
 async def _save_item_image(image, part_id):
@@ -63,7 +95,7 @@ async def _save_item_image(image, part_id):
     if not ext:
         return None
     data = await image.read()
-    if not data or len(data) > 4 * 1024 * 1024:
+    if not data or len(data) > _MAX_ITEM_IMG:
         return None
     fname = f"{part_id}{ext}"
     with open(os.path.join(ITEM_IMG_DIR, fname), "wb") as fh:
@@ -75,6 +107,57 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 templates = Jinja2Templates(directory="app/templates")
 templates.env.globals["icon_html"] = icons.render_html
+
+
+def ceil_cents(value) -> float:
+    """Round a dollar amount UP to the next cent. Stored values keep full
+    precision; this is for *display* (and for the markup autofill when
+    creating an item, so the client-visible price never under-bills)."""
+    try:
+        v = float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    # math.ceil on cents; the +1e-9 guards against float drift turning
+    # e.g. 1.20 (stored as 1.1999...) into 1.21.
+    return math.ceil(v * 100 - 1e-9) / 100
+
+
+def money_filter(value, currency_symbol=None):
+    """Format a number as currency, ceiling-rounded to the nearest cent.
+    When called without an explicit symbol the template should pass
+    cfg.currency; we don't reach into request state here to keep the
+    filter pure."""
+    return f"{currency_symbol or ''}{ceil_cents(value):.2f}"
+
+
+templates.env.globals["ceil_cents"] = ceil_cents
+templates.env.filters["money"] = money_filter
+
+
+def _zone(name):
+    """Resolve an IANA timezone name to a ZoneInfo, falling back to UTC for
+    typos / unavailable zones (e.g. the system tzdata isn't installed)."""
+    try:
+        return ZoneInfo(name or "UTC")
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("UTC")
+
+
+def local_dt_filter(value, tz_name="UTC", fmt="%Y-%m-%d %H:%M"):
+    """Convert a stored UTC datetime to the configured display timezone.
+    Templates use:  {{ row.created_at | local_dt(cfg.timezone) }}.
+    Naive datetimes (which SQLAlchemy gives us for SQLite columns) are
+    assumed UTC — matches how the scheduler / DB writes them."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value  # already preformatted somewhere; pass through
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=_tz.utc)
+    return value.astimezone(_zone(tz_name)).strftime(fmt)
+
+
+templates.env.filters["local_dt"] = local_dt_filter
 
 # Network-FIRST service worker: always fetch fresh (so CSS/JS/template updates
 # apply immediately), falling back to cache only when offline. Static assets are
@@ -119,11 +202,24 @@ def _stop_scheduler():
     _stop_event.set()
 
 
+_MAX_REQUEST_BODY = 8 * 1024 * 1024  # 8 MB hard cap — generous wrt logo (2MB) + item image (4MB)
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
     if path.startswith("/static") or path in PUBLIC_PATHS:
         return await call_next(request)
+    # Reject oversized bodies before Starlette buffers them (memory + disk DoS).
+    # Content-Length is client-controlled, so this is a coarse first-pass guard;
+    # per-endpoint length checks remain authoritative.
+    cl = request.headers.get("content-length")
+    if cl:
+        try:
+            if int(cl) > _MAX_REQUEST_BODY:
+                return JSONResponse({"detail": "Request too large"}, status_code=413)
+        except ValueError:
+            pass
     db = SessionLocal()
     try:
         user = auth.resolve_user(request, db)
@@ -143,18 +239,26 @@ async def auth_middleware(request: Request, call_next):
         if path.startswith("/api/"):
             return JSONResponse({"ok": False, "error": "forbidden", "need": perm}, status_code=403)
         return HTMLResponse(
-            f"<html><body style='font-family:system-ui;max-width:560px;margin:4rem auto;color:#333'>"
-            f"<h2>Not permitted</h2><p>Your role (<b>{user.get('role','')}</b>) doesn't have the "
-            f"<code>{perm}</code> permission. Ask an administrator for access.</p>"
-            f"<p><a href='/'>← Back</a></p></body></html>",
+            "<html><body style='font-family:system-ui;max-width:560px;margin:4rem auto;color:#333'>"
+            f"<h2>Not permitted</h2><p>Your role (<b>{html.escape(user.get('role',''))}</b>) doesn't have the "
+            f"<code>{html.escape(perm)}</code> permission. Ask an administrator for access.</p>"
+            "<p><a href='/'>← Back</a></p></body></html>",
             status_code=403,
         )
     return await call_next(request)
 
 
-# Added LAST so it sits OUTERMOST in the stack and runs before auth_middleware,
-# making request.session available when OIDC mode reads it.
-app.add_middleware(SessionMiddleware, secret_key=settings.session_secret)
+# CSRF must sit INSIDE SessionMiddleware (so it can read scope['session'])
+# and OUTSIDE the auth/handler chain (so the body it replays reaches the
+# route handler). add_middleware adds to the FRONT of the stack, so the LAST
+# add_middleware call ends up outermost: register CSRF first, Session second.
+app.add_middleware(csrf.CSRFMiddleware)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.session_secret,
+    https_only=not settings.disable_auth,
+    same_site="lax",
+)
 
 
 def ctx(request: Request, db: Session, **kwargs):
@@ -167,6 +271,7 @@ def ctx(request: Request, db: Session, **kwargs):
         "icon_set": icons.ICON_SET,
         "icon_choices": icons.ICON_CHOICES,
         "now": datetime.utcnow(),
+        "csrf_token": csrf.issue(request),
     }
     u = base["user"]
     base["can"] = lambda p: bool(u.get("is_admin")) or p in u.get("perms", set())
@@ -280,11 +385,12 @@ def service_worker():
 
 
 def _auth_error_page(detail):
+    safe_detail = html.escape(str(detail))
     return HTMLResponse(
         "<html><body style='font-family:system-ui;max-width:640px;margin:4rem auto;color:#333'>"
         "<h2>Sign-in is not working</h2>"
-        f"<p>The OpenID Connect provider could not be reached or rejected the request:</p>"
-        f"<pre style='background:#f4f4f4;padding:1rem;border-radius:8px;white-space:pre-wrap'>{detail}</pre>"
+        "<p>The OpenID Connect provider could not be reached or rejected the request:</p>"
+        f"<pre style='background:#f4f4f4;padding:1rem;border-radius:8px;white-space:pre-wrap'>{safe_detail}</pre>"
         "<p>Check the discovery URL, client ID/secret, and redirect URI in your IdP. "
         "If you are locked out, set the environment variable <code>DISABLE_AUTH=1</code> and "
         "restart the app to regain access, then fix the settings.</p>"
@@ -317,18 +423,22 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
     groups = info.get(claim) or []
     if isinstance(groups, str):
         groups = [g.strip() for g in groups.replace(";", ",").split(",") if g.strip()]
+    # Only trust the email claim if the IdP marked it verified; otherwise drop
+    # it so an unverified address can't match rbac_admin_emails.
+    raw_email = info.get("email", "")
+    email = raw_email if info.get("email_verified") is True else ""
     request.session["user"] = {
-        "username": info.get("preferred_username") or info.get("email") or "user",
-        "email": info.get("email", ""),
+        "username": info.get("preferred_username") or raw_email or "user",
+        "email": email,
         "groups": list(groups),
     }
     return RedirectResponse("/")
 
 
-@app.get("/logout")
+@app.post("/logout")
 async def logout(request: Request):
     request.session.pop("user", None)
-    return RedirectResponse("/")
+    return RedirectResponse("/", status_code=303)
 
 
 # ============================================================ scan page
@@ -340,16 +450,87 @@ def scan_page(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse("scan.html", ctx(request, db, clients=clients, jobs=jobs, recent=recent))
 
 
-class CheckoutIn(BaseModel):
+# -------------------- cart helpers (response serializer) --------------------
+
+def _cart_payload(db, cart):
+    """Build the JSON-able cart dict the frontend renders from."""
+    if cart is None:
+        return {"open": False}
+    lines = orders.cart_lines(db, cart)
+    charge, cost, margin = orders.cart_totals(lines)
+    return {
+        "open": True,
+        "id": cart.id,
+        "number": cart.number,
+        "status": cart.status,
+        "client_id": cart.customer_id,
+        "client_name": cart.client.name if cart.client else "",
+        "job_id": cart.job_id,
+        "job_name": cart.job.name if cart.job else "",
+        "lines": [
+            {
+                "id": ln.id,
+                "part_id": ln.part_id,
+                "part": ln.part.name,
+                "icon": ln.part.icon or "",
+                "image": ln.part.image or "",
+                "barcode": ln.part.barcode,
+                "type": ln.part.type,
+                "quantity": ln.quantity,
+                "unit_cost": float(ln.unit_cost_at_time),
+                "unit_price": float(ln.unit_price_at_time),
+                "charge": ln.total_charge,
+                "remaining_stock": ln.part.quantity_on_hand,
+            }
+            for ln in lines
+        ],
+        "subtotal": charge,
+        "cost": cost,
+        "margin": margin,
+    }
+
+
+# -------------------- cart API --------------------
+
+class CartScanIn(BaseModel):
     barcode: str
-    client_id: int
-    job_id: Optional[int] = None
     quantity: int = 1
-    note: str = ""
+    # Optional geo capture (best-effort; browser permission may be denied).
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    geo_accuracy_m: Optional[float] = None
 
 
-@app.post("/api/checkout")
-def api_checkout(payload: CheckoutIn, request: Request, db: Session = Depends(get_db)):
+class CartSetIn(BaseModel):
+    client_id: Optional[int] = None
+    job_id: Optional[int] = None
+
+
+class CartLineIn(BaseModel):
+    quantity: int
+
+
+def _sanitize_geo(payload):
+    lat, lng, acc = payload.lat, payload.lng, payload.geo_accuracy_m
+    if lat is not None and (lat < -90 or lat > 90):
+        lat = None
+    if lng is not None and (lng < -180 or lng > 180):
+        lng = None
+    if lat is None or lng is None:
+        return None, None, None
+    return lat, lng, (acc if acc and acc > 0 else None)
+
+
+@app.get("/api/cart")
+def api_cart_get(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request)
+    cart = orders.open_cart_for(db, user.get("username", ""))
+    return {"ok": True, "cart": _cart_payload(db, cart)}
+
+
+@app.post("/api/cart/scan")
+def api_cart_scan(payload: CartScanIn, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request)
     barcode = payload.barcode.strip()
     part = db.query(Part).filter(Part.barcode == barcode, Part.active == True).first()  # noqa: E712
     if not part:
@@ -357,56 +538,226 @@ def api_checkout(payload: CheckoutIn, request: Request, db: Session = Depends(ge
 
     qty = 1 if part.type == "unique" else max(1, payload.quantity)
     if part.quantity_on_hand < qty:
-        return {"ok": False, "error": "insufficient_stock", "available": part.quantity_on_hand, "part": part.name}
+        return {"ok": False, "error": "insufficient_stock",
+                "available": part.quantity_on_hand, "part": part.name}
 
-    client = db.get(Client, payload.client_id)
-    if not client:
-        return {"ok": False, "error": "no_client"}
+    cart = orders.open_cart_for(db, user.get("username", ""))
+    fresh = False
+    if cart is None:
+        cart = Order(status="open", created_by=user.get("username", ""))
+        db.add(cart)
+        db.flush()
+        fresh = True
+        audit.record(db, user, "order.open", "order", cart.id, f"Opened cart #{cart.id}")
 
-    job = None
-    if payload.job_id:
-        job = db.get(Job, payload.job_id)
-        if not job or job.client_id != client.id:
-            return {"ok": False, "error": "bad_job"}
-
-    user = current_user(request)
     part.quantity_on_hand -= qty
+    lat, lng, acc = _sanitize_geo(payload)
     txn = Transaction(
+        order_id=cart.id,
         part_id=part.id,
-        customer_id=client.id,
-        job_id=job.id if job else None,
+        customer_id=cart.customer_id,  # null until /api/cart/set; backfilled on client pick
+        job_id=cart.job_id,
         quantity=qty,
         unit_cost_at_time=part.unit_cost,
         unit_price_at_time=part.unit_price,
         scanned_by=user.get("username", ""),
-        note=payload.note or "",
+        lat=lat, lng=lng, geo_accuracy_m=acc,
     )
     db.add(txn)
     db.flush()
-    where = client.name + (f" / {job.name}" if job else "")
-    audit.record(
-        db, user, "sale.checkout", "transaction", txn.id,
-        f"{qty} × {part.name} → {where} ({reports_money(db, txn.total_charge)})",
-    )
     emailer.maybe_low_stock_alert(db, part)
     db.commit()
-    db.refresh(txn)
-    return {
-        "ok": True,
-        "line": {
-            "id": txn.id,
-            "part": part.name,
-            "quantity": qty,
-            "unit_cost": float(part.unit_cost),
-            "unit_price": float(part.unit_price),
-            "charge": txn.total_charge,
-            "cost": txn.total_cost,
-            "remaining": part.quantity_on_hand,
-            "client": client.name,
-            "job": job.name if job else "",
-            "image": part.image or "",
-        },
-    }
+    return {"ok": True, "cart": _cart_payload(db, cart), "fresh": fresh}
+
+
+@app.post("/api/cart/custom")
+async def api_cart_custom(
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(""),
+    unit_cost: float = Form(0.0),
+    unit_price: float = Form(0.0),
+    quantity: int = Form(1),
+    image: UploadFile = File(None),
+    lat: Optional[float] = Form(None),
+    lng: Optional[float] = Form(None),
+    geo_accuracy_m: Optional[float] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """Log an ad-hoc / off-catalog purchase into the cart (e.g. parts bought
+    in the field). Creates an archived Part on the fly so the line still
+    flows through reports / audits / voids like any other transaction."""
+    user = current_user(request)
+    name = name.strip()
+    if not name:
+        return {"ok": False, "error": "name_required"}
+    qty = max(1, int(quantity))
+    cart = orders.open_cart_for(db, user.get("username", ""))
+    fresh = False
+    if cart is None:
+        cart = Order(status="open", created_by=user.get("username", ""))
+        db.add(cart)
+        db.flush()
+        fresh = True
+        audit.record(db, user, "order.open", "order", cart.id, f"Opened cart #{cart.id}")
+    # Build the archived Part. It needs a unique barcode — generate one and
+    # never bother printing a label for it.
+    part = Part(
+        name=name,
+        description=description.strip(),
+        type="bulk",
+        unit_cost=unit_cost,
+        unit_price=unit_price,
+        quantity_on_hand=qty,
+        archived=True,
+        barcode=f"CUSTOM-{uuid.uuid4().hex[:12].upper()}",
+        barcode_generated=False,
+        active=True,
+    )
+    db.add(part)
+    db.flush()
+    img_path = await _save_item_image(image, part.id)
+    if img_path:
+        part.image = img_path
+    # Decrement stock to 0 — the qty we "bought" is what we're billing.
+    part.quantity_on_hand -= qty
+    g_lat, g_lng, g_acc = (lat if lat is not None else None,
+                           lng if lng is not None else None,
+                           geo_accuracy_m)
+    if g_lat is not None and (g_lat < -90 or g_lat > 90):
+        g_lat = None
+    if g_lng is not None and (g_lng < -180 or g_lng > 180):
+        g_lng = None
+    if g_lat is None or g_lng is None:
+        g_lat = g_lng = g_acc = None
+    txn = Transaction(
+        order_id=cart.id,
+        part_id=part.id,
+        customer_id=cart.customer_id,
+        job_id=cart.job_id,
+        quantity=qty,
+        unit_cost_at_time=part.unit_cost,
+        unit_price_at_time=part.unit_price,
+        scanned_by=user.get("username", ""),
+        note="custom",
+        lat=g_lat, lng=g_lng,
+        geo_accuracy_m=g_acc if g_acc and g_acc > 0 else None,
+    )
+    db.add(txn)
+    db.flush()
+    audit.record(db, user, "order.custom", "transaction", txn.id,
+                 f"Custom item: {name} × {qty}")
+    db.commit()
+    return {"ok": True, "cart": _cart_payload(db, cart), "fresh": fresh}
+
+
+@app.post("/api/cart/set")
+def api_cart_set(payload: CartSetIn, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request)
+    cart = orders.open_cart_for(db, user.get("username", ""))
+    if cart is None:
+        return {"ok": False, "error": "no_open_cart"}
+    if payload.client_id:
+        client = db.get(Client, payload.client_id)
+        if not client:
+            return {"ok": False, "error": "no_client"}
+        cart.customer_id = client.id
+    if payload.job_id:
+        job = db.get(Job, payload.job_id)
+        if not job or job.client_id != cart.customer_id:
+            return {"ok": False, "error": "bad_job"}
+        cart.job_id = job.id
+    elif payload.job_id == 0 or payload.job_id is None:
+        cart.job_id = None
+    # Backfill the new client/job onto open transactions so submitted lines
+    # carry the right customer/job at report time.
+    if cart.customer_id:
+        db.query(Transaction).filter(
+            Transaction.order_id == cart.id,
+            Transaction.voided == False,  # noqa: E712
+        ).update({"customer_id": cart.customer_id, "job_id": cart.job_id})
+    db.commit()
+    return {"ok": True, "cart": _cart_payload(db, cart)}
+
+
+@app.post("/api/cart/line/{line_id}")
+def api_cart_line_update(line_id: int, payload: CartLineIn, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request)
+    cart = orders.open_cart_for(db, user.get("username", ""))
+    if cart is None:
+        return {"ok": False, "error": "no_open_cart"}
+    line = db.get(Transaction, line_id)
+    if not line or line.order_id != cart.id or line.voided:
+        return {"ok": False, "error": "bad_line"}
+    new_qty = max(1, int(payload.quantity))
+    if line.part.type == "unique":
+        new_qty = 1
+    delta = new_qty - line.quantity
+    if delta > 0 and line.part.quantity_on_hand < delta:
+        return {"ok": False, "error": "insufficient_stock",
+                "available": line.part.quantity_on_hand, "part": line.part.name}
+    line.part.quantity_on_hand -= delta
+    line.quantity = new_qty
+    db.commit()
+    return {"ok": True, "cart": _cart_payload(db, cart)}
+
+
+@app.post("/api/cart/line/{line_id}/remove")
+def api_cart_line_remove(line_id: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request)
+    cart = orders.open_cart_for(db, user.get("username", ""))
+    if cart is None:
+        return {"ok": False, "error": "no_open_cart"}
+    line = db.get(Transaction, line_id)
+    if not line or line.order_id != cart.id or line.voided:
+        return {"ok": False, "error": "bad_line"}
+    line.part.quantity_on_hand += line.quantity
+    line.voided = True
+    db.commit()
+    return {"ok": True, "cart": _cart_payload(db, cart)}
+
+
+@app.post("/api/cart/submit")
+def api_cart_submit(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request)
+    cart = orders.open_cart_for(db, user.get("username", ""))
+    if cart is None:
+        return {"ok": False, "error": "no_open_cart"}
+    lines = orders.cart_lines(db, cart)
+    if not lines:
+        return {"ok": False, "error": "empty_cart"}
+    if not cart.customer_id:
+        return {"ok": False, "error": "no_client"}
+    cart.number = orders.next_order_number(db)
+    cart.status = "submitted"
+    cart.submitted_by = user.get("username", "")
+    cart.submitted_at = datetime.utcnow()
+    charge, _cost, _margin = orders.cart_totals(lines)
+    summary = (f"{cart.number}: {len(lines)} line(s) → "
+               f"{cart.client.name}{(' / ' + cart.job.name) if cart.job else ''} "
+               f"({reports_money(db, charge)})")
+    audit.record(db, user, "order.submit", "order", cart.id, summary)
+    db.commit()
+    return {"ok": True, "order": {"id": cart.id, "number": cart.number, "subtotal": charge,
+                                  "lines": len(lines)}}
+
+
+@app.post("/api/cart/cancel")
+def api_cart_cancel(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request)
+    cart = orders.open_cart_for(db, user.get("username", ""))
+    if cart is None:
+        return {"ok": False, "error": "no_open_cart"}
+    # Restore stock for every non-voided line, mark voided, then close cart.
+    for ln in orders.cart_lines(db, cart):
+        ln.part.quantity_on_hand += ln.quantity
+        ln.voided = True
+    cart.status = "cancelled"
+    cart.voided_by = user.get("username", "")
+    cart.voided_at = datetime.utcnow()
+    audit.record(db, user, "order.cancel", "order", cart.id, f"Cancelled cart #{cart.id}")
+    db.commit()
+    return {"ok": True}
 
 
 @app.get("/api/search")
@@ -461,12 +812,17 @@ def api_void(txn_id: int, request: Request, db: Session = Depends(get_db)):
 # ============================================================ parts
 @app.get("/parts", response_class=HTMLResponse)
 def parts_page(request: Request, db: Session = Depends(get_db)):
-    parts = db.query(Part).order_by(Part.name).all()
+    show_archived = request.query_params.get("archived") == "1"
+    q = db.query(Part)
+    if not show_archived:
+        q = q.filter(Part.archived == False)  # noqa: E712
+    parts = q.order_by(Part.name).all()
     cats = category_choices(db)
     cat_names = {cid: category_path(db, c) for cid, _label, _d, c in cats}
     return templates.TemplateResponse(
         "parts.html",
         ctx(request, db, parts=parts, categories=cats, cat_names=cat_names,
+            show_archived=show_archived,
             prefill=request.query_params.get("barcode", "")),
     )
 
@@ -790,9 +1146,39 @@ def jobs_edit(
 
 
 # ============================================================ history
+def _txn_markers(txns, tz_name):
+    """Subset of transactions that have geo, in the shape the Leaflet renderer
+    expects. Time formatted in the configured timezone for the popup."""
+    out = []
+    for t in txns:
+        if t.lat is None or t.lng is None:
+            continue
+        out.append({
+            "id": t.id,
+            "lat": t.lat,
+            "lng": t.lng,
+            "accuracy": t.geo_accuracy_m,
+            "order": t.order.number if t.order and t.order.number else "",
+            "part": t.part.name if t.part else "",
+            "qty": t.quantity,
+            "charge": t.total_charge,
+            "client": t.client.name if t.client else "",
+            "job": t.job.name if t.job else "",
+            "when": local_dt_filter(t.created_at, tz_name),
+            "by": t.scanned_by or "",
+        })
+    return out
+
+
 @app.get("/transactions", response_class=HTMLResponse)
 def transactions_page(request: Request, db: Session = Depends(get_db)):
-    q = db.query(Transaction)
+    # Exclude lines that still belong to an open / cancelled cart — they
+    # aren't real history. Legacy rows with order_id=NULL stay visible.
+    q = (
+        db.query(Transaction)
+        .outerjoin(Order, Transaction.order_id == Order.id)
+        .filter((Order.id.is_(None)) | (Order.status == "submitted"))
+    )
     month = request.query_params.get("month", "")
     if month:
         try:
@@ -802,7 +1188,40 @@ def transactions_page(request: Request, db: Session = Depends(get_db)):
         except ValueError:
             pass
     txns = q.order_by(Transaction.created_at.desc()).limit(500).all()
-    return templates.TemplateResponse("transactions.html", ctx(request, db, txns=txns, month=month))
+    cfg = store.all_settings(db)
+    markers = _txn_markers(txns, cfg.get("timezone") or "UTC")
+    return templates.TemplateResponse(
+        "transactions.html",
+        ctx(request, db, txns=txns, month=month, markers=markers, currency=cfg.get("currency", "$")),
+    )
+
+
+@app.get("/map", response_class=HTMLResponse)
+def map_page(request: Request, db: Session = Depends(get_db)):
+    """Full-page map of every geo-tagged charge-out in the window.
+    Honours ?month= or ?date_from=&date_to= (same shape as /report)."""
+    qp = request.query_params
+    start, end, label, month_str, date_from, date_to = _resolve_report_window(qp)
+    q = (
+        db.query(Transaction)
+        .outerjoin(Order, Transaction.order_id == Order.id)
+        .filter(
+            Transaction.voided == False,  # noqa: E712
+            Transaction.created_at >= start,
+            Transaction.created_at < end,
+            Transaction.lat.isnot(None),
+            (Order.id.is_(None)) | (Order.status == "submitted"),
+        )
+        .order_by(Transaction.created_at.desc())
+    )
+    txns = q.all()
+    cfg = store.all_settings(db)
+    markers = _txn_markers(txns, cfg.get("timezone") or "UTC")
+    return templates.TemplateResponse(
+        "map.html",
+        ctx(request, db, markers=markers, range_label=label, month=month_str,
+            date_from=date_from, date_to=date_to, currency=cfg.get("currency", "$")),
+    )
 
 
 # ============================================================ audit
@@ -908,21 +1327,74 @@ def _parse_month(value: str):
     return now.year, now.month
 
 
+def _parse_date(value: str):
+    """Parse an HTML <input type=date> value (YYYY-MM-DD) → datetime, or None."""
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value.strip(), "%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+def _resolve_report_window(qp):
+    """Return (start, end, label, month_str, date_from, date_to).
+
+    Precedence: explicit ?date_from=&date_to= wins; falling back to ?month=YYYY-MM
+    (default = current month). end is exclusive so reports include the full last day.
+    """
+    df = _parse_date(qp.get("date_from", ""))
+    dt = _parse_date(qp.get("date_to", ""))
+    if df and dt:
+        if dt < df:
+            df, dt = dt, df
+        end = datetime(dt.year, dt.month, dt.day) + timedelta(days=1)
+        return df, end, f"{df:%Y-%m-%d} → {dt:%Y-%m-%d}", "", qp.get("date_from", ""), qp.get("date_to", "")
+    year, mon = _parse_month(qp.get("month", ""))
+    start, end = reports.month_bounds(year, mon)
+    return start, end, f"{year:04d}-{mon:02d}", f"{year:04d}-{mon:02d}", "", ""
+
+
+def _selected_client_ids(qp):
+    ids = qp.getlist("client_id") if hasattr(qp, "getlist") else [
+        v for k, v in qp.multi_items() if k == "client_id"
+    ]
+    out = []
+    for v in ids:
+        try:
+            out.append(int(v))
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
 @app.get("/report", response_class=HTMLResponse)
 def report_page(request: Request, db: Session = Depends(get_db)):
-    year, mon = _parse_month(request.query_params.get("month", ""))
-    report, totals = reports.build_report(db, year, mon)
+    qp = request.query_params
+    start, end, label, month_str, date_from, date_to = _resolve_report_window(qp)
+    client_ids = _selected_client_ids(qp)
+    report, totals = reports.build_report_range(db, start, end, client_ids=client_ids or None)
+    all_clients = db.query(Client).filter(Client.active == True).order_by(Client.name).all()  # noqa: E712
     return templates.TemplateResponse(
         "report.html",
-        ctx(request, db, report=report, totals=totals, month=f"{year:04d}-{mon:02d}"),
+        ctx(request, db, report=report, totals=totals,
+            month=month_str, range_label=label,
+            date_from=date_from, date_to=date_to,
+            all_clients=all_clients, selected_client_ids=set(client_ids)),
     )
 
 
 @app.get("/report.csv")
 def report_csv(request: Request, db: Session = Depends(get_db)):
-    year, mon = _parse_month(request.query_params.get("month", ""))
-    csv_text = reports.report_csv(db, year, mon)
-    filename = f"charge-out-{year:04d}-{mon:02d}.csv"
+    qp = request.query_params
+    start, end, label, month_str, date_from, date_to = _resolve_report_window(qp)
+    client_ids = _selected_client_ids(qp)
+    report, totals = reports.build_report_range(db, start, end, client_ids=client_ids or None)
+    csv_text = reports.report_csv_for(report, totals)
+    if month_str:
+        filename = f"charge-out-{month_str}.csv"
+    else:
+        filename = f"charge-out-{date_from}_to_{date_to}.csv"
     return Response(
         content=csv_text,
         media_type="text/csv",
@@ -938,6 +1410,7 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
         ctx(request, db, providers=emailer.PROVIDERS, this_month=datetime.utcnow().strftime("%Y-%m"),
             disable_auth=settings.disable_auth, size_groups=labels.grouped_sizes(),
             currencies=CURRENCIES, label_sizes=labels.LABEL_SIZES,
+            timezones=TIMEZONES,
             roles=db.query(Role).order_by(Role.name).all()),
     )
 
@@ -948,12 +1421,32 @@ def settings_general(
     app_title: str = Form(...),
     currency: str = Form("$"),
     low_stock_threshold: int = Form(5),
+    default_markup_pct: str = Form("0"),
+    timezone: str = Form("UTC"),
     db: Session = Depends(get_db),
 ):
+    user = current_user(request)
+    # Validate timezone (silently fall back to UTC if unrecognized so a typo
+    # doesn't lock the form).
+    tz_name = (timezone or "UTC").strip()
+    try:
+        ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return redirect("/settings", f"Unknown timezone '{tz_name}'.", ok=False)
+    # Markup % is admin-only — non-admins can't move it (silently ignored).
+    if user.get("is_admin"):
+        try:
+            markup = float(default_markup_pct.strip() or "0")
+        except ValueError:
+            return redirect("/settings", "Markup % must be a number (e.g. 35 for 35%).", ok=False)
+        if markup < 0 or markup > 1000:
+            return redirect("/settings", "Markup % must be between 0 and 1000.", ok=False)
+        store.set(db, "default_markup_pct", f"{markup:g}")
     store.set(db, "app_title", app_title.strip())
     store.set(db, "currency", currency.strip())
     store.set(db, "low_stock_threshold", low_stock_threshold)
-    audit.record(db, current_user(request), "settings.general", "settings", None, "Updated general settings")
+    store.set(db, "timezone", tz_name)
+    audit.record(db, user, "settings.general", "settings", None, "Updated general settings")
     db.commit()
     return redirect("/settings", "General settings saved.")
 
@@ -1006,6 +1499,9 @@ def settings_android(request: Request, android_asset_links: str = Form(""), db: 
     return redirect("/settings", "Android settings saved.")
 
 
+_HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{3,8}$")
+
+
 @app.post("/settings/branding")
 def settings_branding(
     request: Request,
@@ -1015,7 +1511,10 @@ def settings_branding(
     brand_footer: str = Form(""),
     db: Session = Depends(get_db),
 ):
-    store.set(db, "brand_accent", brand_accent.strip())
+    accent = brand_accent.strip()
+    if accent and not _HEX_COLOR.match(accent):
+        return redirect("/settings", "Accent colour must be a hex like #2f81f7.", ok=False)
+    store.set(db, "brand_accent", accent)
     store.set(db, "brand_emoji", brand_emoji.strip() or "📦")
     store.set(db, "brand_show_title", "1" if brand_show_title == "on" else "0")
     store.set(db, "brand_footer", brand_footer.strip())
@@ -1026,11 +1525,13 @@ def settings_branding(
 
 @app.post("/settings/branding/logo")
 async def settings_branding_logo(request: Request, logo: UploadFile = File(...), db: Session = Depends(get_db)):
-    allowed = {"image/png": ".png", "image/jpeg": ".jpg", "image/svg+xml": ".svg",
+    # SVG intentionally excluded: it executes script when fetched directly, which
+    # would be served from /uploads/ in this app's own origin (stored XSS).
+    allowed = {"image/png": ".png", "image/jpeg": ".jpg",
                "image/webp": ".webp", "image/gif": ".gif", "image/x-icon": ".ico"}
     ext = allowed.get(logo.content_type)
     if not ext:
-        return redirect("/settings", "Unsupported image type (use PNG, JPG, SVG, WEBP, GIF).", ok=False)
+        return redirect("/settings", "Unsupported image type (use PNG, JPG, WEBP, GIF or ICO).", ok=False)
     data = await logo.read()
     if len(data) > 2 * 1024 * 1024:
         return redirect("/settings", "Logo too large (max 2 MB).", ok=False)

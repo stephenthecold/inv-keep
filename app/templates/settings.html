@@ -8,6 +8,7 @@
 <section class="card">
   <h2>General</h2>
   <form method="post" action="/settings/general" class="grid-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label>App title <input name="app_title" value="{{ cfg.app_title }}"></label>
     <label>Currency
       <select name="currency">
@@ -17,7 +18,20 @@
         {% if cfg.currency not in (currencies | map(attribute=1) | list) %}<option value="{{ cfg.currency }}" selected>{{ cfg.currency }} — custom</option>{% endif %}
       </select>
     </label>
-    <label>Default low-stock threshold <input name="low_stock_threshold" type="number" value="{{ cfg.low_stock_threshold }}"></label>
+    <label>Default low-stock threshold <input name="low_stock_threshold" type="number" min="0" value="{{ cfg.low_stock_threshold }}"></label>
+    <label>Timezone
+      <select name="timezone">
+        {% for tz in timezones %}<option value="{{ tz }}" {% if cfg.timezone == tz %}selected{% endif %}>{{ tz }}</option>{% endfor %}
+        {% if cfg.timezone and cfg.timezone not in timezones %}<option value="{{ cfg.timezone }}" selected>{{ cfg.timezone }} — custom</option>{% endif %}
+      </select>
+      <small class="muted">Used for displayed timestamps (audit log, transactions). Storage stays UTC.</small>
+    </label>
+    {% if user.is_admin %}
+    <label>Default client markup %
+      <input name="default_markup_pct" type="number" min="0" max="1000" step="0.1" value="{{ cfg.default_markup_pct }}" style="width:6rem">
+      <small class="muted">Adds this % on top of our cost to suggest the client price when adding a new item. 0 = no autofill. <b>Admin only.</b></small>
+    </label>
+    {% endif %}
     <button type="submit">Save general</button>
   </form>
 </section>
@@ -26,6 +40,7 @@
 <section class="card">
   <h2>White-label / Branding</h2>
   <form method="post" action="/settings/branding" class="grid-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label>Brand emoji (used when no logo) <input name="brand_emoji" value="{{ cfg.brand_emoji }}" maxlength="8" style="width:5rem"></label>
     <label>Accent colour <input name="brand_accent" type="color" value="{{ cfg.brand_accent or '#2f81f7' }}" style="width:4rem;padding:.2rem"></label>
     <label class="check">Show title text next to logo <input type="checkbox" name="brand_show_title" {% if cfg.brand_show_title == '1' %}checked{% endif %}></label>
@@ -39,11 +54,12 @@
       {% if cfg.brand_logo %}<img src="{{ cfg.brand_logo }}" alt="logo" style="max-height:48px;background:#fff;border-radius:6px;padding:4px">{% else %}<span class="muted">none — the brand emoji is shown</span>{% endif %}
     </div>
     <form method="post" action="/settings/branding/logo" enctype="multipart/form-data" class="filter">
-      <input type="file" name="logo" accept="image/png,image/jpeg,image/svg+xml,image/webp,image/gif" required>
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="file" name="logo" accept="image/png,image/jpeg,image/webp,image/gif" required>
       <button type="submit">Upload logo</button>
     </form>
     {% if cfg.brand_logo %}
-    <form method="post" action="/settings/branding/logo/remove"><button class="ghost" type="submit">Remove logo</button></form>
+    <form method="post" action="/settings/branding/logo/remove"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="ghost" type="submit">Remove logo</button></form>
     {% endif %}
   </div>
   <small>The app title, emoji/logo, accent colour and footer appear across the whole app. Max logo size 2 MB.</small>
@@ -53,6 +69,7 @@
 <section class="card">
   <h2>Printing</h2>
   <form method="post" action="/settings/printing" class="grid-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label>Default label size
       <select name="label_size">
         {% for brand, items in size_groups %}
@@ -77,6 +94,7 @@
 
   <h3>What prints on each label</h3>
   <form id="label-content-form" method="post" action="/settings/label-content" class="grid-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label class="check">Icon <input type="checkbox" name="label_show_icon" {% if cfg.label_show_icon == '1' %}checked{% endif %}></label>
     <label class="check">Name <input type="checkbox" name="label_show_name" {% if cfg.label_show_name == '1' %}checked{% endif %}></label>
     <label class="check">Barcode digits <input type="checkbox" name="label_show_code_text" {% if cfg.label_show_code_text == '1' %}checked{% endif %}></label>
@@ -163,6 +181,7 @@
 <section class="card">
   <h2>Android app (TWA)</h2>
   <form method="post" action="/settings/android" class="grid-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label class="wide">Digital Asset Links JSON
       <textarea name="android_asset_links" rows="5" placeholder='Paste the JSON from "bubblewrap fingerprint" so the installed APK hides the URL bar. Served at /.well-known/assetlinks.json'>{{ cfg.android_asset_links }}</textarea>
     </label>
@@ -179,6 +198,7 @@
   <div class="flash bad">DISABLE_AUTH is set in the environment — auth is bypassed regardless of the settings below. Unset it to enforce these.</div>
   {% endif %}
   <form method="post" action="/settings/auth" class="grid-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label>Mode
       <select name="auth_mode" id="auth_mode" onchange="authMode()">
         <option value="none"    {% if cfg.auth_mode == 'none' %}selected{% endif %}>None (no login)</option>
@@ -230,6 +250,7 @@
 <section class="card">
   <h2>Email</h2>
   <form method="post" action="/settings/email" class="grid-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label>Send method
       <select name="email_method" id="email_method" onchange="emailMode()">
         <option value="none"   {% if cfg.email_method == 'none' %}selected{% endif %}>Disabled</option>
@@ -273,6 +294,7 @@
   </div>
 
   <form method="post" action="/settings/email/test" class="filter">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label>Send test email to <input name="test_to" type="email" required></label>
     <button type="submit">Send test</button>
   </form>
@@ -283,6 +305,7 @@
   <h2>Alerts</h2>
   {% set weekdays = [(0,'Monday'),(1,'Tuesday'),(2,'Wednesday'),(3,'Thursday'),(4,'Friday'),(5,'Saturday'),(6,'Sunday')] %}
   <form method="post" action="/settings/alerts" class="grid-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label class="check">Low-stock email alerts <input type="checkbox" name="alert_low_stock_enabled" {% if cfg.alert_low_stock_enabled == '1' %}checked{% endif %}></label>
     <label class="wide">Low-stock recipients (comma-separated) <input name="alert_low_stock_recipients" value="{{ cfg.alert_low_stock_recipients }}"></label>
 
@@ -329,6 +352,7 @@
   previous day; weekly the previous 7 days; monthly the previous calendar month.</small>
 
   <form method="post" action="/settings/alerts/send-monthly" class="filter">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label>Send monthly report now for <input type="month" name="month" value="{{ this_month }}"></label>
     <label>to (optional override) <input name="to" placeholder="defaults to monthly recipients"></label>
     <button type="submit">Send now</button>

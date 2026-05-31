@@ -9,6 +9,7 @@
 <dialog id="add-client" class="modal">
   <h2>Add client</h2>
   <form method="post" action="/clients/add" class="grid-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label>Name <input name="name" required></label>
     <label>Account # <input name="reference"></label>
     <label>Contact name <input name="contact_name"></label>
@@ -35,6 +36,7 @@
     {% if not c.active %}<span class="tag muted">inactive</span>{% endif %}
   </summary>
   <form method="post" action="/clients/{{ c.id }}/edit" class="grid-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label>Name <input name="name" value="{{ c.name }}" required></label>
     <label>Account # <input name="reference" value="{{ c.reference }}"></label>
     <label>Contact name <input name="contact_name" value="{{ c.contact_name }}"></label>

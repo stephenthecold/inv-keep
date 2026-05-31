@@ -1,10 +1,17 @@
 import csv
 import io
+import math
 from datetime import datetime
 
-from .models import Client, Part, Transaction
+from .models import Client, Order, Part, Transaction
 
 NO_JOB = "— No job —"
+
+
+def _c(v):
+    """Ceiling-cents (mirror of main.ceil_cents — duplicated to avoid
+    importing the FastAPI app module from here)."""
+    return f"{math.ceil(float(v or 0) * 100 - 1e-9) / 100:.2f}"
 
 
 def month_bounds(year: int, month: int):
@@ -16,24 +23,33 @@ def month_bounds(year: int, month: int):
     return start, end
 
 
-def build_report(db, year: int, month: int):
+def build_report(db, year: int, month: int, client_ids=None):
     start, end = month_bounds(year, month)
-    return build_report_range(db, start, end)
+    return build_report_range(db, start, end, client_ids=client_ids)
 
 
-def build_report_range(db, start, end):
-    """Clients -> jobs -> line items in [start, end), plus charge/cost/margin totals."""
-    txns = (
+def build_report_range(db, start, end, client_ids=None):
+    """Clients -> jobs -> line items in [start, end), plus charge/cost/margin totals.
+
+    If ``client_ids`` is provided (non-empty iterable), restrict to just those
+    client IDs. Empty / None means "all clients" (the historical behavior).
+    """
+    q = (
         db.query(Transaction)
         .join(Part)
         .join(Client, Transaction.customer_id == Client.id)
+        .outerjoin(Order, Transaction.order_id == Order.id)
         .filter(
             Transaction.voided == False,  # noqa: E712
             Transaction.created_at >= start,
             Transaction.created_at < end,
+            # Exclude lines still tied to an open / cancelled cart.
+            (Order.id.is_(None)) | (Order.status == "submitted"),
         )
-        .all()
     )
+    if client_ids:
+        q = q.filter(Transaction.customer_id.in_(list(client_ids)))
+    txns = q.all()
 
     clients = {}
     for t in txns:
@@ -85,8 +101,13 @@ def build_report_range(db, start, end):
     return result, totals
 
 
-def report_csv(db, year: int, month: int) -> str:
-    report, totals = build_report(db, year, month)
+def report_csv(db, year: int, month: int, client_ids=None) -> str:
+    report, totals = build_report(db, year, month, client_ids=client_ids)
+    return report_csv_for(report, totals)
+
+
+def report_csv_for(report, totals) -> str:
+    """Render the CSV for an already-built (report, totals) tuple."""
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["Client", "Account Ref", "Job", "Job Ref", "Part", "Barcode", "Quantity",
@@ -96,13 +117,13 @@ def report_csv(db, year: int, month: int) -> str:
             for ln in job["lines"]:
                 w.writerow([c["name"], c["reference"], job["name"], job["reference"],
                             ln["part"], ln["barcode"], ln["quantity"],
-                            f"{ln['unit_cost']:.2f}", f"{ln['unit_price']:.2f}",
-                            f"{ln['cost']:.2f}", f"{ln['charge']:.2f}", f"{ln['charge'] - ln['cost']:.2f}"])
+                            _c(ln["unit_cost"]), _c(ln["unit_price"]),
+                            _c(ln["cost"]), _c(ln["charge"]), _c(ln["charge"] - ln["cost"])])
             w.writerow([c["name"], c["reference"], job["name"], job["reference"], "", "", "",
-                        "", "Job subtotal", f"{job['cost']:.2f}", f"{job['charge']:.2f}", f"{job['margin']:.2f}"])
+                        "", "Job subtotal", _c(job["cost"]), _c(job["charge"]), _c(job["margin"])])
         w.writerow([c["name"], c["reference"], "", "", "", "", "",
-                    "", "Client total", f"{c['cost']:.2f}", f"{c['charge']:.2f}", f"{c['margin']:.2f}"])
+                    "", "Client total", _c(c["cost"]), _c(c["charge"]), _c(c["margin"])])
         w.writerow([])
     w.writerow(["", "", "", "", "", "", "", "", "GRAND TOTAL",
-                f"{totals['cost']:.2f}", f"{totals['charge']:.2f}", f"{totals['margin']:.2f}"])
+                _c(totals["cost"]), _c(totals["charge"]), _c(totals["margin"])])
     return buf.getvalue()

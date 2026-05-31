@@ -12,67 +12,82 @@
   <label>Scan a barcode or start typing a part name</label>
   <input type="text" id="scan" autocomplete="off" placeholder="Scan, or type to search…" autofocus>
   <div id="suggest" class="suggest" hidden></div>
-  <small>Scan a barcode to pull the item up instantly, or type to search. You'll confirm quantity, client and job before it's charged.</small>
+  <small>Scanning a known item adds it to the current order. Set the client/job once and keep scanning; submit when done.</small>
 </div>
 
-<!-- Charge-out panel (shown after a part is picked) -->
-<div id="charge-panel" class="charge-panel" hidden>
-  <div class="charge-head">
-    <div class="charge-id">
-      <img class="charge-photo" id="cp-image" alt="" style="display:none">
-      <span class="charge-icon" id="cp-icon"></span>
-      <div>
-        <div class="charge-name" id="cp-name">—</div>
-        <div class="muted" id="cp-desc"></div>
-        <div class="muted"><code id="cp-barcode"></code> · on hand: <b id="cp-qty"></b>
-          · charge <b id="cp-price"></b> <span class="muted">(cost <span id="cp-cost"></span>)</span></div>
-      </div>
+<!-- Cart card. Rendered client-side from /api/cart on load + after each scan. -->
+<section id="cart" class="cart-card" hidden>
+  <header class="cart-head">
+    <div>
+      <h2 style="margin:0">Current order</h2>
+      <small class="muted" id="cart-status">Order # will be assigned on submit</small>
     </div>
-    <button type="button" class="ghost" onclick="cancelCharge()">✕</button>
-  </div>
-  <div class="grid-form">
-    <label>Quantity <input type="number" id="cp-quantity" value="1" min="1" style="width:6rem"></label>
+    <div class="cart-actions">
+      <button type="button" class="ghost" onclick="openModal('add-custom')">+ Custom item</button>
+      <button type="button" id="cart-cancel" class="ghost">Cancel</button>
+      <button type="button" id="cart-submit">Submit Order</button>
+    </div>
+  </header>
+
+  <div class="grid-form cart-targets">
     <label>Client
-      <select id="cp-client" onchange="filterPanelJobs()">
+      <select id="cart-client">
+        <option value="">— pick a client —</option>
         {% for c in clients %}<option value="{{ c.id }}">{{ c.name }}{% if c.reference %} — {{ c.reference }}{% endif %}</option>{% endfor %}
       </select>
     </label>
-    <label>Job
-      <select id="cp-job">
-        <option value="">— No specific job —</option>
+    <label>Job (optional)
+      <select id="cart-job">
+        <option value="">— no job —</option>
         {% for j in jobs %}<option value="{{ j.id }}" data-client="{{ j.client_id }}">{{ j.name }}{% if j.reference %} — {{ j.reference }}{% endif %}</option>{% endfor %}
       </select>
     </label>
-    <label class="wide">Note (optional) <input type="text" id="cp-note"></label>
   </div>
-  <div class="charge-actions">
-    <button type="button" id="cp-confirm" onclick="confirmCharge()">Charge out</button>
-    <span class="muted">Enter to confirm · Esc to cancel</span>
-  </div>
-</div>
+
+  <table class="lines cart-lines">
+    <thead>
+      <tr><th></th><th>Part</th><th>Barcode</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Charge</th><th></th></tr>
+    </thead>
+    <tbody id="cart-body"></tbody>
+    <tfoot>
+      <tr><td colspan="5">Subtotal</td><td class="num" id="cart-subtotal">{{ cfg.currency }}0.00</td><td></td></tr>
+    </tfoot>
+  </table>
+</section>
+
+<!-- Custom (off-catalog) item dialog. Submits via JS as multipart/form-data. -->
+<dialog id="add-custom" class="modal">
+  <h2>Add a custom item to this order</h2>
+  <p class="muted">For one-off purchases (e.g. picked up at a hardware store). Hidden from the catalog by default; the line shows on the report normally.</p>
+  <form id="custom-form" enctype="multipart/form-data">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="grid-form">
+      <label class="wide">Name <input name="name" required></label>
+      <label class="wide">Description <textarea name="description" rows="2" placeholder="optional"></textarea></label>
+      <label>Photo (optional) <input type="file" name="image" accept="image/png,image/jpeg,image/webp,image/gif"></label>
+      <label>Quantity <input name="quantity" type="number" min="1" value="1" style="width:6rem"></label>
+      <label>Our cost <input name="unit_cost" type="number" step="0.01" value="0" id="custom-cost"></label>
+      <label>Client price <input name="unit_price" type="number" step="0.01" value="0" id="custom-price">
+        {% if user.is_admin and cfg.default_markup_pct and cfg.default_markup_pct != '0' %}<small class="muted">auto = cost + {{ cfg.default_markup_pct }}% (edit to override)</small>{% endif %}
+      </label>
+    </div>
+    <menu class="modal-actions">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit">Add to order</button>
+    </menu>
+  </form>
+</dialog>
 
 <div id="toast" class="toast"></div>
 
-<h2>This session</h2>
-<table class="lines" id="session-table">
-  <thead>
-    <tr><th>Part</th><th>Client / Job</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Charge</th><th></th></tr>
-  </thead>
-  <tbody id="session-body">
-    <tr class="empty"><td colspan="6">Nothing charged yet.</td></tr>
-  </tbody>
-  <tfoot>
-    <tr><td colspan="4">Session total</td><td class="num" id="session-total">{{ cfg.currency }}0.00</td><td></td></tr>
-  </tfoot>
-</table>
-
 <h2>Recent activity</h2>
 <table class="lines">
-  <thead><tr><th>When</th><th>Part</th><th>Client</th><th>Job</th><th class="num">Qty</th><th>By</th></tr></thead>
+  <thead><tr><th>When</th><th>Order</th><th>Part</th><th>Client</th><th>Job</th><th class="num">Qty</th><th>By</th></tr></thead>
   <tbody>
     {% for t in recent %}
     <tr {% if t.voided %}class="voided"{% endif %}>
-      <td>{{ t.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      <td>{{ t.created_at | local_dt(cfg.timezone) }}</td>
+      <td>{% if t.order and t.order.number %}<code>{{ t.order.number }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>
       <td>{{ t.part.name }}</td>
       <td>{{ t.client.name if t.client else '' }}</td>
       <td>{{ t.job.name if t.job else '' }}</td>
@@ -80,10 +95,8 @@
       <td>{{ t.scanned_by }}</td>
     </tr>
     {% else %}
-    <tr class="empty"><td colspan="6">No history yet.</td></tr>
+    <tr class="empty"><td colspan="7">No history yet.</td></tr>
     {% endfor %}
   </tbody>
 </table>
-
-<script>window.CURRENCY = {{ cfg.currency | tojson }};</script>
 {% endblock %}
