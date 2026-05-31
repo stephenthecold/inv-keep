@@ -9,8 +9,8 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Install deps
@@ -84,6 +84,68 @@ jobs:
           row = con.execute('SELECT lat, lng FROM transactions ORDER BY id DESC LIMIT 1').fetchone()
           assert row == (None, None), f'NaN bypass: stored {row}'
           print('NaN geo correctly rejected')
+          "
+      - name: CSRF rejected without token (security regression)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci3.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          from fastapi.testclient import TestClient
+          from app.main import app
+          c = TestClient(app)
+          # Form POST without _csrf → HTML 403 rejection page
+          r = c.post('/clients/add', data={'name': 'noToken'})
+          assert r.status_code == 403, r.status_code
+          assert 'CSRF' in r.text or 'csrf' in r.text, r.text[:200]
+          # JSON POST without X-CSRF-Token → {ok:false,error:csrf} 403
+          r = c.post('/api/cart/scan', json={'barcode': 'x'})
+          assert r.status_code == 403, r.status_code
+          assert r.json().get('error') == 'csrf', r.json()
+          print('CSRF correctly rejects both form + JSON POSTs')
+          "
+      - name: XSS payload kept as data, never as HTML (regression)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci4.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import re
+          from fastapi.testclient import TestClient
+          from app.main import app
+          c = TestClient(app)
+          tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', c.get('/').text).group(1)
+          h = {'X-CSRF-Token': tok}
+          c.post('/clients/add', data={'_csrf': tok, 'name': 'XssCo'})
+          # Push a malicious-name custom item with geo so it lands on /map.
+          payload_name = '<img src=x onerror=\"window.__XSS__=1\">'
+          files = {
+              '_csrf': (None, tok),
+              'name': (None, payload_name),
+              'description': (None, 'r'),
+              'unit_cost': (None, '1'),
+              'unit_price': (None, '2'),
+              'quantity': (None, '1'),
+              'lat': (None, '40.0'),
+              'lng': (None, '-105.0'),
+              'geo_accuracy_m': (None, '10'),
+          }
+          r = c.post('/api/cart/custom', files=files, headers=h)
+          assert r.json().get('ok') is True, r.json()
+          c.post('/api/cart/set',    json={'client_id': 1, 'job_id': None}, headers=h)
+          c.post('/api/cart/submit', headers=h)
+          # The map page embeds markers via Jinja \`| tojson\`, which escapes
+          # < and > as \\u003c / \\u003e. The literal '<img' must NOT appear
+          # anywhere in the response (else an HTML parser would execute it);
+          # the unicode-escaped form proves the payload survived as DATA.
+          page = c.get('/map').text
+          assert payload_name not in page, 'raw <img> payload found in /map HTML!'
+          assert '<img' not in page, 'a stray <img> tag rendered — XSS vector!'
+          esc = chr(92) + 'u003c' + 'img'  # \\u003cimg without literal backslashes that bash would eat
+          assert esc in page, 'expected unicode-escaped <img payload in markers JSON'
+          print('XSS payload only present as JSON-escaped data, not parseable HTML')
           "
       - name: Check JavaScript syntax
         run: node --check app/static/app.js
