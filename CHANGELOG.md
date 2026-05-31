@@ -3,6 +3,39 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.12.0] — 2026-05-31
+- **Restore from a backup, in the UI.** Settings → Backup gains a "Restore
+  from a backup" upload form (admin-only). The server validates the
+  uploaded `.tar.gz`, refuses path-traversal attempts, takes a safety
+  copy of the live `data/` as `data/before-restore-<ts>/`, then uses
+  SQLite's online `backup()` to copy the snapshot tables INTO the live DB
+  — no container restart needed — and replaces `uploads/`. Audit-logged
+  as `settings.restore`.
+- **Walk-in / one-time-purchase cart.** New **+ Start walk-in / one-time
+  order** button on the scan page opens a cart whose Client is an
+  archived (hidden-from-roster) Client created on the fly when you type
+  the customer name. Mirrors the custom-item flow: the line still flows
+  through reports / audit / voids normally, but the catalog stays clean.
+  Walk-in clients are excluded from the main /clients list and the
+  cart's Client dropdown by default; **Show walk-ins** toggle on
+  /clients reveals them.
+- **Global header search.** New search input in every page header live-
+  queries `/api/search/global` (debounced) and returns grouped suggestions
+  for **Items / Categories / Clients / Jobs / Orders**. Each row links to
+  the most natural destination. Keyboard nav (↑↓ enter esc) supported.
+  Archived rows are excluded from suggestions to keep walk-ins / custom
+  items out of typeahead noise; submitted orders for walk-in clients
+  still match under "Orders".
+- **Nav grouped under dropdowns.** Top-level **Items ▾** now nests
+  Items + Categories; **Clients ▾** nests Clients + Jobs. Same `navdrop`
+  pattern as Records. Cleaner header, especially on smaller widths.
+- **Schema:** `Client.archived` flag (with additive migration); used to
+  back the walk-in pattern without polluting the recurring-client
+  roster. Mirror of `Part.archived`.
+- **CSS:** `[hidden]` is now `display: none !important` so the HTML5
+  hidden attribute reliably wins against `display: grid` etc. (caught
+  via a residual walk-in row visible on cart card load).
+
 ## [1.11.0] — 2026-05-31
 - **Distributable Docker stack.** New GitHub Actions workflow
   (`.github/workflows/release.yml`) builds a multi-arch image

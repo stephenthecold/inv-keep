@@ -445,8 +445,18 @@ async def logout(request: Request):
 # ============================================================ scan page
 @app.get("/", response_class=HTMLResponse)
 def scan_page(request: Request, db: Session = Depends(get_db)):
-    clients = db.query(Client).filter(Client.active == True).order_by(Client.name).all()  # noqa: E712
-    jobs = db.query(Job).filter(Job.active == True).order_by(Job.name).all()  # noqa: E712
+    # Filter archived clients (walk-ins) and their jobs out of the picker
+    # dropdowns — they're for one-off orders, not selectable for new ones.
+    clients = (
+        db.query(Client)
+        .filter(Client.active == True, Client.archived == False)  # noqa: E712
+        .order_by(Client.name).all()
+    )
+    jobs = (
+        db.query(Job).join(Client, Job.client_id == Client.id)
+        .filter(Job.active == True, Client.archived == False)  # noqa: E712
+        .order_by(Job.name).all()
+    )
     recent = db.query(Transaction).order_by(Transaction.created_at.desc()).limit(15).all()
     return templates.TemplateResponse("scan.html", ctx(request, db, clients=clients, jobs=jobs, recent=recent))
 
@@ -466,6 +476,10 @@ def _cart_payload(db, cart):
         "status": cart.status,
         "client_id": cart.customer_id,
         "client_name": cart.client.name if cart.client else "",
+        # True when the attached client is a walk-in (archived) — frontend
+        # uses this to render a "Walk-in: <name>" badge instead of the
+        # client dropdown.
+        "client_walkin": bool(cart.client and cart.client.archived),
         "job_id": cart.job_id,
         "job_name": cart.job.name if cart.job else "",
         "lines": [
@@ -695,6 +709,46 @@ def api_cart_set(payload: CartSetIn, request: Request, db: Session = Depends(get
     return {"ok": True, "cart": _cart_payload(db, cart)}
 
 
+class CartWalkinIn(BaseModel):
+    name: str
+
+
+@app.post("/api/cart/walkin")
+def api_cart_walkin(payload: CartWalkinIn, request: Request, db: Session = Depends(get_db)):
+    """Attach a one-time / walk-in client to the open cart. Server creates an
+    archived Client with the typed name (so the line still flows through
+    reports + audit normally) and points the cart at it. Use this when the
+    customer isn't on the recurring roster (cash sale, drop-in, side job)."""
+    user = current_user(request)
+    name = (payload.name or "").strip()
+    if not name:
+        return {"ok": False, "error": "name_required"}
+    if len(name) > 200:
+        return {"ok": False, "error": "name_too_long"}
+    cart = orders.open_cart_for(db, user.get("username", ""))
+    fresh_cart = False
+    if cart is None:
+        cart = Order(status="open", created_by=user.get("username", ""))
+        db.add(cart)
+        db.flush()
+        fresh_cart = True
+        audit.record(db, user, "order.open", "order", cart.id, f"Opened cart #{cart.id} (walk-in start)")
+    client = Client(name=name, archived=True, active=True, notes="Walk-in / one-time client")
+    db.add(client)
+    db.flush()
+    cart.customer_id = client.id
+    cart.job_id = None
+    # Backfill onto any existing scanned lines.
+    db.query(Transaction).filter(
+        Transaction.order_id == cart.id,
+        Transaction.voided == False,  # noqa: E712
+    ).update({"customer_id": client.id, "job_id": None})
+    audit.record(db, user, "client.walkin", "client", client.id,
+                 f"Created walk-in client: {name}")
+    db.commit()
+    return {"ok": True, "cart": _cart_payload(db, cart), "fresh_cart": fresh_cart}
+
+
 @app.post("/api/cart/line/{line_id}")
 def api_cart_line_update(line_id: int, payload: CartLineIn, request: Request, db: Session = Depends(get_db)):
     user = current_user(request)
@@ -825,6 +879,129 @@ def api_search(q: str = "", db: Session = Depends(get_db)):
             for p in rows
         ]
     }
+
+
+@app.get("/api/search/global")
+def api_search_global(q: str = "", db: Session = Depends(get_db)):
+    """Cross-entity search for the header bar. Returns grouped results
+    (items / categories / clients / jobs / orders). Each section caps at 8 so
+    the dropdown stays scrollable. Permission gate: every signed-in user
+    already has `view`; archived rows are EXCLUDED from header search to
+    keep walk-ins / off-catalog items from polluting suggestions."""
+    q = (q or "").strip()
+    if not q or len(q) < 2:
+        return {"q": q, "groups": []}
+    like = f"%{q}%"
+    CAP = 8
+
+    # Items (active, non-archived; matches name or barcode).
+    items = (
+        db.query(Part)
+        .filter(
+            Part.active == True,                # noqa: E712
+            Part.archived == False,             # noqa: E712
+            or_(Part.name.ilike(like), Part.barcode.ilike(like)),
+        )
+        .order_by(Part.name)
+        .limit(CAP)
+        .all()
+    )
+
+    # Categories.
+    cats = (
+        db.query(Category)
+        .filter(or_(Category.name.ilike(like), Category.description.ilike(like)))
+        .order_by(Category.name)
+        .limit(CAP)
+        .all()
+    )
+
+    # Clients (non-archived for cleanliness; name, contact_name, reference, email).
+    clients = (
+        db.query(Client)
+        .filter(
+            Client.archived == False,  # noqa: E712
+            or_(
+                Client.name.ilike(like),
+                Client.contact_name.ilike(like),
+                Client.reference.ilike(like),
+                Client.email.ilike(like),
+            ),
+        )
+        .order_by(Client.name)
+        .limit(CAP)
+        .all()
+    )
+
+    # Jobs (under non-archived clients).
+    jobs = (
+        db.query(Job).join(Client, Job.client_id == Client.id)
+        .filter(
+            Client.archived == False,  # noqa: E712
+            or_(Job.name.ilike(like), Job.reference.ilike(like)),
+        )
+        .order_by(Job.name)
+        .limit(CAP)
+        .all()
+    )
+
+    # Orders (submitted only — open carts shouldn't be searchable history).
+    # Match the order number, the client name, or the job name.
+    orders_q = (
+        db.query(Order)
+        .outerjoin(Client, Order.customer_id == Client.id)
+        .outerjoin(Job, Order.job_id == Job.id)
+        .filter(
+            Order.status == "submitted",
+            or_(
+                Order.number.ilike(like),
+                Client.name.ilike(like),
+                Job.name.ilike(like),
+            ),
+        )
+        .order_by(Order.submitted_at.desc().nullslast())
+        .limit(CAP)
+        .all()
+    )
+
+    def _g(label, items):
+        return {"label": label, "items": items} if items else None
+
+    groups = [g for g in (
+        _g("Items", [
+            {"name": p.name, "href": f"/parts?q={p.id}#part-{p.id}",
+             "meta": f"{p.barcode} · on hand {p.quantity_on_hand}",
+             "icon": p.icon or "", "image": p.image or ""}
+            for p in items
+        ]),
+        _g("Categories", [
+            {"name": c.name, "href": "/categories",
+             "meta": (c.description[:60] + "…") if c.description and len(c.description) > 60 else (c.description or "")}
+            for c in cats
+        ]),
+        _g("Clients", [
+            {"name": c.name, "href": "/clients",
+             "meta": " · ".join(x for x in (c.reference, c.email, c.phone) if x)}
+            for c in clients
+        ]),
+        _g("Jobs", [
+            {"name": j.name, "href": "/jobs",
+             "meta": " · ".join(x for x in (j.client.name if j.client else "", j.reference) if x)}
+            for j in jobs
+        ]),
+        _g("Orders", [
+            {"name": o.number or f"(open #{o.id})",
+             "href": f"/transactions?month={o.submitted_at.strftime('%Y-%m')}" if o.submitted_at else "/transactions",
+             "meta": " · ".join(x for x in (
+                 o.client.name if o.client else "",
+                 o.job.name if o.job else "",
+                 o.submitted_at.strftime('%Y-%m-%d') if o.submitted_at else "",
+             ) if x)}
+            for o in orders_q
+        ]),
+    ) if g is not None]
+
+    return {"q": q, "groups": groups}
 
 
 @app.post("/api/void/{txn_id}")
@@ -1069,8 +1246,15 @@ def categories_delete(cat_id: int, request: Request, db: Session = Depends(get_d
 # ============================================================ clients
 @app.get("/clients", response_class=HTMLResponse)
 def clients_page(request: Request, db: Session = Depends(get_db)):
-    clients = db.query(Client).order_by(Client.name).all()
-    return templates.TemplateResponse("clients.html", ctx(request, db, clients=clients))
+    show_archived = request.query_params.get("archived") == "1"
+    q = db.query(Client)
+    if not show_archived:
+        q = q.filter(Client.archived == False)  # noqa: E712
+    clients = q.order_by(Client.name).all()
+    return templates.TemplateResponse(
+        "clients.html",
+        ctx(request, db, clients=clients, show_archived=show_archived),
+    )
 
 
 @app.post("/clients/add")
@@ -1132,9 +1316,21 @@ def clients_edit(
 # ============================================================ jobs
 @app.get("/jobs", response_class=HTMLResponse)
 def jobs_page(request: Request, db: Session = Depends(get_db)):
-    jobs = db.query(Job).join(Client, Job.client_id == Client.id).order_by(Client.name, Job.name).all()
-    clients = db.query(Client).filter(Client.active == True).order_by(Client.name).all()  # noqa: E712
-    return templates.TemplateResponse("jobs.html", ctx(request, db, jobs=jobs, clients=clients))
+    # Hide jobs belonging to archived clients (walk-ins) unless explicitly asked.
+    show_archived = request.query_params.get("archived") == "1"
+    q = db.query(Job).join(Client, Job.client_id == Client.id)
+    if not show_archived:
+        q = q.filter(Client.archived == False)  # noqa: E712
+    jobs = q.order_by(Client.name, Job.name).all()
+    clients = (
+        db.query(Client)
+        .filter(Client.active == True, Client.archived == False)  # noqa: E712
+        .order_by(Client.name).all()
+    )
+    return templates.TemplateResponse(
+        "jobs.html",
+        ctx(request, db, jobs=jobs, clients=clients, show_archived=show_archived),
+    )
 
 
 @app.post("/jobs/add")
@@ -1525,6 +1721,154 @@ def settings_backup(request: Request, db: Session = Depends(get_db)):
         content=body,
         media_type="application/gzip",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+def _restore_extract_dir(data_dir):
+    """Where we move the live data/ aside before restoring (alongside data/
+    so it's on the same volume — atomic mv)."""
+    parent = os.path.dirname(data_dir.rstrip("/")) or "."
+    base = os.path.basename(data_dir.rstrip("/")) or "data"
+    return os.path.join(parent, f"{base}.before-restore-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}")
+
+
+@app.post("/settings/restore")
+async def settings_restore(request: Request, bundle: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Admin-only: extract an uploaded backup .tar.gz and copy its tables into
+    the live DB via SQLite's online backup (in-place — no container restart).
+    Existing uploads/ is replaced; existing DB rows are overwritten."""
+    user = current_user(request)
+    if not user.get("is_admin"):
+        return JSONResponse({"detail": "Admin only"}, status_code=403)
+
+    import io as _io
+    import sqlite3 as _sqlite3
+    import tarfile as _tarfile
+    import tempfile as _tempfile
+    import shutil as _shutil
+
+    blob = await bundle.read()
+    if not blob:
+        return redirect("/settings", "Empty file upload — pick a backup .tar.gz first.", ok=False)
+    if len(blob) > 200 * 1024 * 1024:
+        return redirect("/settings", "Backup bundle is over 200 MB; restore via ./scripts/restore.sh on the host.", ok=False)
+
+    # Resolve the data dir from DATABASE_URL (same logic as backup).
+    db_url = settings.database_url or ""
+    if db_url.startswith("sqlite:////"):
+        db_path = "/" + db_url[len("sqlite:////"):]
+    elif db_url.startswith("sqlite:///"):
+        db_path = db_url[len("sqlite:///"):]
+    else:
+        db_path = "data/app.db"
+    data_dir = os.path.dirname(db_path) or "data"
+    live_db_name = os.path.basename(db_path)
+
+    # Extract + validate the bundle in a tempdir.
+    with _tempfile.TemporaryDirectory() as workdir:
+        try:
+            with _tarfile.open(fileobj=_io.BytesIO(blob), mode="r:gz") as tf:
+                # Refuse anything that tries to escape workdir (zip-slip).
+                for m in tf.getmembers():
+                    target = os.path.normpath(os.path.join(workdir, m.name))
+                    if not target.startswith(os.path.normpath(workdir) + os.sep) and target != os.path.normpath(workdir):
+                        return redirect("/settings", f"Refusing path traversal in bundle: {m.name}", ok=False)
+                tf.extractall(workdir)
+        except _tarfile.TarError as e:
+            return redirect("/settings", f"Not a valid backup tar.gz: {html.escape(str(e))}", ok=False)
+
+        # Validate: must contain at least one .db
+        db_files = [f for f in os.listdir(workdir) if f.endswith(".db")]
+        if not db_files:
+            return redirect("/settings", "Bundle has no .db files — refusing.", ok=False)
+
+        # Sanity check: the bundle's live-db file (or any .db) should open.
+        snap_live = os.path.join(workdir, live_db_name)
+        if not os.path.exists(snap_live):
+            # Fall back to the first .db in the bundle (e.g. if the user
+            # backed up under a different DATABASE_URL and the names differ).
+            snap_live = os.path.join(workdir, db_files[0])
+        try:
+            _sqlite3.connect(snap_live).close()
+        except _sqlite3.DatabaseError as e:
+            return redirect("/settings", f"Snapshot DB is corrupt: {html.escape(str(e))}", ok=False)
+
+        # Take a safety copy of the current data/ before any destructive op.
+        safe_dir = _restore_extract_dir(data_dir)
+        try:
+            _shutil.copytree(data_dir, safe_dir)
+        except FileExistsError:
+            pass  # vanishingly unlikely (timestamp collision in same second)
+
+        # --- 1. Restore each DB via online backup (preserves connections) ---
+        # The live engine holds connections — close them so SQLite releases its
+        # locks, then use sqlite3.backup() to copy snapshot → live.
+        engine.dispose()
+        restored = []
+        for fname in db_files:
+            src = os.path.join(workdir, fname)
+            dst = os.path.join(data_dir, fname)
+            if not os.path.exists(dst):
+                # New DB introduced by the bundle — just copy it in place.
+                _shutil.copy2(src, dst)
+            else:
+                src_conn = _sqlite3.connect(src)
+                try:
+                    dst_conn = _sqlite3.connect(dst)
+                    try:
+                        src_conn.backup(dst_conn)
+                    finally:
+                        dst_conn.close()
+                finally:
+                    src_conn.close()
+            restored.append(fname)
+
+        # --- 2. Replace uploads/ contents ---
+        # Two-pass mirror (merge in + sweep stale). Avoids rmtree() on the
+        # live directory — Windows can hold an open handle on empty dirs and
+        # fail with WinError 5; the live host (Linux container) is happy
+        # either way.
+        uploads_dst = os.path.join(data_dir, "uploads")
+        uploads_src = os.path.join(workdir, "uploads")
+        if os.path.isdir(uploads_src):
+            os.makedirs(uploads_dst, exist_ok=True)
+            _shutil.copytree(uploads_src, uploads_dst, dirs_exist_ok=True)
+            # Sweep files in uploads_dst that aren't in uploads_src.
+            for root, _dirs, files in os.walk(uploads_dst):
+                rel = os.path.relpath(root, uploads_dst)
+                for f in files:
+                    if not os.path.exists(os.path.join(uploads_src, rel, f)):
+                        try:
+                            os.remove(os.path.join(root, f))
+                        except OSError:
+                            pass
+
+    # Re-run migrations on the new DB (in case the bundle was from an older
+    # version that's missing newer columns).
+    ensure_columns()
+
+    # Audit log the action — note: the audit row gets WRITTEN into the
+    # *restored* DB, so it'll show whatever the user the bundle thinks did it.
+    # Re-open a fresh session against the restored DB to log.
+    fresh = SessionLocal()
+    try:
+        audit.record(fresh, user, "settings.restore", "settings", None,
+                     f"Restored from upload ({len(blob)} bytes, {len(restored)} db file(s); "
+                     f"safety copy at {safe_dir})")
+        fresh.commit()
+    finally:
+        fresh.close()
+
+    return HTMLResponse(
+        "<html><body style='font-family:system-ui;max-width:640px;margin:4rem auto;color:#333'>"
+        "<h2 style='color:#16a34a'>✓ Restore complete</h2>"
+        f"<p>Restored <b>{len(restored)}</b> database file(s) and the uploads folder.</p>"
+        f"<p>The previous data was saved on the server at "
+        f"<code>{html.escape(os.path.basename(safe_dir))}/</code> "
+        "(delete it once you've confirmed the restore looks right).</p>"
+        "<p><a href='/'>Refresh the app →</a></p>"
+        "</body></html>",
+        status_code=200,
     )
 
 

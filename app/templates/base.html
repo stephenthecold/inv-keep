@@ -26,10 +26,20 @@
     </a>
     <nav>
       {% if can('checkout') %}<a href="/">Scan</a>{% endif %}
-      <a href="/parts">Items</a>
-      <a href="/categories">Categories</a>
-      <a href="/clients">Clients</a>
-      <a href="/jobs">Jobs</a>
+      <div class="navdrop">
+        <button type="button" class="navdrop-btn" data-menu="#items-menu" aria-haspopup="true" aria-expanded="false">Items <span class="caret">▾</span></button>
+        <div class="account-menu navdrop-menu" id="items-menu" data-menu-pop hidden>
+          <a href="/parts">Items</a>
+          <a href="/categories">Categories</a>
+        </div>
+      </div>
+      <div class="navdrop">
+        <button type="button" class="navdrop-btn" data-menu="#clients-menu" aria-haspopup="true" aria-expanded="false">Clients <span class="caret">▾</span></button>
+        <div class="account-menu navdrop-menu" id="clients-menu" data-menu-pop hidden>
+          <a href="/clients">Clients</a>
+          <a href="/jobs">Jobs</a>
+        </div>
+      </div>
       <div class="navdrop">
         <button type="button" class="navdrop-btn" data-menu="#records-menu" aria-haspopup="true" aria-expanded="false">Records <span class="caret">▾</span></button>
         <div class="account-menu navdrop-menu" id="records-menu" data-menu-pop hidden>
@@ -40,6 +50,10 @@
         </div>
       </div>
     </nav>
+    <div class="global-search">
+      <input type="text" id="global-search" placeholder="Search items, clients, jobs, orders…" autocomplete="off" aria-label="Global search">
+      <div id="global-search-results" class="global-search-results" hidden></div>
+    </div>
     <div class="account">
       <button type="button" class="account-btn" data-menu="#account-menu" aria-haspopup="true" aria-expanded="false">
         <span class="account-name">{{ user.username or 'Menu' }}</span>

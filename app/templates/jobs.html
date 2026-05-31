@@ -1,8 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-head">
-  <h1>Jobs</h1>
-  <button class="add-btn" onclick="openModal('add-job')" {% if not clients %}disabled{% endif %}>+ Add new job</button>
+  <h1>Jobs {% if show_archived %}<small class="muted">— including walk-ins</small>{% endif %}</h1>
+  <div class="head-actions">
+    <a class="btn ghost" href="{% if show_archived %}/jobs{% else %}/jobs?archived=1{% endif %}">{% if show_archived %}Hide walk-ins{% else %}Show walk-ins{% endif %}</a>
+    <button class="add-btn" onclick="openModal('add-job')" {% if not clients %}disabled{% endif %}>+ Add new job</button>
+  </div>
 </div>
 <p class="muted">Jobs / tickets / work-orders, each attached to a client. Charge-outs can be logged against a job.</p>
 

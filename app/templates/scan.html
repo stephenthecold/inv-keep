@@ -13,6 +13,9 @@
   <input type="text" id="scan" autocomplete="off" placeholder="Scan, or type to search…" autofocus>
   <div id="suggest" class="suggest" hidden></div>
   <small>Scanning a known item adds it to the current order. Set the client/job once and keep scanning; submit when done.</small>
+  <div class="scan-actions">
+    <button type="button" id="start-walkin" class="ghost">+ Start walk-in / one-time order</button>
+  </div>
 </div>
 
 <!-- Cart card. Rendered client-side from /api/cart on load + after each scan. -->
@@ -41,6 +44,13 @@
         <option value="">— no job —</option>
         {% for j in jobs %}<option value="{{ j.id }}" data-client="{{ j.client_id }}">{{ j.name }}{% if j.reference %} — {{ j.reference }}{% endif %}</option>{% endfor %}
       </select>
+    </label>
+    <label class="wide" id="cart-walkin-row" hidden>Walk-in customer name
+      <span class="walkin-row">
+        <input type="text" id="cart-walkin" placeholder="e.g. Cash sale · John Doe drop-in" maxlength="200">
+        <button type="button" id="cart-walkin-apply">Save</button>
+        <button type="button" id="cart-walkin-cancel" class="ghost">Use existing client</button>
+      </span>
     </label>
   </div>
 

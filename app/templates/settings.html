@@ -360,7 +360,7 @@
 </section>
 
 {% if user.is_admin %}
-<!-- ---------------- Backup ---------------- -->
+<!-- ---------------- Backup + Restore ---------------- -->
 <section class="card">
   <h2>Backup</h2>
   <p class="muted">Downloads a <code>.tar.gz</code> containing a consistent
@@ -370,8 +370,25 @@
   <a class="btn" href="/settings/backup" download>⬇ Download backup now</a>
   <small class="muted" style="display:block;margin-top:.5rem">
     For scheduled / automated backups, run <code>./scripts/backup.sh</code> on
-    the host (cron-friendly). To restore, see <a href="https://github.com/stephenthecold/inv-keep/blob/main/docs/BACKUPS.md">docs/BACKUPS.md</a>.
+    the host (cron-friendly). See <a href="https://github.com/stephenthecold/inv-keep/blob/main/docs/BACKUPS.md">docs/BACKUPS.md</a>.
   </small>
+
+  <h3 style="margin-top:1.5rem">Restore from a backup</h3>
+  <div class="notice bad" style="margin:.5rem 0">
+    <b>Replaces every database row and the entire uploads folder</b> with the contents
+    of the uploaded bundle. The current data is saved as
+    <code>data/before-restore-&lt;timestamp&gt;/</code> on the server first, but
+    only the server can roll back from it — you'll lose anything not in the bundle.
+    Take a fresh download backup before you do this.
+  </div>
+  <form method="post" action="/settings/restore" enctype="multipart/form-data"
+        onsubmit="return confirm('Replace current data with the uploaded backup? Existing data will be moved to data/before-restore-&lt;ts&gt;/.')">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label>Backup file (.tar.gz produced by Download backup / scripts/backup.sh):
+      <input type="file" name="bundle" accept=".gz,.tgz,application/gzip,application/x-gzip" required>
+    </label>
+    <button type="submit" class="danger" style="margin-top:.5rem">Restore</button>
+  </form>
 </section>
 {% endif %}
 

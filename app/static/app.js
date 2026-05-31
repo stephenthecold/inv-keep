@@ -74,6 +74,98 @@ function iconHTML(v) {
 // ---- modal helpers (used by list pages) ----
 function openModal(id) { const d = document.getElementById(id); if (d && d.showModal) d.showModal(); }
 
+// ---- global header search ----
+(function(){
+  const input = document.getElementById("global-search");
+  const out   = document.getElementById("global-search-results");
+  if (!input || !out) return;
+  let timer = null;
+  let lastQ = "";
+  let activeIdx = -1;
+
+  function close() { out.hidden = true; out.innerHTML = ""; activeIdx = -1; }
+  function open()  { out.hidden = false; }
+
+  function items() { return Array.from(out.querySelectorAll(".gs-item")); }
+  function setActive(i) {
+    const els = items();
+    if (!els.length) { activeIdx = -1; return; }
+    activeIdx = ((i % els.length) + els.length) % els.length;
+    els.forEach((el, n) => el.classList.toggle("active", n === activeIdx));
+    els[activeIdx].scrollIntoView({ block: "nearest" });
+  }
+
+  function render(d) {
+    if (!d || !d.groups || !d.groups.length) {
+      out.innerHTML = '<div class="gs-empty">No matches for ' + escapeAttr(d.q || "") + '</div>';
+      open();
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    d.groups.forEach((g) => {
+      const grp = document.createElement("div");
+      grp.className = "gs-group";
+      const lbl = document.createElement("div");
+      lbl.className = "gs-group-label";
+      lbl.textContent = g.label;
+      grp.appendChild(lbl);
+      g.items.forEach((it) => {
+        const a = document.createElement("a");
+        a.className = "gs-item";
+        a.href = it.href;
+        const name = document.createElement("span");
+        name.className = "gs-item-name";
+        name.textContent = it.name;
+        a.appendChild(name);
+        if (it.meta) {
+          const m = document.createElement("small");
+          m.className = "gs-item-meta";
+          m.textContent = it.meta;
+          a.appendChild(m);
+        }
+        grp.appendChild(a);
+      });
+      frag.appendChild(grp);
+    });
+    out.innerHTML = "";
+    out.appendChild(frag);
+    open();
+    activeIdx = -1;
+  }
+
+  function escapeAttr(s) { return String(s).replace(/[<>"&]/g, (c) => ({"<":"&lt;",">":"&gt;","\"":"&quot;","&":"&amp;"}[c])); }
+
+  async function run(q) {
+    if (q === lastQ) return;
+    lastQ = q;
+    if (q.length < 2) { close(); return; }
+    const res = await fetch("/api/search/global?q=" + encodeURIComponent(q));
+    if (!res.ok) { close(); return; }
+    const d = await res.json();
+    if (q !== input.value.trim()) return;  // user kept typing
+    render(d);
+  }
+
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    const q = input.value.trim();
+    timer = setTimeout(() => run(q), 180);
+  });
+  input.addEventListener("focus", () => { if (out.children.length) open(); });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); setActive(activeIdx + 1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActive(activeIdx - 1); }
+    else if (e.key === "Enter") {
+      const els = items();
+      if (activeIdx >= 0 && els[activeIdx]) { e.preventDefault(); els[activeIdx].click(); }
+    }
+    else if (e.key === "Escape") { close(); input.blur(); }
+  });
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".global-search")) close();
+  });
+})();
+
 // ---- generic header dropdown menus (account + records) ----
 (function () {
   const allMenus = () => document.querySelectorAll("[data-menu-pop]");
@@ -212,7 +304,21 @@ if (scan && cart) {
     statusEl.textContent = c.number
       ? "Order " + c.number
       : "Order # will be assigned on submit";
-    clientSel.value = c.client_id ? String(c.client_id) : "";
+    // Walk-in clients aren't in the dropdown (they're archived). Show the
+    // walk-in row as a read-only "Walk-in: <name>" label instead.
+    const walkinRowEl = document.getElementById("cart-walkin-row");
+    const walkinInEl  = document.getElementById("cart-walkin");
+    if (c.client_walkin) {
+      clientSel.value = "";
+      clientSel.disabled = true;
+      if (walkinRowEl) walkinRowEl.hidden = false;
+      if (walkinInEl) { walkinInEl.value = c.client_name; walkinInEl.readOnly = true; }
+    } else {
+      clientSel.disabled = false;
+      clientSel.value = c.client_id ? String(c.client_id) : "";
+      if (walkinRowEl) walkinRowEl.hidden = true;
+      if (walkinInEl) { walkinInEl.readOnly = false; walkinInEl.value = ""; }
+    }
     filterJobsToClient(c.client_id);
     jobSel.value = c.job_id ? String(c.job_id) : "";
 
@@ -457,6 +563,68 @@ if (scan && cart) {
     const res = await fetch("/api/cart/cancel", { method: "POST", headers: csrfHeaders() });
     const d = await res.json();
     if (d.ok) { toast("Cart cancelled", true); refresh(); }
+  });
+
+  // -- walk-in / one-time-purchase client --
+  const startWalkin = document.getElementById("start-walkin");
+  const walkinRow   = document.getElementById("cart-walkin-row");
+  const walkinIn    = document.getElementById("cart-walkin");
+  const walkinSave  = document.getElementById("cart-walkin-apply");
+  const walkinCancel= document.getElementById("cart-walkin-cancel");
+
+  function showWalkinRow(on) {
+    if (!walkinRow) return;
+    walkinRow.hidden = !on;
+    if (walkinIn) walkinIn.readOnly = false;  // editable when opened anew
+    if (on) {
+      if (clientSel) clientSel.disabled = true;
+      if (jobSel)    jobSel.disabled = true;
+      setTimeout(() => walkinIn && walkinIn.focus(), 30);
+    } else {
+      if (clientSel) clientSel.disabled = false;
+      if (jobSel)    jobSel.disabled = false;
+    }
+  }
+
+  if (startWalkin) {
+    startWalkin.addEventListener("click", () => {
+      showWalkinRow(true);
+      cart.hidden = false;          // make sure the cart card is visible
+    });
+  }
+  if (walkinCancel) {
+    walkinCancel.addEventListener("click", () => {
+      walkinIn.value = "";
+      showWalkinRow(false);
+    });
+  }
+  async function applyWalkin() {
+    const name = (walkinIn.value || "").trim();
+    if (!name) { walkinIn.focus(); return; }
+    const res = await fetch("/api/cart/walkin", {
+      method: "POST",
+      headers: csrfHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ name }),
+    });
+    const d = await res.json();
+    if (!d.ok) {
+      beep(false);
+      toast(d.error === "name_required" ? "Type a name first" :
+            d.error === "name_too_long" ? "Name too long" :
+            "Could not set walk-in", false);
+      return;
+    }
+    beep(true);
+    toast("Walk-in: " + name, true);
+    showWalkinRow(false);
+    walkinIn.value = "";
+    render(d.cart);
+    scan.focus();
+  }
+  if (walkinSave) walkinSave.addEventListener("click", applyWalkin);
+  if (walkinIn) walkinIn.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); applyWalkin(); }
+    if (e.key === "Escape") { e.preventDefault(); walkinCancel.click(); }
   });
 
   // -- custom (off-catalog) item form --

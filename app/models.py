@@ -82,6 +82,10 @@ class Client(Base):
     address = Column(Text, default="")
     notes = Column(Text, default="")
     active = Column(Boolean, nullable=False, default=True)
+    # Hidden from the main /clients list by default. Used for walk-in /
+    # one-time-purchase clients created from the cart card without polluting
+    # the recurring-client roster (mirror of Part.archived).
+    archived = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     jobs = relationship("Job", back_populates="client", order_by="Job.name")

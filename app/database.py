@@ -53,6 +53,7 @@ _ADDED_COLUMNS = {
         "location": "TEXT DEFAULT ''",
         "address": "TEXT DEFAULT ''",
         "notes": "TEXT DEFAULT ''",
+        "archived": "BOOLEAN DEFAULT 0",
     },
     "transactions": {
         "job_id": "INTEGER",
