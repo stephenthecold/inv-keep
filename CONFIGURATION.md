@@ -39,8 +39,10 @@ Inv-Keep is configured in two layers:
 | Setting | Default | Notes |
 |---|---|---|
 | `app_title` | `Inv-Keep` | Shown in header, title bar, footer, PWA name. |
-| `currency` | `$` | Symbol prefixed to all amounts. |
+| `currency` | `$` | Symbol prefixed to all amounts. All displayed dollar values round **up** to the nearest cent so client-facing totals never under-bill. |
 | `low_stock_threshold` | `5` | Global default; each item can override it. |
+| `default_markup_pct` | `0` | **Admin-only field.** Percentage added to our cost to suggest the client price when adding an item or logging a custom one — `client_price = ceil(unit_cost × (1 + markup/100))`. `0` disables the autofill. Managers still get the autofill silently; only admins see and edit the value. |
+| `timezone` | `UTC` | IANA name (e.g. `America/Phoenix`). Used for displayed timestamps in the audit log, History, and scan-page Recent activity. Storage stays UTC; the scheduler still runs against the server clock (UTC in Docker). |
 
 ### Printing
 | Setting | Default | Notes |

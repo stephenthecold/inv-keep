@@ -20,8 +20,71 @@ jobs:
       - name: Import app (smoke)
         env:
           DATABASE_URL: "sqlite:///./data/ci.db"
-          SESSION_SECRET: "ci-secret"
+          # v1.8 startup check requires ≥32 chars and not the placeholder.
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
         run: python -c "import app.main; print('import ok')"
+      - name: Cart flow smoke (scan → set → submit → 200)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          from fastapi.testclient import TestClient
+          from app.main import app
+          c = TestClient(app)
+          # Seed a client + a part so the cart has something to scan.
+          r = c.get('/')                              # mint csrf cookie
+          assert r.status_code == 200, r.status_code
+          import re
+          tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', r.text).group(1)
+          h = {'X-CSRF-Token': tok}
+          r = c.post('/clients/add', data={'_csrf': tok, 'name': 'CI Co'}); assert r.status_code in (200, 303), r.status_code
+          r = c.post('/parts/add',   data={'_csrf': tok, 'name': 'CI Cable', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2', 'quantity_on_hand': '10'})
+          assert r.status_code in (200, 303), r.status_code
+          # Find the auto-generated barcode for the part we just made.
+          parts = c.get('/api/search?q=CI+Cable').json()['results']
+          assert parts, 'CI part not found via search'
+          bc = parts[0]['barcode']
+          r = c.post('/api/cart/scan', json={'barcode': bc, 'quantity': 2}, headers=h)
+          assert r.json().get('ok') is True, r.json()
+          r = c.post('/api/cart/set',  json={'client_id': 1, 'job_id': None}, headers=h)
+          assert r.json().get('ok') is True, r.json()
+          r = c.post('/api/cart/submit', headers=h)
+          j = r.json()
+          assert j.get('ok') is True, j
+          assert j['order']['number'].startswith('ORD-'), j
+          assert j['order']['lines'] == 1, j
+          print('cart smoke ok ->', j['order']['number'])
+          "
+      - name: NaN geo rejected (security regression test)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci2.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import json, re
+          from fastapi.testclient import TestClient
+          from app.main import app
+          c = TestClient(app)
+          r = c.get('/'); tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', r.text).group(1)
+          h = {'X-CSRF-Token': tok}
+          c.post('/clients/add', data={'_csrf': tok, 'name': 'CI Co'})
+          c.post('/parts/add',   data={'_csrf': tok, 'name': 'CI Cable', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2', 'quantity_on_hand': '10'})
+          bc = c.get('/api/search?q=CI+Cable').json()['results'][0]['barcode']
+          # NaN must NOT survive into the stored row — earlier bug.
+          payload = '{\"barcode\":' + json.dumps(bc) + ',\"quantity\":1,\"lat\":NaN,\"lng\":NaN}'
+          r = c.post('/api/cart/scan', content=payload, headers={**h, 'Content-Type':'application/json'})
+          assert r.json().get('ok') is True, r.json()
+          # The cart should report the scanned line with no geo poisoning.
+          import sqlite3, os
+          con = sqlite3.connect('./data/ci2.db')
+          row = con.execute('SELECT lat, lng FROM transactions ORDER BY id DESC LIMIT 1').fetchone()
+          assert row == (None, None), f'NaN bypass: stored {row}'
+          print('NaN geo correctly rejected')
+          "
       - name: Check JavaScript syntax
         run: node --check app/static/app.js
       - name: Lint shell installer

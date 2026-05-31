@@ -4,33 +4,53 @@ A small self-hosted web app (MSP-oriented) for charging bulk inventory (patch ca
 connectors, etc.) out to clients and jobs with a barcode scanner, and producing a monthly
 billing report.
 
-- **Scan-first home page** — the home page is a scan/search box. Scan a barcode (or type to
-  search with live suggestions) to pull the item up, then confirm quantity, client and job
-  before it's charged out. Works with any USB "keyboard-wedge" barcode scanner.
-- **Live quick-search** — start typing an item name or barcode and matching items appear
-  instantly to pick from, so you can find things without an exact scan.
-- **Item icons + descriptions** — give each item an emoji icon and description; the icon
-  shows in the search results and charge panel for fast visual identification.
-- **Cost + client price** — each item tracks **our cost** and the **price we charge clients**.
-  Charge-outs snapshot both, so the report shows billable totals plus cost and margin.
-- **Bulk + unique items** — a "bulk" item is one barcode shared by many identical units
-  (uses a quantity); a "unique" item is a single labeled unit (always counts as 1).
-- **Auto barcodes + printable labels** — add an item with the barcode left blank and the app
-  generates a Code128 value and a printable label (per-item or a whole sheet at `/labels`).
-- **Nested categories** — organise items in a category tree of any depth, each with a description.
-- **White-label branding** — set the app title, brand emoji or uploaded logo, accent colour
-  and footer text under Settings; they apply across the whole app.
-- **Clients & Jobs** — clients hold a full contact record (account #, contact, email, phone,
-  location, address, notes). **Jobs** are a separate section, each attached to a client
-  (ticket / work-order ref), and charge-outs are logged against a job.
-- **Monthly report** — grouped by client → job with line costs, job subtotals, client totals,
-  grand total, and a one-click CSV export for billing.
-- **Audit log** — every charge-out, void, and configuration change is recorded and filterable.
-- **Email alerts** — low-stock alerts and an automatic monthly report email. Send via plain
-  SMTP or OAuth2 (Microsoft 365 / Gmail). All configured in the UI.
-- **Fully UI-configurable** — title, currency, low-stock thresholds, email, alerts, **and
-  authentication (Authentik/OIDC or forward-auth)** all live in the app database and are
-  edited under **Settings** (no env editing / redeploy needed).
+- **Cart-based charge-out** — scan a known barcode and it lands in a **Current
+  order** card. Pick Client + Job once, keep scanning, hit **Submit Order**. Each
+  submitted order gets an auto-generated number **`ORD-YYYYMM-NNNN`** (counter
+  resets monthly) stamped on every line. Cancel any time and stock is restored.
+  Works with any USB "keyboard-wedge" barcode scanner.
+- **Custom (off-catalog) items** — `+ Custom item` on the cart card logs an
+  ad-hoc purchase (name, description, optional photo, cost, price, qty) for
+  things you bought in the field. Stored as an archived Part, hidden from the
+  catalog but billed normally.
+- **Live quick-search** — type an item name or barcode and matches appear
+  instantly; pick one to add it straight to the cart.
+- **Auto barcodes + printable labels** — add an item with the barcode blank and
+  the app generates a Code128 value and a printable label (per-item or a whole
+  sheet at `/labels`). Brother / DYMO / Zebra / Rollo / Epson / Brady presets,
+  optional QR mode.
+- **Custom item icons** — emoji, a built-in line-SVG (network cable, server,
+  router, wrench, …), or your own uploaded photo.
+- **Bulk + unique items** — "bulk" = one barcode shared by many identical units
+  (qty-tracked); "unique" = a single labeled item.
+- **Nested categories** — any depth, each with a description.
+- **Clients + Jobs** — clients carry the full contact record (account #,
+  contact, email, phone, location, address, notes); Jobs are a separate section
+  attached to a client (ticket / WO ref). Every charge-out logs against both.
+- **Reports** — group by client → job → line, with cost, charge, margin. Filter
+  by **multi-client checkbox** + **month or arbitrary date range**. One-click
+  CSV export honours the same filter. All dollar values **round UP to the
+  nearest cent** so client-facing numbers never under-bill.
+- **Default client markup %** — set once in Settings, the Add-Item and Custom-
+  Item forms auto-suggest the client price as `ceil(our_cost × (1 + markup%))`.
+- **Geo capture + maps** — the browser is asked (best-effort) for the device
+  location at scan-time; lat/lng are stored on each charge-out line. View as a
+  collapsible map on `/transactions` or a full-page **/map**, both built on
+  vendored Leaflet + OpenStreetMap.
+- **Timezone-aware timestamps** — pick any IANA zone in Settings; audit log,
+  History and Recent activity render in that zone (storage stays UTC).
+- **Audit log** — every charge-out, void, order open/submit/cancel, and config
+  change is recorded with user, timestamp, and a contextual summary. Filterable.
+- **Email alerts** — low-stock alerts and daily / weekly / monthly report
+  emails. SMTP or OAuth2 (Microsoft 365 / Gmail). All in the UI.
+- **Security baked in** — CSRF token on every form + JSON API; OIDC email
+  trusted only when `email_verified`; session cookie `Secure` + `SameSite=Lax`;
+  request-body cap; non-root container; refuses to start with a weak
+  `SESSION_SECRET`.
+- **Fully UI-configurable** — title, currency, timezone, low-stock thresholds,
+  markup %, email, alerts, **and authentication (Authentik/OIDC or
+  forward-auth)** all live in the app database and are edited under
+  **Settings** — no env editing / redeploy.
 
 It uses its own SQLite database and is independent of Snipe-IT.
 
@@ -71,8 +91,9 @@ proxy if you enable SSL. Use `./install.sh -y` for all-defaults. See [docs/DEPLO
 
 ```bash
 cp .env.example .env
-# Generate a session secret and paste it into SESSION_SECRET:
+# Generate a session secret (the app refuses to start with a weak / placeholder one):
 python3 -c "import secrets; print(secrets.token_hex(32))"
+# Paste the 64-char output into SESSION_SECRET in .env.
 
 docker compose up -d --build                 # http://HOSTNAME:APP_PORT (default :8000)
 # ...or with automatic HTTPS (needs a real domain + ports 80/443 + ACME_EMAIL):
@@ -82,13 +103,22 @@ docker compose --profile ssl up -d --build   # https://HOSTNAME
 It starts with **no login** so you can try it immediately on a trusted network.
 **Set up authentication in the UI before exposing it** (see below).
 
-First steps in the UI (use the **+ Add new …** button in the top-right of each list page):
-1. **Clients** → add the clients you bill. **Jobs** → add jobs (each attached to a client).
-2. **Items** → add your cables/adapters: name, icon, description, barcode, bulk vs unique,
-   **our cost**, **client price**, stock. Scanning an unknown barcode on the home page jumps
-   straight to Add Item with the barcode pre-filled.
-3. **Home (scan)** → scan or search an item → confirm quantity, client and job → charge out.
-4. **Monthly Report** → pick the month; see billable total, cost and margin; export CSV.
+First steps in the UI:
+1. **Settings → General** — set your timezone, currency, and (optional) default
+   client markup %.
+2. **Clients** → add the companies you bill. **Jobs** → ticket / WO refs, each
+   attached to a client.
+3. **Items** → add your stock: name, icon, description, barcode (leave blank to
+   auto-generate + print a label), bulk vs unique, **our cost**, **client
+   price** (auto-suggested from markup %), starting qty. Scanning an unknown
+   barcode on the home page jumps straight to Add Item with it pre-filled.
+4. **Home (scan)** → barcode a known item; it lands in the **Current order**
+   card. Pick Client + Job once, keep scanning more items (or use
+   **+ Custom item** for off-catalog purchases), tweak quantities, hit
+   **Submit Order**. Each submit produces an `ORD-YYYYMM-NNNN`.
+5. **Records → Report** — pick a month or arbitrary date range and any subset
+   of clients; export CSV for billing. **Records → Map** — see every geo-tagged
+   charge-out on a map.
 
 ## Authentication (Settings → Authentication, in the UI)
 
