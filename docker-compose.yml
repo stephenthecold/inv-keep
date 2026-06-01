@@ -25,6 +25,9 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    networks:
+      - default
+      - caddy_caddy
 
   # Optional automatic-HTTPS reverse proxy. Enable with:  docker compose --profile ssl up -d
   # Requires HOSTNAME + ACME_EMAIL in .env, ports 80/443 free, and DNS pointing here.
@@ -51,3 +54,7 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+
+networks:
+  caddy_caddy:
+    external: true
