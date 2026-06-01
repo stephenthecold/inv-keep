@@ -59,3 +59,37 @@ outpost, set **Settings → Authentication → Forward-auth** and the app trusts
 Installing the PWA / registering the service worker requires **HTTPS** (or
 `localhost`). Use the SSL profile or an upstream TLS proxy before installing on
 Android devices. See [ANDROID.md](ANDROID.md).
+
+## Pulling the image from a private repo
+
+`docker-compose.yml` pulls `ghcr.io/stephenthecold/inv-keep` by default. When
+the GitHub repo is **private**, the image inherits that visibility and a
+plain `docker compose pull` fails with `unauthorized`. Authenticate first:
+
+```bash
+# One-shot (uses the GitHub CLI's existing token, which needs the `read:packages` scope):
+gh auth refresh -h github.com -s read:packages
+gh auth token | docker login ghcr.io -u YOUR_GH_USER --password-stdin
+```
+
+Or, with a personal access token (classic) that has `read:packages`:
+
+```bash
+echo "$GHCR_PAT" | docker login ghcr.io -u YOUR_GH_USER --password-stdin
+```
+
+Docker caches the credential, so subsequent `docker compose pull` calls
+work without re-auth. To deploy on a host that isn't yours (a colleague's
+server, a customer site, etc.), give them a token with just `read:packages`
+and they run the same `docker login` once.
+
+**Skip auth entirely** by making the package itself public (independent
+of repo visibility):
+
+```bash
+# Open the package settings page, switch visibility → public:
+gh repo view stephenthecold/inv-keep --json url --jq .url
+#   then go to /packages → inv-keep → Package settings → Change visibility
+```
+
+After that, `docker compose pull` works anywhere without `docker login`.

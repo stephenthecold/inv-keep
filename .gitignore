@@ -1,6 +1,11 @@
 # -- Local data + uploads (per-deployment, never tracked) --
 data/*.db
 data/uploads/
+# Safety copies created by the restore endpoint (UI or scripts/restore.sh):
+data.before-restore-*/
+data-before-restore-*/
+# Backup output dir (scripts/backup.sh default destination):
+backups/
 
 # -- Env / secrets --
 .env

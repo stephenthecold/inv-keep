@@ -118,10 +118,10 @@ By default `docker-compose.yml` pulls `ghcr.io/stephenthecold/inv-keep:latest`.
 Pin a specific tag:
 
 ```bash
-INV_KEEP_VERSION=v1.11.0 docker compose up -d
+INV_KEEP_VERSION=v1.12.0 docker compose up -d
 ```
 
-Or put `INV_KEEP_VERSION=v1.11.0` in `.env` to make it sticky.
+Or put `INV_KEEP_VERSION=v1.12.0` in `.env` to make it sticky.
 
 ## What's NOT in the backup
 

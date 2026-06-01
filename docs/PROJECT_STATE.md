@@ -3,7 +3,7 @@
 **Read this first.** It is the durable substitute for the build chat. Reading this +
 [CONFIGURATION.md](../CONFIGURATION.md) + [CHANGELOG.md](../CHANGELOG.md) reconstructs
 the whole project; you do **not** need the original conversation. Current version:
-**v1.11.0** (tags `v1.0.0` … `v1.11.0`, one per release).
+**v1.12.0** (tags `v1.0.0` … `v1.12.0`, one per release).
 
 ## What it is
 A small, self-hosted, MSP-oriented inventory **charge-out** app. Scan an item →
@@ -253,7 +253,8 @@ returns no spaces after colons — grep with that in mind. **Never commit** `.en
 - **Map tiles** load from the public `tile.openstreetmap.org` — works offline-
   ish (no tiles past your cached zoom) but not strictly self-hosted. Swap for a
   self-hosted tileserver if that matters.
-- **LICENSE/author** are placeholders ("Inv-Keep contributors", MIT); TWA `packageId`
-  is `com.invkeep.twa` — set real values before publishing.
-- The user runs their own instance branded "Connected Technologies / TEST". After any
-  update they must reload once (network-first SW then keeps assets current).
+- **TWA `packageId`** is `com.invkeep.twa` and `host` is `inv-keep.example.com`
+  in `android/twa-manifest.json` — set real values before publishing the APK
+  via Bubblewrap. PWA install on Android works without changing either.
+- The instance is branded "Connected Technologies". After any update users
+  must reload once (network-first SW then keeps assets current).
