@@ -12,8 +12,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="{{ cfg.app_title }}">
-  <link rel="icon" href="/static/icons/icon-192.png">
-  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+  <link rel="icon" href="{{ cfg.brand_favicon or '/static/icons/icon-192.png' }}">
+  <link rel="apple-touch-icon" href="{{ cfg.brand_favicon or '/static/icons/icon-192.png' }}">
   {% if cfg.brand_accent %}<style>:root{ --accent: {{ cfg.brand_accent }}; }</style>{% endif %}
   <script>window.ICON_SET = {{ icon_set | tojson }}; window.CURRENCY = {{ (cfg.currency or '$') | tojson }};{% if user.is_admin %} window.DEFAULT_MARKUP_PCT = {{ (cfg.default_markup_pct or '0') | tojson }};{% endif %}</script>
 </head>
@@ -24,6 +24,9 @@
       {% else %}<span class="brand-emoji">{{ cfg.brand_emoji or '📦' }}</span>{% endif %}
       {% if (not cfg.brand_logo) or cfg.brand_show_title == '1' %}<span class="brand-title">{{ cfg.app_title }}</span>{% endif %}
     </a>
+    <button type="button" class="nav-toggle" aria-label="Menu" aria-controls="nav-mobile" aria-expanded="false">
+      <span class="hamburger-bar"></span><span class="hamburger-bar"></span><span class="hamburger-bar"></span>
+    </button>
     <nav>
       {% if can('checkout') %}<a href="/">Scan</a>{% endif %}
       <div class="navdrop">
@@ -68,6 +71,23 @@
       </div>
     </div>
   </header>
+  <div class="nav-backdrop" aria-hidden="true"></div>
+  <aside class="nav-mobile" id="nav-mobile" aria-label="Mobile navigation">
+    {% if can('checkout') %}<a href="/">Scan</a>{% endif %}
+    <a href="/parts">Items</a>
+    <a href="/categories">Categories</a>
+    <a href="/clients">Clients</a>
+    <a href="/jobs">Jobs</a>
+    <a href="/transactions">History</a>
+    <a href="/report">Report</a>
+    <a href="/map">Map</a>
+    {% if can('view_audit') %}<a href="/audit">Audit</a>{% endif %}
+    <div class="nav-mobile-sep" role="separator"></div>
+    <span class="muted nav-mobile-user">Signed in as {{ user.username or 'user' }}{% if user.role %} · {{ user.role }}{% endif %}</span>
+    {% if can('manage_users') %}<a href="/users">Users &amp; roles</a>{% endif %}
+    {% if can('manage_settings') %}<a href="/settings">Settings</a>{% endif %}
+    {% if cfg.auth_mode == 'oidc' %}<form method="post" action="/logout" class="nav-mobile-logout"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button type="submit">Log out</button></form>{% endif %}
+  </aside>
   <main>
     {% if msg %}<div class="flash {{ 'good' if ok else 'bad' }}">{{ msg }}</div>{% endif %}
     {% block content %}{% endblock %}

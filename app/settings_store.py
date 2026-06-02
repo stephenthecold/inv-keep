@@ -40,6 +40,7 @@ DEFAULTS = {
     # White-label branding
     "brand_accent": "",        # hex colour, e.g. #2f81f7 (blank = default)
     "brand_logo": "",          # served path under /uploads, e.g. /uploads/logo.png
+    "brand_favicon": "",       # served path under /uploads, e.g. /uploads/favicon.png
     "brand_emoji": "📦",       # shown when no logo image is set
     "brand_show_title": "1",   # show the app-title text next to the logo
     "brand_footer": "",        # optional footer text
