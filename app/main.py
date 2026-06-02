@@ -187,7 +187,7 @@ self.addEventListener('fetch', (e) => {
 });
 """.strip()
 
-PUBLIC_PATHS = {"/login", "/auth/callback", "/logout", "/health", "/manifest.webmanifest",
+PUBLIC_PATHS = {"/welcome", "/login", "/auth/callback", "/logout", "/health", "/manifest.webmanifest",
                 "/sw.js", "/.well-known/assetlinks.json"}
 
 _stop_event = threading.Event()
@@ -229,7 +229,15 @@ async def auth_middleware(request: Request, call_next):
         db.close()
     if not user:
         if mode == "oidc":
-            return RedirectResponse("/login")
+            # Avoid implicit redirect chains on mobile (slow networks +
+            # bfcache cause confusing multi-reload-to-log-in behaviour).
+            # Hand off to an explicit splash page with a Sign-in button;
+            # API and non-GET requests still get a clean 401 so XHRs can
+            # detect the auth boundary without parsing HTML.
+            wants_html = (request.method == "GET"
+                          and "text/html" in request.headers.get("accept", ""))
+            if wants_html and not path.startswith("/api/"):
+                return RedirectResponse("/welcome")
         return JSONResponse({"detail": "Unauthorized"}, status_code=401)
     request.state.user = user
 
@@ -246,7 +254,15 @@ async def auth_middleware(request: Request, call_next):
             "<p><a href='/'>← Back</a></p></body></html>",
             status_code=403,
         )
-    return await call_next(request)
+    response = await call_next(request)
+    # Stop browsers (especially mobile Safari + Android Chrome bfcache) from
+    # restoring auth'd HTML out of memory with a now-stale CSRF token. Static
+    # assets keep their long-cache headers — we only touch HTML.
+    ctype = response.headers.get("content-type", "")
+    if ctype.startswith("text/html"):
+        response.headers["Cache-Control"] = "no-store, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+    return response
 
 
 # CSRF must sit INSIDE SessionMiddleware (so it can read scope['session'])
@@ -397,6 +413,47 @@ def _auth_error_page(detail):
         "restart the app to regain access, then fix the settings.</p>"
         "</body></html>",
         status_code=502,
+    )
+
+
+@app.get("/welcome", response_class=HTMLResponse)
+def welcome(request: Request, db: Session = Depends(get_db)):
+    """Mobile-friendly splash. Replaces the implicit redirect chain so the
+    user has a single visible tap target instead of three opaque redirects
+    in a row, which mobile browsers handle poorly on slow networks."""
+    # /welcome is public, so auth_middleware skipped user resolution — do it
+    # here so an already-signed-in user landing on the splash bounces straight in.
+    if auth.effective_mode(db) == "none" or auth.resolve_user(request, db):
+        return RedirectResponse("/")
+    title = html.escape(store.get(db, "app_title") or "Inv-Keep")
+    accent = html.escape(store.get(db, "brand_accent") or "#2f81f7")
+    emoji = html.escape(store.get(db, "brand_emoji") or "📦")
+    return HTMLResponse(
+        f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sign in · {title}</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="{accent}">
+<style>
+  html,body{{margin:0;padding:0;background:#0f1115;color:#e6e6e6;font-family:system-ui,-apple-system,sans-serif;
+    min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}}
+  .splash{{max-width:380px;width:100%;text-align:center;padding:2rem 1.25rem}}
+  .splash .mark{{font-size:4.5rem;line-height:1;margin-bottom:1rem}}
+  .splash h1{{font-size:1.5rem;margin:0 0 .35rem}}
+  .splash p{{margin:0 0 1.75rem;color:#9aa4b2}}
+  .splash a.btn{{display:block;padding:1rem 1.25rem;border-radius:14px;background:{accent};
+    color:#fff;text-decoration:none;font-weight:600;font-size:1.05rem;
+    -webkit-tap-highlight-color:transparent;touch-action:manipulation}}
+  .splash a.btn:active{{transform:scale(.98)}}
+  .splash small{{display:block;margin-top:1.25rem;color:#6b7280;font-size:.8rem}}
+</style></head><body><div class="splash">
+<div class="mark" aria-hidden="true">{emoji}</div>
+<h1>{title}</h1>
+<p>Tap below to sign in.</p>
+<a class="btn" href="/login">Sign in</a>
+<small>You'll be redirected to your identity provider.</small>
+</div></body></html>"""
     )
 
 

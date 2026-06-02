@@ -17,6 +17,7 @@ consume in middleware is lost to the route handler.
 """
 
 import hmac
+import html
 import secrets
 from urllib.parse import parse_qs
 
@@ -44,14 +45,27 @@ def issue(request) -> str:
     return tok
 
 
-def _failure_response(path: str):
+def _failure_response(path: str, referer: str = ""):
     if path.startswith("/api/"):
         return JSONResponse({"ok": False, "error": "csrf"}, status_code=403)
+    # Send the user back to the page they came from so a fresh CSRF token is
+    # minted and the form re-renders, rather than dead-ending here. Reject
+    # anything that isn't an obvious same-origin path — Location header
+    # smuggling and open redirects via Referer would otherwise be in play.
+    safe_back = "/"
+    if referer.startswith("/") and not referer.startswith("//"):
+        safe_back = referer
+    # The Referer string ultimately comes from the client; escape it before
+    # interpolating into HTML attributes so a hostile referer can't break out.
+    esc_back = html.escape(safe_back, quote=True)
     return HTMLResponse(
-        "<html><body style='font-family:system-ui;max-width:560px;margin:4rem auto;color:#333'>"
-        "<h2>Request rejected</h2><p>Your browser submitted a form without a valid CSRF token. "
-        "This usually means the page was stale — reload and try again.</p>"
-        "<p><a href='/'>← Back</a></p></body></html>",
+        "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
+        f"<meta http-equiv='refresh' content='2;url={esc_back}'></head>"
+        "<body style='font-family:system-ui;max-width:560px;margin:4rem auto;padding:0 1rem;color:#333'>"
+        "<h2>Page expired</h2><p>The page sat too long and its CSRF token aged out — "
+        "reloading you to a fresh copy.</p>"
+        f"<p><a href='{esc_back}'>Tap here</a> if the page doesn't reload on its own.</p>"
+        "</body></html>",
         status_code=403,
     )
 
@@ -114,10 +128,17 @@ class CSRFMiddleware:
               and submitted
               and hmac.compare_digest(str(submitted), str(expected)))
         if not ok:
-            response = _failure_response(path)
-            # If we consumed the body, replay it to the response (so its
-            # send() still works correctly — actually unrelated, but matter
-            # of hygiene: just send the response.)
+            referer = headers.get("referer", "")
+            back = ""
+            if referer:
+                # Strip scheme/host so the user only ever bounces same-origin.
+                try:
+                    from urllib.parse import urlparse
+                    p = urlparse(referer)
+                    back = p.path + (("?" + p.query) if p.query else "")
+                except Exception:
+                    back = ""
+            response = _failure_response(path, back)
             await response(scope, receive, send)
             return
 
