@@ -3,6 +3,27 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.12.1] — 2026-06-02
+- **Mobile sign-in is no longer a multi-reload guessing game.** Unauthed
+  GETs to an HTML page now land on a new **/welcome** splash with a single
+  "Sign in" tap target instead of an implicit `/` → `/login` → IdP →
+  `/auth/callback` → `/` redirect chain. On slow mobile networks the user
+  used to see a half-rendered page mid-redirect, hit reload, and end up
+  stuck; the splash gives them one stable thing to tap. API and non-GET
+  requests still get a plain 401 so XHR clients can detect the boundary.
+- **Auth'd HTML pages now refuse bfcache.** Every response with
+  `Content-Type: text/html` going through the auth middleware gets
+  `Cache-Control: no-store, must-revalidate, max-age=0` + `Pragma:
+  no-cache`. Stops mobile Safari + Android Chrome from restoring a stale
+  page out of memory with a CSRF token that no longer matches the live
+  session — the leading cause of "invalid CSRF" errors mid-shift.
+- **CSRF rejection page now self-heals.** Instead of dead-ending the user
+  on "Request rejected", the 403 page bounces them back to the page they
+  came from (Referer-derived, same-origin only, HTML-escaped) after a
+  short meta-refresh, so they land on a freshly minted token and can
+  retry. Open-redirect protected; CI regression test still asserts the
+  word "CSRF" appears so missing tokens still fail loudly.
+
 ## [1.12.0] — 2026-05-31
 - **Restore from a backup, in the UI.** Settings → Backup gains a "Restore
   from a backup" upload form (admin-only). The server validates the
