@@ -70,11 +70,13 @@ HOSTNAME_IN="$(ask "Public hostname (domain or IP)" "localhost")"
 APP_PORT="$(ask "Host port for direct access" "8000")"
 
 say ""
-say "HTTPS / TLS — choose how certificates are handled:"
-say "  ${DIM}1) Let's Encrypt   — automatic certs via the bundled Caddy proxy${RESET}"
-say "  ${DIM}2) My own cert     — bundled Caddy using your cert files (certs/cert.pem + key.pem)${RESET}"
-say "  ${DIM}3) Separate proxy  — no bundled proxy; your own nginx/Traefik/etc. handles TLS${RESET}"
-TLS_CHOICE="$(ask "Choose 1/2/3" "3")"
+say "HTTPS / TLS — how should certificates be handled?"
+say "  ${DIM}3) Your own reverse proxy  — DEFAULT. No bundled proxy; your existing${RESET}"
+say "  ${DIM}                             nginx/Traefik/Caddy/etc. terminates TLS.${RESET}"
+say "  ${DIM}Optional bundled Caddy proxy (only if you have NO reverse proxy already):${RESET}"
+say "  ${DIM}  1) Let's Encrypt  — Caddy auto-obtains/renews certs for a public domain${RESET}"
+say "  ${DIM}  2) My own cert    — Caddy serves your cert files (certs/cert.pem + key.pem)${RESET}"
+TLS_CHOICE="$(ask "Choose 3 (own proxy), or 1/2 to enable the bundled Caddy" "3")"
 USE_SSL=0; CADDY_CONFIG="./Caddyfile"; ACME_EMAIL="admin@${HOSTNAME_IN}"
 case "$TLS_CHOICE" in
   1)
@@ -107,7 +109,9 @@ APP_TITLE="$(ask "App title" "Inv-Keep")"
 CURRENCY="$(ask "Currency symbol" "$")"
 
 say ""
-say "${BOLD}3) Authentication (Authentik / OIDC)${RESET}"
+say "${BOLD}3) Authentication (OIDC — bring your own provider)${RESET}"
+say "${DIM}Inv-Keep ships no identity provider. To enable login, point it at your${RESET}"
+say "${DIM}own OIDC provider (Authentik, Entra, Okta, Keycloak, …).${RESET}"
 AUTH_MODE="none"; OIDC_DISCOVERY=""; OIDC_CLIENT_ID=""; OIDC_CLIENT_SECRET=""; OIDC_REDIRECT=""
 if yesno "Configure OIDC login now?" "n"; then
   AUTH_MODE="oidc"
@@ -164,9 +168,10 @@ fi
 
 if yesno "Build and start Inv-Keep now?" "y"; then
   if [ "$USE_SSL" = "1" ]; then
-    say "Starting with automatic HTTPS (Caddy)…"
+    say "Starting with the optional bundled Caddy proxy (--profile ssl)…"
     $COMPOSE --profile ssl up -d --build
   else
+    say "Starting the app only — no bundled proxy (point your own at port ${APP_PORT})…"
     $COMPOSE up -d --build
   fi
   ok "Inv-Keep is starting."

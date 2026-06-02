@@ -265,6 +265,41 @@ async def auth_middleware(request: Request, call_next):
     return response
 
 
+# Content-Security-Policy is intentionally lax: the app uses many inline
+# <script>/<style> blocks, so 'unsafe-inline' is required. img-src MUST allow the
+# OpenStreetMap tile servers or the Leaflet maps (transactions + map pages) break.
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: https://*.tile.openstreetmap.org; "
+    "connect-src 'self'; "
+    "object-src 'none'; "
+    "base-uri 'self'; "
+    "frame-ancestors 'none'; "
+    "form-action 'self'"
+)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Apply hardening headers to every response (HTML, API, static, errors)."""
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Content-Security-Policy", _CSP)
+    # HSTS only when the request actually arrived over HTTPS (directly or via a
+    # TLS-terminating proxy that sets X-Forwarded-Proto). Setting it on a plain
+    # HTTP LAN deployment would wrongly force the browser onto HTTPS.
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    if proto == "https":
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    return response
+
+
 # CSRF must sit INSIDE SessionMiddleware (so it can read scope['session'])
 # and OUTSIDE the auth/handler chain (so the body it replays reaches the
 # route handler). add_middleware adds to the FRONT of the stack, so the LAST
@@ -289,6 +324,7 @@ def ctx(request: Request, db: Session, **kwargs):
         "icon_choices": icons.ICON_CHOICES,
         "now": datetime.utcnow(),
         "csrf_token": csrf.issue(request),
+        "disable_auth": settings.disable_auth,
     }
     u = base["user"]
     base["can"] = lambda p: bool(u.get("is_admin")) or p in u.get("perms", set())

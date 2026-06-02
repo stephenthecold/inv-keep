@@ -68,8 +68,8 @@ Inv-Keep is configured in two layers:
 | Setting | Default | Notes |
 |---|---|---|
 | `auth_mode` | `none` | `none` / `oidc` / `forward`. |
-| `oidc_discovery_url` / `oidc_client_id` / `oidc_client_secret` / `oidc_redirect_url` | _(empty)_ | OIDC (Authentik/Entra) settings. |
-| `forward_auth_user_header` / `forward_auth_email_header` / `forward_auth_groups_header` | `x-authentik-*` | Header names trusted in forward-auth mode. |
+| `oidc_discovery_url` / `oidc_client_id` / `oidc_client_secret` / `oidc_redirect_url` | _(empty)_ | OIDC settings (works with Authentik, Entra, Okta, Keycloak, etc. — bring your own provider). |
+| `forward_auth_user_header` / `forward_auth_email_header` / `forward_auth_groups_header` | `x-authentik-*` | Header names trusted in forward-auth mode. The `x-authentik-*` defaults are just an example — adjust to whatever your reverse proxy injects. |
 | `rbac_default_role` | `Admin` | Role for IdP users with no group match. **Admin by default (permissive)** so OIDC can't lock you out — tighten to Viewer/Operator. |
 | `rbac_admin_emails` | _(empty)_ | Comma-separated emails always granted the Admin role. |
 | `rbac_auto_create` | `1` | Auto-create a user record on first IdP login. |
