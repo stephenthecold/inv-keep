@@ -35,11 +35,11 @@ docker compose pull && docker compose up -d
 ```
 
 `./data` survives container recreates and schema migrations run automatically
-on startup. Pin a version with `INV_KEEP_VERSION=v1.12.0` in `.env`.
+on startup. Pin a version with `INV_KEEP_VERSION=v1.12.2` in `.env`.
 For a back-up-first-then-upgrade recipe with rollback, see
 [docs/BACKUPS.md](docs/BACKUPS.md).
 
-## Backup + restore
+## Backup + Restore
 
 Three ways to get a consistent snapshot of `./data/`:
 
