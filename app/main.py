@@ -188,7 +188,29 @@ self.addEventListener('fetch', (e) => {
 """.strip()
 
 PUBLIC_PATHS = {"/welcome", "/login", "/auth/callback", "/logout", "/health", "/manifest.webmanifest",
-                "/sw.js", "/.well-known/assetlinks.json"}
+                "/sw.js", "/.well-known/assetlinks.json", "/kiosk/login"}
+
+# In-memory PIN-attempt throttle keyed by client IP. Single-process app, so a
+# dict is fine; matches the rest of the codebase (no Redis dependency).
+# Maps ip -> (failure_count, locked_until_epoch).
+_KIOSK_PIN_FAILS = {}
+_KIOSK_PIN_MAX_FAILS = 5
+
+# Paths a kiosk-PIN session is allowed to reach. Everything else returns 403
+# from auth_middleware, even when the Kiosk role technically has `view` —
+# `view` is needed for /, /api/cart*, and /transactions but not as a free pass
+# to /parts, /clients, /report, /map, etc.
+_KIOSK_ALLOWED_EXACT = {"/", "/transactions", "/logout"}
+_KIOSK_ALLOWED_PREFIXES = ("/api/cart", "/api/search", "/api/checkout", "/api/void")
+
+
+def _kiosk_allowed(path: str, method: str) -> bool:
+    if path in _KIOSK_ALLOWED_EXACT:
+        return True
+    for p in _KIOSK_ALLOWED_PREFIXES:
+        if path == p or path.startswith(p + "/") or path.startswith(p + "?"):
+            return True
+    return False
 
 _stop_event = threading.Event()
 
@@ -240,6 +262,20 @@ async def auth_middleware(request: Request, call_next):
                 return RedirectResponse("/welcome")
         return JSONResponse({"detail": "Unauthorized"}, status_code=401)
     request.state.user = user
+
+    # Kiosk sessions are limited to a tiny allowlist of paths regardless of
+    # their `view` permission — the role has `view` because /, /api/cart*, and
+    # /transactions all require it via required_perm(), but the operator
+    # behind a kiosk PIN should not see /parts, /clients, /report, /map, etc.
+    if user.get("is_kiosk") and not _kiosk_allowed(path, request.method):
+        if path.startswith("/api/"):
+            return JSONResponse({"ok": False, "error": "kiosk_restricted"}, status_code=403)
+        return HTMLResponse(
+            "<html><body style='font-family:system-ui;max-width:560px;margin:4rem auto;color:#333'>"
+            "<h2>Kiosk mode</h2><p>This page isn't available in kiosk charge-out mode. "
+            "<a href='/'>← Back to scan</a></p></body></html>",
+            status_code=403,
+        )
 
     # Permission enforcement
     perm = rbac.required_perm(path, request.method)
@@ -330,6 +366,19 @@ def ctx(request: Request, db: Session, **kwargs):
     base["can"] = lambda p: bool(u.get("is_admin")) or p in u.get("perms", set())
     base["msg"] = request.query_params.get("msg", "")
     base["ok"] = request.query_params.get("ok", "1") != "0"
+    # Roles for the admin impersonation dropdown in the header user menu.
+    # Cheap query (handful of rows). Real_is_admin gates rendering in the
+    # template — a session that's already impersonating shouldn't see it
+    # twice. We expose the real-admin flag explicitly so the template
+    # doesn't have to introspect session state.
+    base["real_is_admin"] = bool(u.get("is_admin") or u.get("is_impersonating"))
+    if base["real_is_admin"]:
+        base["impersonate_roles"] = [
+            r.name for r in db.query(Role).order_by(Role.name).all()
+            if r.name != "Admin"
+        ]
+    else:
+        base["impersonate_roles"] = []
     base.update(kwargs)
     return base
 
@@ -464,6 +513,22 @@ def welcome(request: Request, db: Session = Depends(get_db)):
     title = html.escape(store.get(db, "app_title") or "Inv-Keep")
     accent = html.escape(store.get(db, "brand_accent") or "#2f81f7")
     emoji = html.escape(store.get(db, "brand_emoji") or "📦")
+    kiosk_enabled = store.get_bool(db, "kiosk_enabled") and bool(store.get(db, "kiosk_pin"))
+    tok = html.escape(csrf.issue(request), quote=True)
+    err = html.escape(request.query_params.get("err", ""))
+    kiosk_block = ""
+    if kiosk_enabled:
+        err_html = f'<div class="err">{err}</div>' if err else ""
+        kiosk_block = f"""
+<div class="kiosk-sep"><span>or</span></div>
+<form class="kiosk-form" method="post" action="/kiosk/login" autocomplete="off">
+  <input type="hidden" name="_csrf" value="{tok}">
+  <label for="kiosk-pin">Kiosk PIN</label>
+  <input id="kiosk-pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" required>
+  {err_html}
+  <button type="submit">Enter charge-out mode</button>
+  <small>Limited mode: scan &amp; charge out only.</small>
+</form>"""
     return HTMLResponse(
         f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -483,12 +548,25 @@ def welcome(request: Request, db: Session = Depends(get_db)):
     -webkit-tap-highlight-color:transparent;touch-action:manipulation}}
   .splash a.btn:active{{transform:scale(.98)}}
   .splash small{{display:block;margin-top:1.25rem;color:#6b7280;font-size:.8rem}}
+  .kiosk-sep{{display:flex;align-items:center;gap:.75rem;margin:1.5rem 0 1rem;color:#6b7280;font-size:.85rem}}
+  .kiosk-sep::before,.kiosk-sep::after{{content:"";flex:1;height:1px;background:#26303d}}
+  .kiosk-form{{display:flex;flex-direction:column;gap:.5rem;text-align:left}}
+  .kiosk-form label{{font-size:.85rem;color:#9aa4b2}}
+  .kiosk-form input[type=password]{{padding:.85rem 1rem;border-radius:12px;border:1px solid #2a3340;
+    background:#161b22;color:#e6e6e6;font-size:1.15rem;letter-spacing:.25rem;text-align:center}}
+  .kiosk-form button{{margin-top:.4rem;padding:.9rem 1rem;border:0;border-radius:12px;background:#1f2730;
+    color:#e6e6e6;font-weight:600;font-size:1rem;cursor:pointer}}
+  .kiosk-form button:active{{transform:scale(.98)}}
+  .kiosk-form small{{color:#6b7280;margin-top:.25rem;text-align:center}}
+  .kiosk-form .err{{background:#3a1d22;border:1px solid #5a2a32;color:#fca5a5;padding:.5rem .75rem;
+    border-radius:8px;font-size:.85rem;text-align:center}}
 </style></head><body><div class="splash">
 <div class="mark" aria-hidden="true">{emoji}</div>
 <h1>{title}</h1>
 <p>Tap below to sign in.</p>
 <a class="btn" href="/login">Sign in</a>
 <small>You'll be redirected to your identity provider.</small>
+{kiosk_block}
 </div></body></html>"""
     )
 
@@ -532,7 +610,97 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
 @app.post("/logout")
 async def logout(request: Request):
     request.session.pop("user", None)
+    request.session.pop("kiosk", None)
+    request.session.pop("kiosk_started_at", None)
+    request.session.pop("impersonate_role", None)
+    return RedirectResponse("/welcome", status_code=303)
+
+
+def _client_ip(request: Request) -> str:
+    # X-Forwarded-For is fine to trust for rate-limit bucketing (worst case a
+    # spoofer just lengthens their own lockout). Falls back to direct client.
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+@app.post("/kiosk/login")
+async def kiosk_login(
+    request: Request,
+    pin: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Validate the configured kiosk PIN and grant a locked-down Kiosk
+    session. CSRF-protected via the global middleware (the /welcome page
+    issues the token). Throttled per-IP after _KIOSK_PIN_MAX_FAILS bad
+    attempts."""
+    import time as _time
+    if not store.get_bool(db, "kiosk_enabled"):
+        return RedirectResponse("/welcome", status_code=303)
+    expected = store.get(db, "kiosk_pin") or ""
+    if not expected:
+        return RedirectResponse("/welcome?err=Kiosk+is+enabled+but+no+PIN+is+set.", status_code=303)
+    ip = _client_ip(request)
+    now = _time.time()
+    fails, locked_until = _KIOSK_PIN_FAILS.get(ip, (0, 0))
+    if locked_until and now < locked_until:
+        wait = int(locked_until - now)
+        return RedirectResponse(f"/welcome?err=Too+many+attempts.+Try+again+in+{wait}s.", status_code=303)
+    submitted = (pin or "").strip()
+    import hmac as _hmac
+    if not submitted or not _hmac.compare_digest(submitted, expected.strip()):
+        fails += 1
+        cooldown = 0
+        if fails >= _KIOSK_PIN_MAX_FAILS:
+            mins = store.get_int(db, "kiosk_lockout_minutes", 5) or 5
+            cooldown = int(now + mins * 60)
+            fails = 0  # reset after locking
+        _KIOSK_PIN_FAILS[ip] = (fails, cooldown)
+        return RedirectResponse("/welcome?err=Incorrect+PIN.", status_code=303)
+    # Success — clear throttle, drop any stale OIDC session, install kiosk flag.
+    _KIOSK_PIN_FAILS.pop(ip, None)
+    request.session.pop("user", None)
+    request.session.pop("impersonate_role", None)
+    request.session["kiosk"] = True
+    request.session["kiosk_started_at"] = datetime.utcnow().isoformat()
+    audit.record(db, {"username": store.get(db, "kiosk_username") or "kiosk"},
+                 "kiosk.login", "kiosk", None, f"PIN session opened from {ip}")
+    db.commit()
     return RedirectResponse("/", status_code=303)
+
+
+@app.post("/impersonate")
+async def impersonate(
+    request: Request,
+    role: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Admin-only: assume another role's permissions for this session.
+    Posting role="" (or "stop") clears the override."""
+    user = current_user(request)
+    # Block when the request is already running under an impersonated identity:
+    # otherwise an admin who downgraded to Viewer would still see the dropdown
+    # and could chain switches. The "Stop" action below is allowed.
+    target = (role or "").strip()
+    if target.lower() in ("", "stop", "off", "none"):
+        if user.get("is_impersonating") or user.get("is_admin"):
+            request.session.pop("impersonate_role", None)
+        return redirect("/", "Stopped impersonating.")
+    if not user.get("is_admin"):
+        return JSONResponse({"detail": "Admin only"}, status_code=403)
+    role_row = db.query(Role).filter(Role.name == target).first()
+    if not role_row:
+        return redirect("/", f"Unknown role '{target}'.", ok=False)
+    # Refuse impersonating Admin — pointless and confusing (it's the same
+    # permission surface but with the banner permanently up).
+    if role_row.is_admin:
+        return redirect("/", "Impersonating another Admin role is a no-op.", ok=False)
+    request.session["impersonate_role"] = role_row.name
+    audit.record(db, user, "impersonate.start", "rbac", role_row.id,
+                 f"Admin {user.get('username','')} now viewing as {role_row.name}")
+    db.commit()
+    return redirect("/", f"Now viewing as {role_row.name}.")
 
 
 # ============================================================ scan page
@@ -1496,6 +1664,7 @@ def _txn_markers(txns, tz_name):
 
 @app.get("/transactions", response_class=HTMLResponse)
 def transactions_page(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request)
     # Exclude lines that still belong to an open / cancelled cart — they
     # aren't real history. Legacy rows with order_id=NULL stay visible.
     q = (
@@ -1504,7 +1673,17 @@ def transactions_page(request: Request, db: Session = Depends(get_db)):
         .filter((Order.id.is_(None)) | (Order.status == "submitted"))
     )
     month = request.query_params.get("month", "")
-    if month:
+    if user.get("is_kiosk"):
+        # Kiosk sessions only see the past 24h of kiosk-submitted charge-outs.
+        # The month query string is ignored — broader access requires signing in.
+        kiosk_username = store.get(db, "kiosk_username") or "kiosk"
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+        q = q.filter(
+            Transaction.created_at >= cutoff,
+            Transaction.scanned_by == kiosk_username,
+        )
+        month = ""
+    elif month:
         try:
             year, mon = (int(x) for x in month.split("-"))
             start, end = reports.month_bounds(year, mon)
@@ -2173,6 +2352,42 @@ def settings_auth(
     if auth_mode == "oidc":
         note += " Log out and back in to test it (break-glass: set DISABLE_AUTH=1 if locked out)."
     return redirect("/settings", note)
+
+
+@app.post("/settings/kiosk")
+def settings_kiosk(
+    request: Request,
+    kiosk_enabled: str = Form(""),
+    kiosk_pin: str = Form(""),
+    kiosk_username: str = Form("kiosk"),
+    kiosk_lockout_minutes: str = Form("5"),
+    db: Session = Depends(get_db),
+):
+    """Admin-only kiosk PIN settings. Enabling without a PIN is rejected so
+    the welcome page never shows a form that nothing can answer."""
+    user = current_user(request)
+    if not user.get("is_admin"):
+        return JSONResponse({"detail": "Admin only"}, status_code=403)
+    enabled = "1" if kiosk_enabled == "on" else "0"
+    pin = (kiosk_pin or "").strip()
+    if pin:
+        if not pin.isdigit() or len(pin) < 4 or len(pin) > 12:
+            return redirect("/settings", "Kiosk PIN must be 4–12 digits.", ok=False)
+        store.set(db, "kiosk_pin", pin)
+    if enabled == "1" and not (pin or store.get(db, "kiosk_pin")):
+        return redirect("/settings", "Set a PIN before enabling kiosk mode.", ok=False)
+    store.set(db, "kiosk_enabled", enabled)
+    uname = (kiosk_username or "kiosk").strip() or "kiosk"
+    store.set(db, "kiosk_username", uname)
+    try:
+        mins = max(1, min(1440, int(kiosk_lockout_minutes or "5")))
+    except ValueError:
+        mins = 5
+    store.set(db, "kiosk_lockout_minutes", str(mins))
+    audit.record(db, user, "settings.kiosk", "settings", None,
+                 f"Kiosk mode {'enabled' if enabled == '1' else 'disabled'}")
+    db.commit()
+    return redirect("/settings", "Kiosk settings saved.")
 
 
 @app.post("/settings/email")

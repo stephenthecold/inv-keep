@@ -261,6 +261,29 @@
   <small>⚠️ If an OIDC misconfiguration locks you out, set the env var <code>DISABLE_AUTH=1</code> and restart to regain access, then fix the settings.</small>
 </section>
 
+<!-- ---------------- Kiosk PIN ---------------- -->
+{% if user.is_admin %}
+<section class="card">
+  <h2>Kiosk PIN charge-out</h2>
+  <p class="muted">When enabled, the sign-in screen shows a numeric PIN entry below the Sign-in button. Entering the PIN starts a locked-down "Kiosk" session that can scan and charge out, and view the last 24 hours of kiosk activity — and nothing else.</p>
+  <form method="post" action="/settings/kiosk" class="grid-form" autocomplete="off">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label class="check">Enable kiosk PIN on /welcome <input type="checkbox" name="kiosk_enabled" {% if cfg.kiosk_enabled == '1' %}checked{% endif %}></label>
+    <label>PIN (4–12 digits)
+      <input name="kiosk_pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="new-password" placeholder="{% if cfg.kiosk_pin %}•••••• (unchanged){% else %}not set{% endif %}">
+      <small class="muted">Leave blank to keep the current PIN.</small>
+    </label>
+    <label>Kiosk username (recorded on orders)
+      <input name="kiosk_username" value="{{ cfg.kiosk_username or 'kiosk' }}" maxlength="64">
+    </label>
+    <label>Lockout (minutes after 5 bad attempts)
+      <input name="kiosk_lockout_minutes" type="number" min="1" max="1440" value="{{ cfg.kiosk_lockout_minutes or '5' }}" style="width:6rem">
+    </label>
+    <button type="submit">Save kiosk settings</button>
+  </form>
+</section>
+{% endif %}
+
 <!-- ---------------- Email ---------------- -->
 <section class="card">
   <h2>Email</h2>

@@ -36,13 +36,48 @@ def build_oidc(db):
     return oauth
 
 
+def _kiosk_user(db):
+    """Synthetic auth dict for a PIN-authenticated kiosk session."""
+    username = store.get(db, "kiosk_username") or "kiosk"
+    return {
+        "username": username,
+        "email": "",
+        "role": "Kiosk",
+        "perms": {"view", "checkout"},
+        "is_admin": False,
+        "is_kiosk": True,
+    }
+
+
+def _maybe_impersonate(request, db, user):
+    """If the real user is an admin AND has set an impersonate role in the
+    session, return a downgraded dict. Otherwise return ``user`` unchanged."""
+    if not user or not user.get("is_admin"):
+        return user
+    target = (request.session.get("impersonate_role") or "").strip()
+    if not target:
+        return user
+    role = rbac._role_by_name(db, target)
+    if not role:
+        return user
+    return {
+        "username": user.get("username", ""),
+        "email": user.get("email", ""),
+        "role": role.name,
+        "perms": rbac.perms_for_role(role),
+        "is_admin": bool(role.is_admin),
+        "is_impersonating": True,
+        "real_role": user.get("role", "Admin"),
+    }
+
+
 def resolve_user(request, db):
     """Return the auth dict (username/email/role/perms/is_admin) or None."""
     mode = effective_mode(db)
 
     if mode == "none":
         # Single-user / break-glass: full admin.
-        return rbac.admin_dict("local")
+        return _maybe_impersonate(request, db, rbac.admin_dict("local"))
 
     if mode == "forward":
         header = store.get(db, "forward_auth_user_header") or "x-authentik-username"
@@ -50,16 +85,24 @@ def resolve_user(request, db):
         groups_header = store.get(db, "forward_auth_groups_header") or "x-authentik-groups"
         username = request.headers.get(header)
         if not username:
+            # Real proxy auth missed — but a kiosk PIN session may still be live.
+            if request.session.get("kiosk") and store.get_bool(db, "kiosk_enabled"):
+                return _kiosk_user(db)
             return None
         email = request.headers.get(email_header, "")
         raw_groups = request.headers.get(groups_header, "")
         groups = [g.strip() for g in raw_groups.replace(";", ",").split(",") if g.strip()]
-        return rbac.resolve_login(db, username, email, groups)
+        return _maybe_impersonate(request, db, rbac.resolve_login(db, username, email, groups))
 
     if mode == "oidc":
         sess = request.session.get("user")
         if not sess:
+            if request.session.get("kiosk") and store.get_bool(db, "kiosk_enabled"):
+                return _kiosk_user(db)
             return None
-        return rbac.resolve_login(db, sess.get("username", ""), sess.get("email", ""), sess.get("groups", []))
+        return _maybe_impersonate(
+            request, db,
+            rbac.resolve_login(db, sess.get("username", ""), sess.get("email", ""), sess.get("groups", [])),
+        )
 
     return None

@@ -3,6 +3,27 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.14.0] — 2026-06-02
+- **Kiosk PIN charge-out.** A new admin-configurable PIN can be entered on
+  the sign-in screen to start a locked-down "Kiosk" session — scan and
+  charge out only, plus a 24-hour rear-view of kiosk-submitted orders.
+  Designed for shared front-counter tablets where forcing every operator
+  through OIDC is impractical and signing in once as a human gives the
+  audit log the wrong attribution. PIN attempts are throttled per IP
+  (5 bad attempts → cooldown), the PIN is masked in the Settings UI like
+  other secrets, and toggling the feature off immediately drops live
+  kiosk sessions.
+- **Admin "View as…" impersonation.** Admins now get a role dropdown in
+  the header user menu that drops their session into another role's
+  permission set (Manager / Operator / Viewer / Kiosk) so they can
+  verify what each role actually sees without keeping a second test
+  account. A banner stays pinned across the top while impersonating
+  with a one-click Stop. Admin-only audited action; non-admins cannot
+  reach the route.
+- Built-in **Kiosk** role added to RBAC (`view` + `checkout`); the
+  /transactions handler now scopes its query to the last 24 hours and
+  the kiosk username when the request is from a kiosk session.
+
 ## [1.13.0] — 2026-06-02
 - **Security headers on every response.** Added `Content-Security-Policy`
   (lax — allows the app's inline scripts/styles, and OpenStreetMap tiles for the

@@ -147,6 +147,76 @@ jobs:
           assert esc in page, 'expected unicode-escaped <img payload in markers JSON'
           print('XSS payload only present as JSON-escaped data, not parseable HTML')
           "
+      - name: Kiosk PIN charge-out (feature smoke)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_kiosk.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+        run: |
+          python -c "
+          import re
+          from app.main import app
+          from app.database import SessionLocal
+          from app import settings_store as store
+          db = SessionLocal()
+          store.set(db, 'auth_mode', 'oidc')
+          store.set(db, 'oidc_discovery_url', 'https://x/.well-known/openid-configuration')
+          store.set(db, 'oidc_client_id', 'x')
+          store.set(db, 'kiosk_enabled', '1')
+          store.set(db, 'kiosk_pin', '1234')
+          db.commit(); db.close()
+          from fastapi.testclient import TestClient
+          c = TestClient(app, base_url='https://testserver')
+          r = c.get('/welcome'); assert 'Kiosk PIN' in r.text
+          tok = re.search(r'name=\"_csrf\" value=\"([^\"]+)\"', r.text).group(1)
+          # CSRF required
+          assert c.post('/kiosk/login', data={'pin': '1234'}, follow_redirects=False).status_code == 403
+          # Wrong PIN bounces back
+          r = c.post('/kiosk/login', data={'_csrf': tok, 'pin': 'wrong'}, follow_redirects=False)
+          assert r.status_code == 303 and 'Incorrect' in r.headers['location']
+          # Right PIN grants session
+          r = c.post('/kiosk/login', data={'_csrf': tok, 'pin': '1234'}, follow_redirects=False)
+          assert r.status_code == 303 and r.headers['location'] == '/'
+          # Scan page OK with banner
+          assert 'Kiosk charge-out mode' in c.get('/').text
+          # Locked-down: /parts, /settings, /users, /audit, /report, /map are 403
+          for p in ['/parts','/categories','/clients','/jobs','/settings','/users','/audit','/report','/map']:
+              assert c.get(p, follow_redirects=False).status_code == 403, p
+          assert c.get('/transactions').status_code == 200
+          # Disabling kiosk_enabled invalidates the live session
+          db = SessionLocal(); store.set(db, 'kiosk_enabled', '0'); db.commit(); db.close()
+          assert c.get('/', follow_redirects=False).status_code in (302, 303, 401)
+          print('kiosk PIN flow OK')
+          "
+      - name: Admin impersonation (feature smoke)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_imp.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import re
+          from fastapi.testclient import TestClient
+          from app.main import app
+          c = TestClient(app)
+          r = c.get('/'); tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', r.text).group(1)
+          # Admin sees the View as UI
+          assert 'View as' in r.text
+          # Impersonate Operator -> settings blocked
+          assert c.post('/impersonate', data={'_csrf': tok, 'role': 'Operator'}, follow_redirects=False).status_code == 303
+          assert c.get('/settings', follow_redirects=False).status_code == 403
+          assert 'Viewing as Operator' in c.get('/').text
+          # Stop -> back to admin
+          tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', c.get('/').text).group(1)
+          c.post('/impersonate', data={'_csrf': tok, 'role': 'stop'}, follow_redirects=False)
+          assert c.get('/settings').status_code == 200
+          # Impersonating Admin role rejected as no-op
+          r = c.post('/impersonate', data={'_csrf': tok, 'role': 'Admin'}, follow_redirects=False)
+          assert r.status_code == 303 and 'no-op' in r.headers['location']
+          # Unknown role rejected
+          r = c.post('/impersonate', data={'_csrf': tok, 'role': 'Bogus'}, follow_redirects=False)
+          assert r.status_code == 303 and 'Unknown' in r.headers['location']
+          print('impersonation flow OK')
+          "
       - name: Check JavaScript syntax
         run: node --check app/static/app.js
       - name: Lint shell installer

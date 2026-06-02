@@ -25,6 +25,12 @@ DEFAULT_ROLES = {
     "Manager":  {"perms": ["view", "checkout", "manage_items", "manage_clients", "view_audit"], "admin": False},
     "Operator": {"perms": ["view", "checkout"], "admin": False},
     "Viewer":   {"perms": ["view"], "admin": False},
+    # Kiosk role is granted automatically when a session authenticates via the
+    # kiosk PIN on /welcome. It must include `view` because required_perm()
+    # returns "view" for /, /api/cart*, and /transactions — without it the
+    # scan page itself 403s. The /transactions handler additionally restricts
+    # what a kiosk session sees (last 24h, kiosk-submitted only).
+    "Kiosk":    {"perms": ["view", "checkout"], "admin": False},
 }
 
 
