@@ -62,7 +62,22 @@
     <form method="post" action="/settings/branding/logo/remove"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="ghost" type="submit">Remove logo</button></form>
     {% endif %}
   </div>
-  <small>The app title, emoji/logo, accent colour and footer appear across the whole app. Max logo size 2 MB.</small>
+
+  <div class="subgroup">
+    <div>
+      <div class="muted">Favicon (browser tab + bookmark icon)</div>
+      {% if cfg.brand_favicon %}<img src="{{ cfg.brand_favicon }}" alt="favicon" style="height:32px;width:32px;background:#fff;border-radius:6px;padding:2px;object-fit:contain">{% else %}<span class="muted">none — the default app icon is used</span>{% endif %}
+    </div>
+    <form method="post" action="/settings/branding/favicon" enctype="multipart/form-data" class="filter">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="file" name="favicon" accept="image/png,image/jpeg,image/webp,image/gif,image/x-icon,image/vnd.microsoft.icon" required>
+      <button type="submit">Upload favicon</button>
+    </form>
+    {% if cfg.brand_favicon %}
+    <form method="post" action="/settings/branding/favicon/remove"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="ghost" type="submit">Remove favicon</button></form>
+    {% endif %}
+  </div>
+  <small>Logo appears in the header; favicon appears on the browser tab and as the home-screen icon. Max 2 MB logo, 512 KB favicon. SVG not accepted.</small>
 </section>
 
 <!-- ---------------- Printing ---------------- -->

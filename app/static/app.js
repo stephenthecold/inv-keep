@@ -687,3 +687,34 @@ document.addEventListener("click", async (e) => {
     e.target.outerHTML = '<span class="muted">voided</span>';
   }
 });
+
+// ---- mobile nav drawer (hamburger) ----
+(function () {
+  const toggle = document.querySelector(".nav-toggle");
+  const drawer = document.getElementById("nav-mobile");
+  const backdrop = document.querySelector(".nav-backdrop");
+  if (!toggle || !drawer) return;
+
+  const setOpen = (open) => {
+    document.body.classList.toggle("nav-open", open);
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  };
+
+  toggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setOpen(!document.body.classList.contains("nav-open"));
+  });
+
+  // Close after tapping any link or the logout button so the drawer doesn't
+  // sit open over the next page if it loads instantly from cache.
+  drawer.addEventListener("click", (e) => {
+    const t = e.target.closest("a, button");
+    if (t) setTimeout(() => setOpen(false), 60);
+  });
+
+  if (backdrop) backdrop.addEventListener("click", () => setOpen(false));
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && document.body.classList.contains("nav-open")) setOpen(false);
+  });
+})();

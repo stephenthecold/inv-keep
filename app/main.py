@@ -2067,6 +2067,36 @@ def settings_branding_logo_remove(request: Request, db: Session = Depends(get_db
     return redirect("/settings", "Logo removed.")
 
 
+@app.post("/settings/branding/favicon")
+async def settings_branding_favicon(request: Request, favicon: UploadFile = File(...), db: Session = Depends(get_db)):
+    # Mirrors the logo upload's allowlist — SVG deliberately excluded to keep
+    # /uploads/ free of script-executing assets served from this origin.
+    allowed = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp",
+               "image/gif": ".gif", "image/x-icon": ".ico",
+               "image/vnd.microsoft.icon": ".ico"}
+    ext = allowed.get(favicon.content_type)
+    if not ext:
+        return redirect("/settings", "Unsupported favicon format (use PNG, JPG, WEBP, GIF or ICO).", ok=False)
+    data = await favicon.read()
+    if len(data) > 512 * 1024:
+        return redirect("/settings", "Favicon too large (max 512 KB).", ok=False)
+    fname = f"favicon{ext}"
+    with open(os.path.join(UPLOAD_DIR, fname), "wb") as fh:
+        fh.write(data)
+    store.set(db, "brand_favicon", f"/uploads/{fname}?v={secrets.token_hex(4)}")
+    audit.record(db, current_user(request), "settings.branding_favicon", "settings", None, "Uploaded favicon")
+    db.commit()
+    return redirect("/settings", "Favicon uploaded.")
+
+
+@app.post("/settings/branding/favicon/remove")
+def settings_branding_favicon_remove(request: Request, db: Session = Depends(get_db)):
+    store.set(db, "brand_favicon", "")
+    audit.record(db, current_user(request), "settings.branding_favicon", "settings", None, "Removed favicon")
+    db.commit()
+    return redirect("/settings", "Favicon removed.")
+
+
 @app.post("/settings/auth")
 def settings_auth(
     request: Request,

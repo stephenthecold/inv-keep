@@ -224,11 +224,43 @@ dialog.modal h2 { margin-top: 0; }
 /* wide tables scroll on small screens */
 .table-scroll { overflow-x: auto; }
 
+/* hamburger toggle button (mobile-only; hidden on desktop) */
+.nav-toggle { display: none; background: transparent; border: 0; padding: .55rem .4rem; cursor: pointer; margin-left: auto; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+.nav-toggle .hamburger-bar { display: block; width: 24px; height: 2px; background: var(--text); margin: 5px 0; border-radius: 2px; transition: transform .2s ease, opacity .15s ease; }
+body.nav-open .nav-toggle .hamburger-bar:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+body.nav-open .nav-toggle .hamburger-bar:nth-child(2) { opacity: 0; }
+body.nav-open .nav-toggle .hamburger-bar:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+/* mobile slide-in drawer + scrim (desktop hides both) */
+.nav-mobile, .nav-backdrop { display: none; }
+
 /* responsive / handheld (Android AIO scanners, phones) */
 @media (max-width: 720px) {
-  header { flex-wrap: wrap; gap: .5rem .9rem; padding: .6rem .8rem; }
-  nav { order: 3; width: 100%; overflow-x: auto; gap: .9rem; padding-bottom: .2rem; -webkit-overflow-scrolling: touch; }
-  nav a { white-space: nowrap; }
+  header { gap: .5rem; padding: .55rem .8rem; flex-wrap: nowrap; }
+  /* compress the top bar to brand + hamburger only — everything else moves into the drawer */
+  header > nav, header > .global-search, header > .account { display: none; }
+  .nav-toggle { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; }
+  /* keep the brand from eating the row */
+  .brand { flex: 1 1 auto; min-width: 0; }
+  .brand-title { font-size: 1rem; }
+
+  /* drawer: full height, slides in from the right; sized to feel native on phones */
+  .nav-mobile { display: flex; flex-direction: column; position: fixed; top: 0; right: 0; bottom: 0; width: 84vw; max-width: 340px; background: var(--panel); border-left: 1px solid var(--line); z-index: 100; padding: calc(env(safe-area-inset-top) + 3.6rem) 1rem calc(env(safe-area-inset-bottom) + 1.5rem); overflow-y: auto; transform: translateX(100%); transition: transform .22s ease-out; box-shadow: -12px 0 32px rgba(0,0,0,.45); }
+  body.nav-open .nav-mobile { transform: translateX(0); }
+  .nav-mobile a, .nav-mobile-logout button { display: block; padding: .95rem .85rem; color: var(--text); text-decoration: none; border-radius: 10px; font-size: 1.05rem; line-height: 1.2; }
+  .nav-mobile a:active, .nav-mobile a:hover { background: var(--panel-2); }
+  .nav-mobile-sep { height: 1px; background: var(--line); margin: .9rem .2rem; }
+  .nav-mobile-user { display: block; padding: .35rem .85rem .55rem; font-size: .8rem; }
+  .nav-mobile-logout { margin: 0; }
+  .nav-mobile-logout button { width: 100%; text-align: left; background: transparent; border: 0; font: inherit; cursor: pointer; color: var(--accent); }
+
+  /* scrim — sits under the drawer, dims the page, closes on tap */
+  .nav-backdrop { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 99; opacity: 0; pointer-events: none; transition: opacity .18s ease-out; }
+  body.nav-open .nav-backdrop { opacity: 1; pointer-events: auto; }
+  /* lock body scroll while drawer is open so taps inside don't drag the page */
+  body.nav-open { overflow: hidden; }
+
+  /* existing mobile tweaks for body content */
   main { padding: 1rem .8rem 4rem; }
   .page-head { flex-wrap: wrap; }
   .scan-bar { flex-direction: column; align-items: stretch; }

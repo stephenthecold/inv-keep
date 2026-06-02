@@ -3,6 +3,22 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.12.2] — 2026-06-02
+- **Mobile top bar is no longer a wrapping mess.** Below 720px the
+  header collapses to brand + a hamburger button; the nav (Scan, Items,
+  Categories, Clients, Jobs, History, Report, Map, Audit), the account
+  links (Users, Settings, Log out) and the "signed in as …" line all
+  move into a right-side slide-in drawer with a tap-anywhere-else
+  backdrop. Desktop layout is untouched. Tap targets are sized for
+  thumbs (~3rem rows); drawer respects iOS safe-area insets so it
+  doesn't sit under the notch on PWA installs.
+- **Custom favicon.** Settings → Branding gains an "Upload favicon"
+  control that mirrors the logo upload (PNG/JPG/WEBP/GIF/ICO, 512 KB
+  cap, SVG rejected to avoid stored-XSS via /uploads/). When set, the
+  browser-tab icon and bookmark icon come from your upload; when unset
+  the default app icon is used. Audit-logged as
+  `settings.branding_favicon`.
+
 ## [1.12.1] — 2026-06-02
 - **Mobile sign-in is no longer a multi-reload guessing game.** Unauthed
   GETs to an HTML page now land on a new **/welcome** splash with a single
