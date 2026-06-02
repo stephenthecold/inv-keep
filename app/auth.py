@@ -2,8 +2,9 @@
 
 Modes:
   none    -> no login (trusted network / testing)
-  oidc    -> log in against Authentik (or any OpenID Connect provider)
-  forward -> trust X-authentik-* headers injected by a reverse-proxy outpost
+  oidc    -> log in against any OpenID Connect provider (Authentik, Entra, Okta, …)
+  forward -> trust authentication headers injected by a reverse proxy
+             (defaults are Authentik's x-authentik-* names; adjust per proxy)
 
 The env var DISABLE_AUTH=1 is a break-glass override that forces `none`, so a
 broken OIDC config can never permanently lock you out.

@@ -49,11 +49,12 @@ Use the bundled proxy but with **your own** cert/key:
 The `certs/*.pem` files are git-ignored. The installer's TLS option **2) My own
 cert** sets this up for you.
 
-## Behind your own reverse proxy (nginx / Traefik / Authentik outpost)
+## Behind your own reverse proxy (nginx / Traefik / Caddy / etc.)
 Skip the `ssl` profile, expose `APP_PORT`, and proxy to it. Forward
-`X-Forwarded-Proto: https` and `X-Forwarded-Host`. If you use Authentik's proxy
-outpost, set **Settings → Authentication → Forward-auth** and the app trusts the
-`X-authentik-*` headers.
+`X-Forwarded-Proto: https` and `X-Forwarded-Host`. If your proxy authenticates
+users and injects identity headers (e.g. an Authentik outpost), set
+**Settings → Authentication → Forward-auth** and point the header names at
+whatever your proxy sends (the `x-authentik-*` values are just the defaults).
 
 ## TLS for the PWA
 Installing the PWA / registering the service worker requires **HTTPS** (or

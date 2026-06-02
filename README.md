@@ -25,8 +25,17 @@ git clone https://github.com/stephenthecold/inv-keep.git && cd inv-keep && ./ins
 [docs/DEPLOY.md](docs/DEPLOY.md) for TLS modes (Let's Encrypt vs your-own-
 cert vs external proxy) and ghcr.io image-pull auth.
 
-The app starts with **no login** — sane for a trusted LAN. Set up auth
-under **Settings → Authentication** before exposing it.
+**TLS is bring-your-own by default.** The installer assumes you already run a
+reverse proxy (nginx/Traefik/Caddy/etc.) to terminate TLS, and the app is
+exposed on `APP_PORT` for it to proxy. A bundled Caddy proxy is available as an
+*optional* convenience (installer options 1/2 → `docker compose --profile ssl`)
+for hosts that have no proxy of their own — it's never installed unless you ask
+for it.
+
+The app starts with **no login** — sane for a trusted LAN. To enable login you
+must **bring your own OIDC provider** (Authentik, Entra, Okta, Keycloak, …);
+Inv-Keep does not ship an identity provider. Configure it under
+**Settings → Authentication** before exposing the app.
 
 ## Upgrade
 

@@ -134,7 +134,8 @@ scripts/make_icons.py  regenerate PWA icons (needs Pillow; results committed)
 
 ## Auth + RBAC (important)
 - Modes (UI-managed, stored in DB): `none` (everyone = local Admin), `oidc`
-  (Authentik/Entra/any OIDC), `forward` (proxy injects X-authentik-* headers).
+  (any OpenID Connect provider — Authentik/Entra/Okta/…), `forward` (proxy injects
+  identity headers; `x-authentik-*` names are the configurable defaults).
 - `resolve_user(request, db)` returns `{username, email, role, perms:set, is_admin}`.
   `auth.py` reads OIDC session / forward headers; `rbac.resolve_login()` finds-or-creates
   the `User`, picks a `Role` from **IdP group claim** (`oidc_group_role_map`, lines

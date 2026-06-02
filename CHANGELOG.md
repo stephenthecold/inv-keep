@@ -3,8 +3,26 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.13.0] — 2026-06-02
+- **Security headers on every response.** Added `Content-Security-Policy`
+  (lax — allows the app's inline scripts/styles, and OpenStreetMap tiles for the
+  maps), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: no-referrer`, and HSTS (only when the request arrives over
+  HTTPS). Closes the clickjacking / MIME-sniffing gap without breaking the UI.
+- **Break-glass auth bypass is now impossible to miss.** When `DISABLE_AUTH=1`
+  is set, a warning banner shows on *every* page (not just Settings), so the
+  recovery flag can't silently linger in production.
+- **Identity-provider wording generalized to OIDC.** UI, installer, and docs no
+  longer imply Authentik specifically — Inv-Keep works with any OpenID Connect
+  provider (Authentik, Entra, Okta, Keycloak, …) and you bring your own. The
+  `x-authentik-*` forward-auth header names remain the configurable defaults.
+- **Installer makes "bring your own reverse proxy" the obvious default** and
+  frames the bundled Caddy proxy as the optional convenience it has always been.
+- README now states plainly that TLS is bring-your-own by default and that login
+  requires your own OIDC provider. Minor doc/grammar tidy-ups.
+
 ## [1.12.2] — 2026-06-02
-- **Mobile top bar is no longer a wrapping mess.** Below 720px the
+- **Mobile top bar no longer wraps awkwardly.** Below 720px the
   header collapses to brand + a hamburger button; the nav (Scan, Items,
   Categories, Clients, Jobs, History, Report, Map, Audit), the account
   links (Users, Settings, Log out) and the "signed in as …" line all

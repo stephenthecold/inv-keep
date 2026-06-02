@@ -2,7 +2,7 @@
 
 Only the values needed to *bootstrap* the app (SESSION_SECRET, DATABASE_URL) and
 the break-glass DISABLE_AUTH flag stay in the environment. Everything else —
-including the auth mode and Authentik/OIDC config — lives here and is editable in
+including the auth mode and OIDC config — lives here and is editable in
 the Settings UI. The env AUTH_MODE / OIDC_* values are used only to seed the
 defaults on first run.
 """

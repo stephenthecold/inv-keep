@@ -217,7 +217,7 @@
     <label>Mode
       <select name="auth_mode" id="auth_mode" onchange="authMode()">
         <option value="none"    {% if cfg.auth_mode == 'none' %}selected{% endif %}>None (no login)</option>
-        <option value="oidc"    {% if cfg.auth_mode == 'oidc' %}selected{% endif %}>Authentik / OIDC (app logs you in)</option>
+        <option value="oidc"    {% if cfg.auth_mode == 'oidc' %}selected{% endif %}>OpenID Connect (OIDC) — app logs you in</option>
         <option value="forward" {% if cfg.auth_mode == 'forward' %}selected{% endif %}>Forward-auth (proxy/outpost headers)</option>
       </select>
     </label>
@@ -231,7 +231,7 @@
       <label class="wide">Redirect URL override (optional)
         <input name="oidc_redirect_url" value="{{ cfg.oidc_redirect_url }}" placeholder="leave blank to auto-detect">
       </label>
-      <p class="muted">Register this redirect URI in Authentik:<br><code>{{ request.url_for('auth_callback') }}</code></p>
+      <p class="muted">Register this redirect URI in your OIDC provider:<br><code>{{ request.url_for('auth_callback') }}</code></p>
     </div>
 
     <div class="subgroup" id="forward_auth_fields">
@@ -250,10 +250,10 @@
       <label class="wide">Always-admin emails (comma-separated) <input name="rbac_admin_emails" value="{{ cfg.rbac_admin_emails }}" placeholder="you@company.com"></label>
       <label>Groups claim (OIDC) <input name="oidc_groups_claim" value="{{ cfg.oidc_groups_claim }}"></label>
       <label>Groups header (forward-auth) <input name="forward_auth_groups_header" value="{{ cfg.forward_auth_groups_header }}"></label>
-      <label class="wide">Group → role map (one per line, e.g. <code>authentik-admins = Admin</code>)
+      <label class="wide">Group → role map (one per line, e.g. <code>developers = Admin</code>)
         <textarea name="oidc_group_role_map" rows="3" placeholder="netops = Manager&#10;techs = Operator&#10;everyone = Viewer">{{ cfg.oidc_group_role_map }}</textarea>
       </label>
-      <small class="wide">Manage the roles themselves under <a href="/users">Users &amp; roles</a>. Default role is <b>Admin</b> until you tighten it — set it to Viewer/Operator and map your admin group (or list admin emails) so you don't lock yourself out.</small>
+      <small class="wide">Manage the roles themselves under <a href="/users">Users &amp; roles</a>. Default role is <b>Admin</b> until you restrict it — set it to Viewer/Operator and map your admin group (or list admin emails) so you don't lock yourself out.</small>
     </div>
 
     <button type="submit">Save authentication</button>

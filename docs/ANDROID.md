@@ -65,8 +65,8 @@ repository secrets (otherwise an ephemeral test key is generated).
 ## HTTPS
 
 Browsers only allow PWA install / service workers over HTTPS (or `http://localhost`).
-Put Inv-Keep behind a TLS reverse proxy (Caddy, Traefik, nginx, or your Authentik
-proxy). Make sure the proxy forwards `X-Forwarded-Proto: https` so generated URLs
+Put Inv-Keep behind a TLS reverse proxy (Caddy, Traefik, nginx, or your
+authentication proxy). Make sure the proxy forwards `X-Forwarded-Proto: https` so generated URLs
 (OIDC callback, etc.) are correct.
 
 ## Tips for small screens

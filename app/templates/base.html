@@ -89,6 +89,7 @@
     {% if cfg.auth_mode == 'oidc' %}<form method="post" action="/logout" class="nav-mobile-logout"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button type="submit">Log out</button></form>{% endif %}
   </aside>
   <main>
+    {% if disable_auth %}<div class="flash bad" role="alert"><b>⚠️ DISABLE_AUTH is active</b> — all authentication is bypassed. This is a break-glass recovery setting; unset <code>DISABLE_AUTH</code> in the environment and restart before exposing this app.</div>{% endif %}
     {% if msg %}<div class="flash {{ 'good' if ok else 'bad' }}">{{ msg }}</div>{% endif %}
     {% block content %}{% endblock %}
   </main>

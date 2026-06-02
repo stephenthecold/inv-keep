@@ -45,7 +45,7 @@ def perms_for_role(role):
 
 
 def _parse_group_map(raw):
-    """Lines like 'authentik-admins = Admin' -> {'authentik-admins': 'Admin'}."""
+    """Lines like 'developers = Admin' -> {'developers': 'Admin'}."""
     mapping = {}
     for line in (raw or "").replace(";", "\n").splitlines():
         line = line.strip()
