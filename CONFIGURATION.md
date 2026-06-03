@@ -77,9 +77,49 @@ Inv-Keep is configured in two layers:
 | `oidc_group_role_map` | _(empty)_ | Lines `group = RoleName` mapping IdP groups → roles. |
 
 Roles & permissions themselves are managed under **Users & roles** (not the settings
-store): built-in Admin/Manager/Operator/Viewer + custom roles, each with the permission
-keys `view`, `checkout`, `manage_items`, `manage_clients`, `view_audit`,
-`manage_settings`, `manage_users`.
+store): built-in Admin/Manager/Operator/Viewer/**Kiosk** + custom roles. Permission
+keys (v1.21):
+
+| Key | Grants |
+|---|---|
+| `view` | Scan page, cart API, transactions / history |
+| `view_catalog` | Browse `/parts`, `/categories`, `/clients`, `/jobs`, `/labels`, `/map`, `/report` (read-only) |
+| `see_cost` | Reveal the "Our cost" column on `/parts` and the matching Add/Edit input |
+| `checkout` | Submit / void carts |
+| `manage_items` | Add/edit/archive/delete items + categories + per-item stock |
+| `manage_clients` | Add/edit/archive clients + jobs |
+| `manage_locations` | Add/edit/archive locations, run transfers, run per-location stocktake |
+| `view_audit` | Read the audit log |
+| `manage_settings` | Change settings (branding, email, printing, auth, kiosk, …) |
+| `manage_users` | Manage users + roles |
+
+Built-in defaults:
+
+- **Admin** — all perms (including admin flag = automatic-grants-everything-else).
+- **Manager** — view, view_catalog, see_cost, checkout, manage_items, manage_clients, manage_locations, view_audit.
+- **Operator** — view, view_catalog, checkout. *No see_cost* so charge-out only shows client price.
+- **Viewer** — view, view_catalog, see_cost, view_audit (read-only, including margin).
+- **Kiosk** — view, view_catalog, checkout. *No see_cost.* See the Kiosk PIN
+  section below for how the lockdown floor interacts with these perms.
+
+### Kiosk PIN
+| Setting | Default | Notes |
+|---|---|---|
+| `kiosk_enabled` | `0` | Turns the **Kiosk PIN** entry on the `/welcome` page on/off. |
+| `kiosk_pin` | _(unset)_ | 4–12-digit numeric PIN. Stored hashed; the Settings form shows `••••• (unchanged)` when set. |
+| `kiosk_username` | `kiosk` | Username recorded on orders / audit log entries opened in a kiosk-PIN session. |
+| `kiosk_location_id` | _(empty)_ | Optional default source location pre-selected on the cart for kiosk sessions. |
+| `kiosk_lockout_minutes` | `5` | Per-IP cool-off after 5 failed PIN attempts. |
+
+**Kiosk lockdown floor (v1.20.1+).** While the Kiosk role has only its
+built-in floor permissions (`{view, view_catalog, checkout}`), the kiosk
+session is restricted to a hardcoded allowlist: `/`, `/transactions`,
+`/parts`, `/categories`, `/clients`, `/jobs`, `/api/cart*`, `/api/search*`,
+`/api/checkout*`, `/api/void*`. POST endpoints on those paths still need
+the matching `manage_*` perm, so the floor is read-only. Grant the Kiosk
+role any additional permission under Users → Roles to lift the lockdown
+and let standard RBAC govern (used for letting a kiosk session add items
+during catalog data-entry).
 
 ### Email
 | Setting | Default | Notes |

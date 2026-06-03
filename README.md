@@ -2,9 +2,12 @@
 
 Self-hosted barcode charge-out tracker for MSPs. Scan items into a cart, set
 client + job once, submit — each order is auto-numbered (`ORD-YYYYMM-NNNN`)
-and feeds a monthly billing report. Custom items, walk-in clients, geo-
-tagged charge-outs, and a built-in restore-from-backup flow. SQLite, FastAPI,
-fits in one container.
+and feeds a monthly billing report. Stock is tracked **per location** (office,
+trucks, job-site cages) with atomic transfers and bulk per-location stocktake.
+A touch-first **category drill-down browser** organises the catalog; a
+**Kiosk PIN mode** locks shared front-desk devices to read-only catalog +
+charge-out. Custom items, walk-in clients, geo-tagged charge-outs, and a
+built-in restore-from-backup flow. SQLite, FastAPI, fits in one container.
 
 Releases are tagged (`vX.Y.Z`) with a [CHANGELOG.md](CHANGELOG.md) entry; the
 running version shows in the footer and under Settings.
@@ -44,9 +47,11 @@ docker compose pull && docker compose up -d
 ```
 
 `./data` survives container recreates and schema migrations run automatically
-on startup. Pin a version with `INV_KEEP_VERSION=v1.12.2` in `.env`.
+on startup. Pin a version with `INV_KEEP_VERSION=v1.21.0` in `.env`.
 For a back-up-first-then-upgrade recipe with rollback, see
-[docs/BACKUPS.md](docs/BACKUPS.md).
+[docs/BACKUPS.md](docs/BACKUPS.md). Settings → Version & updates also has a
+**Check for updates** button that compares the running version to the latest
+GitHub release.
 
 ## Backup + Restore
 
@@ -81,7 +86,7 @@ Full table of in-app settings: [CONFIGURATION.md](CONFIGURATION.md).
 | [docs/DEPLOY.md](docs/DEPLOY.md) | Hostname, ports, TLS modes, installer, ghcr.io auth |
 | [docs/BACKUPS.md](docs/BACKUPS.md) | Backup / restore / safe upgrade |
 | [docs/ANDROID.md](docs/ANDROID.md) | Android AIO scanner PWA + APK packaging |
-| [docs/PRINTING.md](docs/PRINTING.md) | Brother / DYMO / Zebra / Rollo label sizes |
+| [docs/PRINTING.md](docs/PRINTING.md) | Brother / DYMO / Zebra / Rollo / Epson / Brady label sizes |
 | [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md) | Architecture digest for contributors |
 
 ## License

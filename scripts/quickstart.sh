@@ -6,7 +6,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/stephenthecold/inv-keep/main/scripts/quickstart.sh | bash
 #
 # Or, pinned to a specific tag:
-#   curl -fsSL https://raw.githubusercontent.com/stephenthecold/inv-keep/v1.12.0/scripts/quickstart.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/stephenthecold/inv-keep/v1.21.0/scripts/quickstart.sh | bash
 #
 # Environment overrides:
 #   INV_KEEP_DIR    target directory  (default: ./inv-keep)
