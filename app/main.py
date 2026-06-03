@@ -2675,6 +2675,66 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
     )
 
 
+@app.get("/settings/check-update")
+def settings_check_update(request: Request, db: Session = Depends(get_db)):
+    """Compare our running version against the latest GitHub release.
+    Returns JSON: {current, latest, behind, url, error?}. Caches the
+    response for 5 minutes so a few impatient clicks don't burn through
+    the unauthenticated 60-req/hr GitHub rate limit. The app never
+    applies updates itself — that has to happen on the host."""
+    import json as _json
+    import time as _time
+    import urllib.request as _ur
+    import urllib.error as _ue
+
+    cache_raw = store.get(db, "_update_cache") or ""
+    cached = None
+    if cache_raw:
+        try:
+            cached = _json.loads(cache_raw)
+        except Exception:
+            cached = None
+    now = int(_time.time())
+    if cached and (now - int(cached.get("_at", 0))) < 300:
+        out = {k: v for k, v in cached.items() if not k.startswith("_")}
+        return JSONResponse(out)
+
+    out = {"current": __version__, "latest": "", "behind": False, "url": ""}
+    try:
+        req = _ur.Request(
+            "https://api.github.com/repos/stephenthecold/inv-keep/releases/latest",
+            headers={"Accept": "application/vnd.github+json",
+                     "User-Agent": "inv-keep-update-check"},
+        )
+        with _ur.urlopen(req, timeout=5) as r:
+            data = _json.loads(r.read().decode("utf-8"))
+        latest = (data.get("tag_name") or "").lstrip("v")
+        out["latest"] = data.get("tag_name") or ""
+        out["url"] = data.get("html_url") or ""
+        # Lexicographic-on-tuples version compare; "1.20.0" beats "1.19.0".
+        def _t(v):
+            try:
+                return tuple(int(x) for x in v.split("."))
+            except Exception:
+                return (0,)
+        out["behind"] = _t(latest) > _t(__version__) if latest else False
+    except _ue.HTTPError as e:
+        out["error"] = f"HTTP {e.code}"
+    except _ue.URLError as e:
+        out["error"] = str(e.reason)
+    except Exception as e:  # noqa: BLE001 - surface any other failure as a string
+        out["error"] = str(e)
+
+    cache_payload = dict(out)
+    cache_payload["_at"] = now
+    try:
+        store.set(db, "_update_cache", _json.dumps(cache_payload))
+        db.commit()
+    except Exception:
+        pass
+    return JSONResponse(out)
+
+
 @app.get("/settings/backup", name="settings_backup")
 def settings_backup(request: Request, db: Session = Depends(get_db)):
     """Admin-only: stream a tar.gz of every *.db (consistent online-snapshot via

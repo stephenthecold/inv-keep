@@ -1,0 +1,55 @@
+{# Shared left-hand navigation for /settings and /users. `active` is the
+   slug of the section currently displayed (general / branding / etc.); the
+   /settings template flips active via JS as the user clicks tabs, while
+   /users hard-codes "users" so the right item is highlighted on landing.
+
+   When current_path == "/settings" the sidebar items are in-page tabs
+   driven by data-tab — clicking them toggles section visibility without
+   a round-trip. From any other page (/users) they navigate to
+   /settings#section. The Users entry always goes to /users. #}
+<aside class="settings-nav" aria-label="Settings sections">
+  <nav>
+    {% set on_settings = (current_path == "/settings") %}
+    {% macro item(slug, label, icon='') %}
+      {% set href = "/settings#" + slug if not on_settings else "#" + slug %}
+      <a href="{{ href }}"
+         data-tab="{{ slug }}"
+         class="settings-nav-item {% if active == slug %}is-active{% endif %}">
+        {% if icon %}<span class="settings-nav-icon" aria-hidden="true">{{ icon }}</span>{% endif %}
+        <span>{{ label }}</span>
+      </a>
+    {% endmacro %}
+
+    <div class="settings-nav-group">
+      <div class="settings-nav-heading">App</div>
+      {{ item("general",  "General",        "⚙️") }}
+      {{ item("branding", "Branding",       "🎨") }}
+      {{ item("printing", "Printing",       "🖨️") }}
+      {{ item("android",  "Android (TWA)",  "📱") }}
+    </div>
+
+    <div class="settings-nav-group">
+      <div class="settings-nav-heading">Access</div>
+      <a href="/users" data-tab="users" class="settings-nav-item {% if active == 'users' %}is-active{% endif %}">
+        <span class="settings-nav-icon" aria-hidden="true">👥</span><span>Users</span>
+      </a>
+      <a href="/users#roles" data-tab="roles" class="settings-nav-item {% if active == 'roles' %}is-active{% endif %}">
+        <span class="settings-nav-icon" aria-hidden="true">🛡️</span><span>Roles / Groups</span>
+      </a>
+      {{ item("auth",  "Authentication", "🔐") }}
+      {{ item("kiosk", "Kiosk PIN",      "📟") }}
+    </div>
+
+    <div class="settings-nav-group">
+      <div class="settings-nav-heading">Notifications</div>
+      {{ item("email",  "Email",  "✉️") }}
+      {{ item("alerts", "Alerts", "🔔") }}
+    </div>
+
+    <div class="settings-nav-group">
+      <div class="settings-nav-heading">System</div>
+      {{ item("version", "Version & updates", "🆙") }}
+      {% if user.is_admin %}{{ item("backup", "Backup / restore", "💾") }}{% endif %}
+    </div>
+  </nav>
+</aside>
