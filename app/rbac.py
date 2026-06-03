@@ -10,7 +10,9 @@ from .models import Role, User
 
 # (key, human label) — the granular capabilities
 PERMISSIONS = [
-    ("view", "View inventory, reports & history"),
+    ("view", "View the scan / cart screen and history"),
+    ("view_catalog", "Browse items, categories, clients & jobs (read-only)"),
+    ("see_cost", "See our cost (margin) — not just client price"),
     ("checkout", "Scan / charge out & void"),
     ("manage_items", "Add/edit items & categories, restock"),
     ("manage_clients", "Manage clients & jobs"),
@@ -21,17 +23,25 @@ PERMISSIONS = [
 ]
 ALL_PERMS = [p[0] for p in PERMISSIONS]
 
+# Granted alongside any manage_* perm — if you can edit items, you can
+# obviously see them. Keeps backfill from stripping browse rights from
+# previously-customised non-Admin roles.
+_BROWSE_IMPLIED_BY = {"manage_items", "manage_clients", "manage_locations"}
+
 DEFAULT_ROLES = {
     "Admin":    {"perms": ALL_PERMS, "admin": True},
-    "Manager":  {"perms": ["view", "checkout", "manage_items", "manage_clients", "manage_locations", "view_audit"], "admin": False},
-    "Operator": {"perms": ["view", "checkout"], "admin": False},
-    "Viewer":   {"perms": ["view"], "admin": False},
-    # Kiosk role is granted automatically when a session authenticates via the
-    # kiosk PIN on /welcome. It must include `view` because required_perm()
-    # returns "view" for /, /api/cart*, and /transactions — without it the
-    # scan page itself 403s. The /transactions handler additionally restricts
-    # what a kiosk session sees (last 24h, kiosk-submitted only).
-    "Kiosk":    {"perms": ["view", "checkout"], "admin": False},
+    "Manager":  {"perms": ["view", "view_catalog", "see_cost", "checkout", "manage_items", "manage_clients", "manage_locations", "view_audit"], "admin": False},
+    # Operator does charge-out — they need to browse the catalog to find a
+    # part by name but should NOT see our cost (only client price).
+    "Operator": {"perms": ["view", "view_catalog", "checkout"], "admin": False},
+    # Viewer is the read-only audit role — sees everything including costs.
+    "Viewer":   {"perms": ["view", "view_catalog", "see_cost", "view_audit"], "admin": False},
+    # Kiosk role is granted automatically when a session authenticates via
+    # the kiosk PIN. It includes `view` (scan + cart pages) and
+    # `view_catalog` (browse items / categories / clients / jobs without
+    # editing) by default. It does NOT get `see_cost` so the "Our cost"
+    # column stays hidden on a shared front-desk device.
+    "Kiosk":    {"perms": ["view", "view_catalog", "checkout"], "admin": False},
 }
 
 
@@ -158,4 +168,17 @@ def required_perm(path, method):
         return "manage_items"
     if method == "POST" and (path.startswith("/clients") or path.startswith("/jobs")):
         return "manage_clients"
+    # Browsing the catalog (items, categories, clients, jobs) requires
+    # view_catalog rather than the bare `view` so a Kiosk role can be
+    # configured to see the catalog read-only without unlocking edits.
+    if method == "GET" and (
+        path.startswith("/parts")
+        or path.startswith("/categories")
+        or path.startswith("/clients")
+        or path.startswith("/jobs")
+        or path.startswith("/labels")
+        or path.startswith("/map")
+        or path.startswith("/report")
+    ):
+        return "view_catalog"
     return "view"

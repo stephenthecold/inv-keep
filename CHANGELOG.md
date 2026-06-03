@@ -3,6 +3,43 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.21.0] — 2026-06-04
+- **Label barcode is now centered.** The Code128 SVG was forced to
+  `width: 100%` which left-anchored the encoder's fixed-mm output, so
+  the barcode + barcode-digits text rendered hard against the left
+  edge of the label. Switch to height-driven scaling (`height: 100%;
+  width: auto; margin: 0 auto`) so the natural aspect ratio is kept
+  and the flex parent centers it horizontally.
+- **Cart-lines no longer bleed off narrow scanners.** Wrapped the
+  cart-lines table in a `table-scroll` container and tagged the
+  Barcode + Unit columns so they hide on phones; the qty input
+  shrinks to 4rem and row padding tightens. The remaining columns
+  (Icon · Part · Qty · Charge · ✕) fit a 360-dp Android handheld.
+- **Kiosk role can browse the catalog without seeing margin.** Two
+  new permissions:
+  - `view_catalog` — gates GET on `/parts`, `/categories`, `/clients`,
+    `/jobs`, `/labels`, `/map`, `/report`. Default Kiosk gets it; the
+    lockdown floor includes it so `+ Add item` and inline Edit / Stock
+    buttons stay hidden until `manage_items` is granted.
+  - `see_cost` — gates the "Our cost" column on `/parts` plus the
+    matching input on Add / Edit item and the Custom-item dialog.
+    Default Kiosk does NOT get it, so a shared front-desk device
+    shows client price only.
+- **Out-of-stock badge on `/parts` and in the cart-bar search.**
+  Items at qty 0 still appear in the catalog (they were never
+  auto-archived, despite the appearance) but now wear a small amber
+  "Out of stock" tag, and the cart-bar suggestion row dims +
+  strikes through the name so the operator sees it before scanning.
+- **Explicit archive / restore / delete on items.** New
+  `POST /parts/<id>/archive`, `/restore`, `/delete` routes plus
+  matching buttons in the Edit-item modal:
+  - Archive hides the item from the default catalog list (still
+    reachable via *Show archived*) without touching history.
+  - Restore flips the bit back when you open an archived item's
+    edit modal.
+  - Delete is permanent and refuses if any sale or transfer line
+    references the part — the error tells you to archive instead.
+
 ## [1.20.1] — 2026-06-04
 - **Kiosk role permissions now take effect.** The kiosk-PIN session was
   hardcoded to `{view, checkout}` and gated by a built-in path

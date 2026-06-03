@@ -17,9 +17,13 @@
     .label > * { flex: 0 0 auto; width: 100%; text-align: center; }
     .label-barcode { flex: 1 1 auto; min-height: 0; width: 100%; display: flex; align-items: center; justify-content: center; }
     {% if barcode_type == 'qr' %}
-    .label-barcode svg { height: 100%; width: auto; max-width: 100%; }
+    .label-barcode svg { display: block; height: 100%; width: auto; max-width: 100%; margin: 0 auto; }
     {% else %}
-    .label-barcode svg { width: 100%; height: auto; max-height: 100%; }
+    /* Code128: scale by height so the natural barcode aspect ratio is
+       preserved, then let the flex parent center it horizontally instead
+       of forcing width:100% which left-anchored the encoder's fixed-size
+       output and pushed the barcode + barcode-digits text to the left edge. */
+    .label-barcode svg { display: block; height: 100%; width: auto; max-width: 100%; max-height: 100%; margin: 0 auto; }
     {% endif %}
     .label-company { font-size: {{ [sub_pt, 6]|max }}pt; font-weight: 700; }
     .label-name { font-size: {{ [name_pt, 7]|max }}pt; font-weight: 700; line-height: 1.05; }

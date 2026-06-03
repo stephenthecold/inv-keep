@@ -204,16 +204,23 @@ _KIOSK_PIN_MAX_FAILS = 5
 
 # Paths a default-perm kiosk-PIN session is allowed to reach. Used as a
 # *lockdown floor* when the Kiosk role still carries only its built-in
-# permissions ({view, checkout}) — in that case the operator gets a tiny
-# allowlist regardless of `view` covering /parts etc. The moment an admin
-# adds any other permission to the Kiosk role (`view_audit`, `manage_items`,
-# …), this floor is dropped and standard rbac takes over so the customized
-# permissions actually apply. See _kiosk_lockdown_active().
+# permissions ({view, view_catalog, checkout}). The catalog browse paths
+# (/parts, /categories, /clients, /jobs) are gated by view_catalog in
+# rbac.required_perm and live behind the lockdown too — kiosks can
+# browse the catalog read-only, but POSTs still need manage_items /
+# manage_clients. The moment an admin adds any other permission to the
+# Kiosk role (manage_items, view_audit, manage_settings, …), the
+# lockdown lifts and standard rbac takes over. See
+# _kiosk_lockdown_active().
 _KIOSK_ALLOWED_EXACT = {"/", "/transactions", "/logout"}
-_KIOSK_ALLOWED_PREFIXES = ("/api/cart", "/api/search", "/api/checkout", "/api/void")
+_KIOSK_ALLOWED_PREFIXES = (
+    "/api/cart", "/api/search", "/api/checkout", "/api/void",
+    "/parts", "/categories", "/clients", "/jobs",
+)
 # Floor perms = what the built-in Kiosk role ships with. If the user's
-# perms set equals this, the role hasn't been customized.
-_KIOSK_FLOOR_PERMS = frozenset({"view", "checkout"})
+# perms set equals this, the role hasn't been customized (and the
+# hardcoded path allowlist below is still in force).
+_KIOSK_FLOOR_PERMS = frozenset({"view", "view_catalog", "checkout"})
 
 
 def _kiosk_allowed(path: str, method: str) -> bool:
@@ -2171,6 +2178,59 @@ def part_label(part_id: int, request: Request, db: Session = Depends(get_db)):
     if not part:
         return redirect("/parts", "Part not found.", ok=False)
     return templates.TemplateResponse("label.html", ctx(request, db, base_path=f"/parts/{part_id}/label", **_label_ctx(request, db, [part], False)))
+
+
+@app.post("/parts/{part_id}/archive")
+def parts_archive(part_id: int, request: Request, db: Session = Depends(get_db)):
+    """Hide a part from the default catalog view. Stock stays untouched —
+    archive is reversible and does not affect history. Used for retiring
+    discontinued SKUs without losing their transactions."""
+    part = db.get(Part, part_id)
+    if not part:
+        return redirect("/parts", "Part not found.", ok=False)
+    part.archived = True
+    audit.record(db, current_user(request), "part.archive", "part", part.id,
+                 f"Archived {part.name}")
+    db.commit()
+    return redirect("/parts?archived=1", f"Archived {part.name}.")
+
+
+@app.post("/parts/{part_id}/restore")
+def parts_restore(part_id: int, request: Request, db: Session = Depends(get_db)):
+    part = db.get(Part, part_id)
+    if not part:
+        return redirect("/parts", "Part not found.", ok=False)
+    part.archived = False
+    audit.record(db, current_user(request), "part.restore", "part", part.id,
+                 f"Restored {part.name}")
+    db.commit()
+    return redirect("/parts", f"Restored {part.name}.")
+
+
+@app.post("/parts/{part_id}/delete")
+def parts_delete(part_id: int, request: Request, db: Session = Depends(get_db)):
+    """Permanent deletion. Refused when the part has any history (sales /
+    transfers / stock rows) — archive is the right path for those. Used
+    to roll back a freshly-created item that was a typo / duplicate."""
+    part = db.get(Part, part_id)
+    if not part:
+        return redirect("/parts", "Part not found.", ok=False)
+    txn_n = db.query(Transaction).filter(Transaction.part_id == part.id).count()
+    tl_n = db.query(TransferLine).filter(TransferLine.part_id == part.id).count()
+    if txn_n or tl_n:
+        return redirect(
+            "/parts",
+            f"Can't delete {part.name}: it has {txn_n} sale(s) + {tl_n} transfer line(s). Archive it instead so history stays intact.",
+            ok=False,
+        )
+    name = part.name
+    # Clean up the empty stock_levels rows so the cascade is explicit.
+    db.query(StockLevel).filter(StockLevel.part_id == part.id).delete()
+    db.delete(part)
+    audit.record(db, current_user(request), "part.delete", "part", part_id,
+                 f"Deleted {name}")
+    db.commit()
+    return redirect("/parts", f"Deleted {name}.")
 
 
 @app.get("/labels", response_class=HTMLResponse)

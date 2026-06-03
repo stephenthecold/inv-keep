@@ -34,7 +34,7 @@
     {% if can('manage_items') %}
     <a class="btn ghost {% if manage %}is-active{% endif %}" href="/parts{{ qs(manage=(not manage)) }}">{% if manage %}✓ Managing{% else %}Manage{% endif %}</a>
     {% endif %}
-    <button class="add-btn" onclick="openModal('add-part')">+ Add item</button>
+    {% if can('manage_items') %}<button class="add-btn" onclick="openModal('add-part')">+ Add item</button>{% endif %}
   </div>
 </div>
 
@@ -136,7 +136,7 @@
     <div class="table-scroll">
     <table class="lines items-table">
       <thead>
-        <tr><th></th><th>Name</th><th>Barcode</th>{% if view == 'all' %}<th>Category</th>{% endif %}<th class="num">On hand</th><th class="num">Our cost</th><th class="num">Client price</th><th class="actions-col">Actions</th></tr>
+        <tr><th></th><th>Name</th><th>Barcode</th>{% if view == 'all' %}<th>Category</th>{% endif %}<th class="num">On hand</th>{% if can('see_cost') %}<th class="num">Our cost</th>{% endif %}<th class="num">Client price</th><th class="actions-col">Actions</th></tr>
       </thead>
       <tbody>
         {% set ns = namespace(last_cat=-1) %}
@@ -155,6 +155,7 @@
           {% if view == 'all' %}<td>{{ cat_names.get(p.category_id, '') }}</td>{% endif %}
           <td class="num {% if p.quantity_on_hand <= 0 %}low{% endif %}">
             {{ p.quantity_on_hand }}
+            {% if p.quantity_on_hand <= 0 %}<span class="tag oos-tag" title="Out of stock — restock or archive">Out of stock</span>{% endif %}
             {% set chips = part_stock.get(p.id, []) %}
             {% if chips %}
             <div class="muted" style="font-size:.75rem;font-weight:normal;margin-top:.15rem;text-align:left">
@@ -162,20 +163,22 @@
             </div>
             {% endif %}
           </td>
-          <td class="num">{{ p.unit_cost | money(cfg.currency) }}</td>
+          {% if can('see_cost') %}<td class="num">{{ p.unit_cost | money(cfg.currency) }}</td>{% endif %}
           <td class="num">{{ p.unit_price | money(cfg.currency) }}</td>
           <td class="actions-col">
             <div class="item-actions">
+              {% if can('manage_items') %}
               <button type="button" class="edit-part"
                 data-id="{{ p.id }}" data-name="{{ p.name }}" data-icon="{{ p.icon }}" data-image="{{ p.image }}"
                 data-description="{{ p.description }}" data-category="{{ p.category_id if p.category_id is not none else '' }}"
                 data-cost="{{ '%.2f'|format(p.unit_cost) }}" data-price="{{ '%.2f'|format(p.unit_price) }}"
                 data-threshold="{{ p.low_stock_threshold if p.low_stock_threshold is not none else '' }}"
-                data-active="{{ '1' if p.active else '0' }}" data-barcode="{{ p.barcode }}" data-type="{{ p.type }}">Edit</button>
+                data-active="{{ '1' if p.active else '0' }}" data-archived="{{ '1' if p.archived else '0' }}" data-barcode="{{ p.barcode }}" data-type="{{ p.type }}">Edit</button>
               <button type="button" class="manage-stock"
                 data-id="{{ p.id }}" data-name="{{ p.name }}"
                 data-total="{{ p.quantity_on_hand }}"
                 data-stock='{{ part_stock_full.get(p.id, []) | tojson }}'>Stock</button>
+              {% endif %}
             </div>
           </td>
         </tr>
@@ -206,7 +209,7 @@
       <select name="type"><option value="bulk">Bulk (qty by SKU)</option><option value="unique">Unique (one item)</option></select>
     </label>
     <label>Category <select name="category_id">{{ category_options(current_cat.id if current_cat else '') }}</select></label>
-    <label>Our cost <input name="unit_cost" type="number" step="0.01" value="0" id="add-cost"></label>
+    {% if can('see_cost') %}<label>Our cost <input name="unit_cost" type="number" step="0.01" value="0" id="add-cost"></label>{% else %}<input type="hidden" name="unit_cost" value="0" id="add-cost">{% endif %}
     <label>Client price <input name="unit_price" type="number" step="0.01" value="0" id="add-price">
       {% if user.is_admin and cfg.default_markup_pct and cfg.default_markup_pct != '0' %}<small class="muted" id="add-markup-hint">auto = cost + {{ cfg.default_markup_pct }}% (edit to override)</small>{% endif %}
     </label>
@@ -238,7 +241,7 @@
       <label class="check">Remove photo <input type="checkbox" name="remove_image" id="ep-remove"></label>
       <label class="wide">Description <textarea name="description" id="ep-description" rows="2"></textarea></label>
       <label>Category <select name="category_id" id="ep-category">{{ category_options() }}</select></label>
-      <label>Our cost <input name="unit_cost" id="ep-cost" type="number" step="0.01"></label>
+      {% if can('see_cost') %}<label>Our cost <input name="unit_cost" id="ep-cost" type="number" step="0.01"></label>{% else %}<input type="hidden" name="unit_cost" id="ep-cost" value="0">{% endif %}
       <label>Client price <input name="unit_price" id="ep-price" type="number" step="0.01"></label>
       <label>Low-stock at <input name="low_stock_threshold" id="ep-threshold" type="number" placeholder="default"></label>
       <label class="check">Active <input type="checkbox" name="active" id="ep-active"></label>
@@ -248,6 +251,23 @@
       <button type="submit">Save changes</button>
     </menu>
   </form>
+  {# Lifecycle actions sit outside the edit form so each one POSTs to its
+     own endpoint without dragging the edit form's fields along. The
+     archive / restore / delete forms are populated by JS when the edit
+     dialog opens so they target the current item. #}
+  <hr style="border:0;border-top:1px solid var(--line);margin:1rem 0">
+  <div class="grid-form" style="gap:.5rem">
+    <form id="ep-archive-form" method="post" action="" class="inline" style="margin:0">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" class="ghost" id="ep-archive-btn">Archive</button>
+    </form>
+    <form id="ep-delete-form" method="post" action="" class="inline" style="margin:0"
+          onsubmit="return confirm('Permanently delete this item? Items with sale or transfer history cannot be deleted — archive them instead.')">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" class="danger">Delete</button>
+    </form>
+    <small class="muted" style="flex:1 1 100%">Archive hides the item from the catalog but keeps its history. Delete is for typos / duplicates with no history.</small>
+  </div>
 </dialog>
 
 {% if can('manage_items') %}
