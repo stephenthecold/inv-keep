@@ -211,7 +211,13 @@ dialog.modal h2 { margin-top: 0; }
 /* shopping-cart card on the scan page */
 .cart-card { border: 2px solid var(--accent); border-radius: 12px; padding: 1rem 1.25rem; margin: 1rem 0; background: var(--panel); }
 .cart-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: .75rem; flex-wrap: wrap; }
-.cart-actions { display: flex; gap: .5rem; }
+/* max-width caps the flex item to its parent's width so the buttons can
+   wrap; min-width: 0 lets it shrink below its content-min on narrow
+   screens (Android AIO scanners are often 400–540 dp). Without these
+   the Submit button stays anchored to the right and clips off the
+   viewport. flex-wrap then sends the spillover to a second line. */
+.cart-actions { display: flex; gap: .5rem; flex-wrap: wrap; min-width: 0; max-width: 100%; }
+.cart-actions button { flex: 1 1 auto; min-width: 0; }
 .cart-targets { margin-bottom: .75rem; }
 .cart-lines { margin-top: .5rem; }
 .cart-lines .line-qty { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: .25rem .5rem; }
@@ -355,6 +361,17 @@ body.nav-open .nav-toggle .hamburger-bar:nth-child(3) { transform: translateY(-7
   .grid-form label, .grid-form .subgroup { flex: 1 1 100%; }
   dialog.modal { width: 96%; padding: 1rem; }
   .charge-icon { font-size: 1.8rem; }
+
+  /* Cart action bar on narrow handhelds (Android AIO scanners ~360px):
+     the three buttons (+ Custom item / Cancel / Submit Order) used to
+     overflow with the Submit clipped against the right edge. Stretch
+     the whole row to span the card, then let each button take an equal
+     share so all three are fully visible on the first line — or wrap to
+     a second line if the device is even tighter. */
+  .cart-head { gap: .5rem; }
+  .cart-head > div:first-child { flex: 1 1 100%; }
+  .cart-actions { width: 100%; gap: .4rem; }
+  .cart-actions button { flex: 1 1 auto; min-width: 0; padding: .55rem .45rem; font-size: .9rem; }
 
   /* /parts touch tuning: bigger card hit-targets, bigger action buttons
      on item rows so thumbs don't fat-finger Edit vs Stock. */
