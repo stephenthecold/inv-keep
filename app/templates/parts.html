@@ -85,6 +85,87 @@
   </form>
 </dialog>
 
+<!-- Per-item Stock dialog: per-location qty table + Add / Move / Set actions.
+     Replaces the inline "+ Stock" chip with one focused workflow for managing
+     where a specific item lives. The three forms post to existing endpoints
+     so all changes flow through the same audit + stock_levels plumbing. -->
+<dialog id="manage-stock" class="modal">
+  <h2>Stock for <span id="ms-name"></span></h2>
+  <p class="muted">Total on hand: <b id="ms-total">0</b></p>
+  {% if not locations %}
+  <p class="flash bad">No active locations — add one under <a href="/locations">Inventory → Locations</a>.</p>
+  {% else %}
+  <table class="lines" style="margin-bottom:1rem">
+    <thead><tr><th>Location</th><th class="num">On hand</th></tr></thead>
+    <tbody id="ms-body"></tbody>
+  </table>
+
+  <details class="ms-action">
+    <summary>+ Add stock at a location</summary>
+    <form method="post" id="ms-add-form" action="" class="grid-form" style="margin-top:.75rem">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <label>Location
+        <select name="location_id" required>
+          {% for l in locations %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Amount to add
+        <input name="amount" type="number" min="1" value="10" required style="width:6rem">
+      </label>
+      <button type="submit">+ Add stock</button>
+    </form>
+  </details>
+
+  {% if locations | length > 1 %}
+  <details class="ms-action">
+    <summary>↔ Move stock between locations</summary>
+    <form method="post" id="ms-move-form" action="" class="grid-form" style="margin-top:.75rem">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <label>From
+        <select name="from_location_id" required>
+          {% for l in locations %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>To
+        <select name="to_location_id" required>
+          {% for l in locations %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Quantity
+        <input name="quantity" type="number" min="1" value="1" required style="width:6rem">
+      </label>
+      <label class="wide">Notes <input name="notes" placeholder="optional"></label>
+      <button type="submit">Move</button>
+    </form>
+  </details>
+  {% endif %}
+
+  <details class="ms-action">
+    <summary>Set absolute count (stocktake)</summary>
+    <form method="post" id="ms-set-form" action="" class="grid-form" style="margin-top:.75rem">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <label>Location
+        <select name="location_id" required>
+          {% for l in locations %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>New on-hand count
+        <input name="quantity" type="number" min="0" value="0" required style="width:6rem">
+      </label>
+      <label class="wide">Reason (optional)
+        <input name="reason" placeholder="e.g. June stocktake, breakage write-off">
+      </label>
+      <button type="submit">Set count</button>
+      <small class="muted">Records the prior count in the audit log so corrections are traceable.</small>
+    </form>
+  </details>
+  {% endif %}
+
+  <menu class="modal-actions" style="margin-top:1rem">
+    <button type="button" class="ghost" onclick="this.closest('dialog').close()">Close</button>
+  </menu>
+</dialog>
+
 <div class="table-scroll">
 <table class="lines">
   <thead>
@@ -119,18 +200,10 @@
             data-cost="{{ '%.2f'|format(p.unit_cost) }}" data-price="{{ '%.2f'|format(p.unit_price) }}"
             data-threshold="{{ p.low_stock_threshold if p.low_stock_threshold is not none else '' }}"
             data-active="{{ '1' if p.active else '0' }}" data-barcode="{{ p.barcode }}" data-type="{{ p.type }}">Edit</button>
-          <form method="post" action="/parts/{{ p.id }}/restock" class="restock-form" title="Add stock">
-            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-            <input name="amount" type="number" value="10" aria-label="restock amount">
-            {% if locations | length > 1 %}
-            <select name="location_id" aria-label="restock location">
-              {% for l in locations %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
-            </select>
-            {% elif locations %}
-            <input type="hidden" name="location_id" value="{{ locations[0].id }}">
-            {% endif %}
-            <button type="submit">+ Stock</button>
-          </form>
+          <button type="button" class="manage-stock"
+            data-id="{{ p.id }}" data-name="{{ p.name }}"
+            data-total="{{ p.quantity_on_hand }}"
+            data-stock='{{ part_stock_full.get(p.id, []) | tojson }}'>Stock</button>
         </div>
       </td>
     </tr>
@@ -163,6 +236,70 @@
     autoActive = false;
     var hint = document.getElementById('add-markup-hint');
     if (hint) hint.textContent = 'manual override — auto-fill disabled';
+  });
+})();
+</script>
+
+<script>
+// Per-item Stock modal: opens when a row's Stock button is clicked. Reads
+// the per-location ledger from the button's data-stock JSON, renders the
+// rows via textContent so user-controlled location/part names can never
+// break out as HTML, and re-points each form's action at the right part.
+(function(){
+  var dlg = document.getElementById('manage-stock');
+  if (!dlg) return;
+  var bodyEl = document.getElementById('ms-body');
+  var nameEl = document.getElementById('ms-name');
+  var totalEl = document.getElementById('ms-total');
+  var addForm = document.getElementById('ms-add-form');
+  var moveForm = document.getElementById('ms-move-form');
+  var setForm = document.getElementById('ms-set-form');
+
+  document.querySelectorAll('.manage-stock').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var id = btn.dataset.id;
+      var name = btn.dataset.name || '';
+      var total = btn.dataset.total || '0';
+      var stock = [];
+      try { stock = JSON.parse(btn.dataset.stock || '[]'); } catch (e) {}
+
+      nameEl.textContent = name;
+      totalEl.textContent = total;
+
+      if (bodyEl) {
+        bodyEl.innerHTML = '';
+        if (!stock.length) {
+          var tr = document.createElement('tr');
+          var td = document.createElement('td');
+          td.colSpan = 2;
+          td.className = 'muted';
+          td.textContent = 'No locations configured.';
+          tr.appendChild(td);
+          bodyEl.appendChild(tr);
+        } else {
+          stock.forEach(function(r){
+            var tr = document.createElement('tr');
+            var tdLoc = document.createElement('td');
+            tdLoc.textContent = r.loc_name;
+            tr.appendChild(tdLoc);
+            var tdQty = document.createElement('td');
+            tdQty.className = 'num';
+            if (!r.qty) tdQty.classList.add('low');
+            tdQty.textContent = r.qty;
+            tr.appendChild(tdQty);
+            bodyEl.appendChild(tr);
+          });
+        }
+      }
+
+      if (addForm) addForm.action = '/parts/' + id + '/restock';
+      if (moveForm) moveForm.action = '/parts/' + id + '/stock/move';
+      if (setForm) setForm.action = '/parts/' + id + '/stock/set';
+
+      // Open all three actions collapsed so the table is the focus.
+      dlg.querySelectorAll('details.ms-action').forEach(function(d){ d.open = false; });
+      dlg.showModal();
+    });
   });
 })();
 </script>

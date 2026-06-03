@@ -1579,20 +1579,27 @@ def parts_page(request: Request, db: Session = Depends(get_db)):
     stock_map = {}
     for sl in db.query(StockLevel).all():
         stock_map[(sl.part_id, sl.location_id)] = sl.quantity
-    # Per-part [(loc, qty), ...] for the template; skip zero rows so the chip
-    # row stays compact.
+    # Per-part [(loc, qty), ...] for the chips on the table; skip zero rows
+    # so the inline row stays compact.
     part_stock = {}
+    # Per-part full per-location array (includes zeros) — fed to the Stock
+    # modal as a JSON data-* attr so the modal can show every location.
+    part_stock_full = {}
     for p in parts:
         rows = []
+        full = []
         for loc in locations:
             qty = stock_map.get((p.id, loc.id), 0)
+            full.append({"loc_id": loc.id, "loc_name": loc.name, "qty": qty})
             if qty:
                 rows.append((loc, qty))
         part_stock[p.id] = rows
+        part_stock_full[p.id] = full
     return templates.TemplateResponse(
         "parts.html",
         ctx(request, db, parts=parts, categories=cats, cat_names=cat_names,
             show_archived=show_archived, locations=locations, part_stock=part_stock,
+            part_stock_full=part_stock_full,
             prefill=request.query_params.get("barcode", "")),
     )
 
@@ -1710,7 +1717,7 @@ def parts_restock(part_id: int, request: Request, amount: int = Form(...),
     if loc_id is None:
         loc_id = orders.default_location_id(db)
     if loc_id is None:
-        return redirect("/parts", "No active location to restock into — add one in Settings → Locations.", ok=False)
+        return redirect("/parts", "No active location to restock into — add one under Inventory → Locations.", ok=False)
     loc = db.get(Location, loc_id)
     if not loc or loc.archived or not loc.active:
         return redirect("/parts", "Pick an active location.", ok=False)
@@ -1723,6 +1730,91 @@ def parts_restock(part_id: int, request: Request, amount: int = Form(...),
                  f"+{amount} → {loc.name} (total {part.quantity_on_hand})")
     db.commit()
     return redirect("/parts", "Stock updated.")
+
+
+@app.post("/parts/{part_id}/stock/set")
+def parts_set_stock(
+    part_id: int,
+    request: Request,
+    location_id: int = Form(...),
+    quantity: int = Form(...),
+    reason: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Stocktake helper: set the absolute on-hand count for this part at the
+    given location. Adjusts Part.quantity_on_hand by the delta so the
+    aggregate counter stays equal to the sum of stock_levels."""
+    if quantity < 0:
+        return redirect("/parts", "Stocktake count cannot be negative.", ok=False)
+    part = db.get(Part, part_id)
+    if not part:
+        return redirect("/parts", "Part not found.", ok=False)
+    loc = db.get(Location, location_id)
+    if not loc or loc.archived or not loc.active:
+        return redirect("/parts", "Pick an active location.", ok=False)
+    sl = orders.ensure_stock_row(db, part.id, loc.id)
+    prior = sl.quantity
+    delta = quantity - prior
+    sl.quantity = quantity
+    part.quantity_on_hand += delta
+    if delta > 0 and part.low_stock_alerted:
+        part.low_stock_alerted = False
+    note = f" — {reason.strip()}" if reason.strip() else ""
+    audit.record(db, current_user(request), "part.stock_set", "part", part.id,
+                 f"{loc.name}: {prior} → {quantity} (Δ {delta:+d}){note}")
+    db.commit()
+    return redirect("/parts", f"Set {part.name} at {loc.name} to {quantity}.")
+
+
+@app.post("/parts/{part_id}/stock/move")
+def parts_move_stock(
+    part_id: int,
+    request: Request,
+    from_location_id: int = Form(...),
+    to_location_id: int = Form(...),
+    quantity: int = Form(...),
+    notes: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Single-line transfer for one specific part — drives the per-item
+    Stock modal's Move action so the operator doesn't have to leave /parts
+    to disperse stock. Writes a Transfer row identical to the multi-line
+    flow at /transfers/new so history is uniform."""
+    user = current_user(request)
+    if quantity <= 0:
+        return redirect("/parts", "Quantity must be positive.", ok=False)
+    if from_location_id == to_location_id:
+        return redirect("/parts", "Source and destination must differ.", ok=False)
+    part = db.get(Part, part_id)
+    src = db.get(Location, from_location_id)
+    dst = db.get(Location, to_location_id)
+    if not part or not src or not dst:
+        return redirect("/parts", "Unknown part or location.", ok=False)
+    if src.archived or dst.archived or not src.active or not dst.active:
+        return redirect("/parts", "Both locations must be active.", ok=False)
+    src_sl = orders.ensure_stock_row(db, part.id, src.id)
+    if src_sl.quantity < quantity:
+        return redirect("/parts",
+                        f"{src.name} only has {src_sl.quantity} of {part.name}.",
+                        ok=False)
+    dst_sl = orders.ensure_stock_row(db, part.id, dst.id)
+    transfer = Transfer(
+        from_location_id=src.id,
+        to_location_id=dst.id,
+        status="completed",
+        created_by=user.get("username", ""),
+        notes=notes.strip(),
+        completed_at=datetime.utcnow(),
+    )
+    db.add(transfer)
+    db.flush()
+    src_sl.quantity -= quantity
+    dst_sl.quantity += quantity
+    db.add(TransferLine(transfer_id=transfer.id, part_id=part.id, quantity=quantity))
+    audit.record(db, user, "transfer.complete", "transfer", transfer.id,
+                 f"{src.name} → {dst.name}: {quantity} × {part.name}")
+    db.commit()
+    return redirect("/parts", f"Moved {quantity} × {part.name}: {src.name} → {dst.name}.")
 
 
 def _label_ctx(request, db, parts, sheet):

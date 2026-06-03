@@ -292,6 +292,73 @@ jobs:
           assert c.get('/transfers').status_code == 200
           print('per-location stock + transfers flow OK')
           "
+      - name: Per-item Stock modal endpoints (feature smoke)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_stockui.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import re, json
+          from urllib.parse import unquote
+          from fastapi.testclient import TestClient
+          from app.main import app
+          from app.database import SessionLocal
+          from app.models import Part, Location, StockLevel, Transfer, AuditLog
+          c = TestClient(app)
+          r = c.get('/'); tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', r.text).group(1)
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'Widget', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2', 'quantity_on_hand': '10'})
+          c.post('/locations/add', data={'_csrf': tok, 'name': 'Truck 1'})
+          db = SessionLocal()
+          p_id = db.query(Part).first().id
+          truck_id = db.query(Location).filter(Location.name == 'Truck 1').first().id
+          main_id = db.query(Location).filter(Location.name == 'Main').first().id
+          db.close()
+          c.post('/parts/' + str(p_id) + '/restock', data={'_csrf': tok, 'amount': '4', 'location_id': str(truck_id)})
+          # Stock button renders with per-location JSON payload
+          page = c.get('/parts').text
+          m = re.search(r'class=\"manage-stock\"\s+data-id=\"' + str(p_id) + r'\"\s+data-name=\"[^\"]+\"\s+data-total=\"(\d+)\"\s+data-stock=\\'([^\\']+)\\'', page)
+          assert m, 'Stock button missing'
+          assert m.group(1) == '14'
+          payload = {r['loc_name']: r['qty'] for r in json.loads(m.group(2))}
+          assert payload == {'Main': 10, 'Truck 1': 4}, payload
+          # Set absolute count: Main 10 -> 7
+          r = c.post('/parts/' + str(p_id) + '/stock/set', data={'_csrf': tok, 'location_id': str(main_id), 'quantity': '7', 'reason': 'June stocktake'}, follow_redirects=False)
+          assert r.status_code == 303
+          db = SessionLocal()
+          lvl = {sl.location_id: sl.quantity for sl in db.query(StockLevel).filter(StockLevel.part_id == p_id).all()}
+          assert lvl[main_id] == 7 and lvl[truck_id] == 4
+          assert db.query(Part).first().quantity_on_hand == 11
+          ar = db.query(AuditLog).filter(AuditLog.action == 'part.stock_set').order_by(AuditLog.id.desc()).first()
+          assert ar and 'Main: 10' in ar.summary and 'stocktake' in ar.summary.lower()
+          db.close()
+          # Negative quantity rejected
+          r = c.post('/parts/' + str(p_id) + '/stock/set', data={'_csrf': tok, 'location_id': str(main_id), 'quantity': '-1'}, follow_redirects=False)
+          assert r.status_code == 303 and 'negative' in unquote(r.headers['location']).lower()
+          # Move endpoint: 3 from Main -> Truck writes a uniform Transfer row
+          r = c.post('/parts/' + str(p_id) + '/stock/move', data={'_csrf': tok, 'from_location_id': str(main_id), 'to_location_id': str(truck_id), 'quantity': '3'}, follow_redirects=False)
+          assert r.status_code == 303
+          db = SessionLocal()
+          lvl = {sl.location_id: sl.quantity for sl in db.query(StockLevel).filter(StockLevel.part_id == p_id).all()}
+          assert lvl[main_id] == 4 and lvl[truck_id] == 7
+          t = db.query(Transfer).order_by(Transfer.id.desc()).first()
+          assert t and t.from_location_id == main_id and t.to_location_id == truck_id
+          assert len(t.lines) == 1 and t.lines[0].part_id == p_id and t.lines[0].quantity == 3
+          db.close()
+          # Insufficient source rejected; no mutation
+          r = c.post('/parts/' + str(p_id) + '/stock/move', data={'_csrf': tok, 'from_location_id': str(main_id), 'to_location_id': str(truck_id), 'quantity': '99'}, follow_redirects=False)
+          assert r.status_code == 303 and 'only has' in unquote(r.headers['location']).lower()
+          db = SessionLocal()
+          lvl = {sl.location_id: sl.quantity for sl in db.query(StockLevel).filter(StockLevel.part_id == p_id).all()}
+          assert lvl[main_id] == 4 and lvl[truck_id] == 7
+          db.close()
+          # Same source/dest rejected
+          r = c.post('/parts/' + str(p_id) + '/stock/move', data={'_csrf': tok, 'from_location_id': str(main_id), 'to_location_id': str(main_id), 'quantity': '1'}, follow_redirects=False)
+          assert r.status_code == 303 and 'differ' in unquote(r.headers['location']).lower()
+          # Header now uses Inventory dropdown
+          assert 'id=\"inventory-menu\"' in page and 'id=\"items-menu\"' not in page
+          print('per-item stock modal + header reorg OK')
+          "
       - name: Check JavaScript syntax
         run: node --check app/static/app.js
       - name: Lint shell installer
