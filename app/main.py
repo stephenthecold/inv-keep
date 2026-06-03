@@ -19,9 +19,9 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import audit, auth, csrf, emailer, icons, labels, orders, rbac, reports
@@ -421,6 +421,65 @@ def category_path(db, cat):
     return " › ".join(reversed(parts))
 
 
+def _cat_index(db):
+    """Indexed category tree. Returns (by_parent, by_id, paths) where
+    `by_parent` maps parent_id (None for top-level) → list of Category
+    sorted by name, `by_id` maps id → Category, and `paths` maps id →
+    " › "-joined path string. One DB query, reused across the page so
+    every row doesn't re-walk the tree."""
+    cats = db.query(Category).all()
+    by_id = {c.id: c for c in cats}
+    by_parent = {}
+    for c in cats:
+        by_parent.setdefault(c.parent_id, []).append(c)
+    for k in by_parent:
+        by_parent[k].sort(key=lambda x: (x.name or "").lower())
+    paths = {}
+
+    def walk(parent_id, prefix):
+        for c in by_parent.get(parent_id, []):
+            paths[c.id] = (prefix + " › " + c.name) if prefix else c.name
+            walk(c.id, paths[c.id])
+
+    walk(None, "")
+    return by_parent, by_id, paths
+
+
+def _category_counts(db, by_parent, show_archived):
+    """Direct + subtree item counts. `direct` maps category_id (or None
+    for uncategorized) → count of parts directly assigned. `subtree`
+    maps category_id → count including every descendant; populated
+    branches are obvious at a glance from card labels."""
+    q = db.query(Part.category_id, func.count(Part.id))
+    if not show_archived:
+        q = q.filter(Part.archived == False)  # noqa: E712
+    direct = {cid: n for cid, n in q.group_by(Part.category_id).all()}
+    subtree = {}
+
+    def walk(cid):
+        total = direct.get(cid, 0)
+        for child in by_parent.get(cid, []):
+            total += walk(child.id)
+        subtree[cid] = total
+        return total
+
+    for top in by_parent.get(None, []):
+        walk(top.id)
+    return direct, subtree
+
+
+def _category_crumbs(cat, by_id):
+    """[(id, name), ...] from root → cat. Cycle-safe via seen-set."""
+    out = []
+    seen = set()
+    cur = cat
+    while cur is not None and cur.id not in seen:
+        seen.add(cur.id)
+        out.append((cur.id, cur.name))
+        cur = by_id.get(cur.parent_id) if cur.parent_id else None
+    return list(reversed(out))
+
+
 def redirect(path, msg="", ok=True):
     sep = "&" if "?" in path else "?"
     if msg:
@@ -729,7 +788,15 @@ def scan_page(request: Request, db: Session = Depends(get_db)):
         .filter(Location.active == True, Location.archived == False)  # noqa: E712
         .order_by(Location.name).all()
     )
-    recent = db.query(Transaction).order_by(Transaction.created_at.desc()).limit(15).all()
+    # Eager-load the relationships the template hits per row so we don't
+    # pay 15× N+1 trips on Part / Client / Job lookups when rendering.
+    recent = (db.query(Transaction)
+                .options(
+                    selectinload(Transaction.part),
+                    selectinload(Transaction.client),
+                    selectinload(Transaction.job),
+                )
+                .order_by(Transaction.created_at.desc()).limit(15).all())
     # Kiosk sessions optionally start with a pinned default location.
     user = current_user(request)
     default_loc = ""
@@ -1374,13 +1441,12 @@ def locations_page(request: Request, db: Session = Depends(get_db)):
     if not show_archived:
         q = q.filter(Location.archived == False)  # noqa: E712
     locs = q.order_by(Location.name).all()
-    # Total stock per location for the index page (cheap sum on stock_levels).
-    totals = {}
-    for loc in locs:
-        totals[loc.id] = (db.query(StockLevel)
-                          .filter(StockLevel.location_id == loc.id)
-                          .with_entities(func.coalesce(func.sum(StockLevel.quantity), 0))
-                          .scalar() or 0)
+    # One GROUP BY for all totals; cuts N round-trips on a long location
+    # list down to a single SUM-and-group query.
+    totals = {lid: n for lid, n in (
+        db.query(StockLevel.location_id, func.sum(StockLevel.quantity))
+          .group_by(StockLevel.location_id).all()
+    )}
     return templates.TemplateResponse(
         "locations.html",
         ctx(request, db, locations=locs, totals=totals, show_archived=show_archived),
@@ -1454,9 +1520,112 @@ def locations_restore(loc_id: int, request: Request, db: Session = Depends(get_d
     return redirect("/locations", f"Location '{loc.name}' restored.")
 
 
+@app.get("/locations/{loc_id}", response_class=HTMLResponse)
+def location_detail(loc_id: int, request: Request, db: Session = Depends(get_db)):
+    """What's at this location, with inputs to run a stocktake. By default
+    only parts with non-zero stock here are listed; ?zero=1 widens the
+    view to every non-archived part so an auditor can add stock for a
+    new SKU during the count without leaving the page."""
+    loc = db.get(Location, loc_id)
+    if not loc:
+        return redirect("/locations", "Location not found.", ok=False)
+    show_zero = request.query_params.get("zero") == "1"
+    # One outer-join so we get every Part + its row at this loc (None if
+    # never stocked here). Filter archived parts out — they'd just be
+    # noise during a count.
+    rows = (db.query(Part, StockLevel)
+              .outerjoin(StockLevel, and_(
+                  StockLevel.part_id == Part.id,
+                  StockLevel.location_id == loc.id,
+              ))
+              .filter(Part.archived == False)  # noqa: E712
+              .order_by(Part.name).all())
+    by_parent, _by_id, paths = _cat_index(db)
+    items = []
+    total = 0
+    for p, sl in rows:
+        qty = sl.quantity if sl else 0
+        if not show_zero and qty == 0:
+            continue
+        items.append({
+            "part": p, "qty": qty,
+            "cat_label": paths.get(p.category_id, "") if p.category_id else "",
+        })
+        total += qty
+    return templates.TemplateResponse(
+        "location_detail.html",
+        ctx(request, db, location=loc, items=items, total=total, show_zero=show_zero),
+    )
+
+
+@app.post("/locations/{loc_id}/stocktake")
+async def location_stocktake(loc_id: int, request: Request, db: Session = Depends(get_db)):
+    """Bulk per-location stocktake. Each input is named `qty_<part_id>` and
+    only rows where the new count differs from the current one are written.
+    Mirrors the per-part /parts/<id>/stock/set path so audit history reads
+    the same regardless of which UI started the adjustment."""
+    loc = db.get(Location, loc_id)
+    if not loc:
+        return redirect("/locations", "Location not found.", ok=False)
+    if loc.archived or not loc.active:
+        return redirect(f"/locations/{loc_id}", "Location is inactive — restore it first.", ok=False)
+    form = await request.form()
+    reason = (form.get("reason") or "").strip()
+    changes = []
+    for key, value in form.multi_items():
+        if not key.startswith("qty_"):
+            continue
+        try:
+            part_id = int(key[4:])
+            new_qty = int(value)
+        except (TypeError, ValueError):
+            continue
+        if new_qty < 0:
+            return redirect(f"/locations/{loc_id}",
+                            "Counts can't be negative.", ok=False)
+        part = db.get(Part, part_id)
+        if part is None or part.archived:
+            continue
+        sl = orders.ensure_stock_row(db, part.id, loc.id)
+        prior = sl.quantity
+        if prior == new_qty:
+            continue
+        delta = new_qty - prior
+        sl.quantity = new_qty
+        part.quantity_on_hand += delta
+        if delta > 0 and part.low_stock_alerted:
+            part.low_stock_alerted = False
+        changes.append((part, prior, new_qty, delta))
+
+    if not changes:
+        return redirect(f"/locations/{loc_id}",
+                        "Stocktake submitted — no counts changed.", ok=True)
+
+    note_suffix = f" — {reason}" if reason else ""
+    user_obj = current_user(request)
+    # Per-part rows for granular history…
+    for part, prior, new_qty, delta in changes:
+        audit.record(db, user_obj, "part.stock_set", "part", part.id,
+                     f"{loc.name}: {prior} → {new_qty} (Δ {delta:+d}) [audit]{note_suffix}")
+    # …plus one roll-up entry so the audit page shows the stocktake as a
+    # single discoverable event linked to the location.
+    audit.record(db, user_obj, "location.stocktake", "location", loc.id,
+                 f"Stocktake at {loc.name}: {len(changes)} item(s) adjusted{note_suffix}")
+    db.commit()
+    return redirect(f"/locations/{loc_id}",
+                    f"Stocktake recorded — {len(changes)} item(s) adjusted.")
+
+
 @app.get("/transfers", response_class=HTMLResponse)
 def transfers_page(request: Request, db: Session = Depends(get_db)):
+    # selectinload on the locations + lines so the index doesn't fire
+    # 200×3 follow-up queries when rendering names + line counts.
     rows = (db.query(Transfer)
+            .options(
+                selectinload(Transfer.from_location),
+                selectinload(Transfer.to_location),
+                selectinload(Transfer.lines),
+            )
             .order_by(Transfer.created_at.desc())
             .limit(200).all())
     return templates.TemplateResponse(
@@ -1564,21 +1733,111 @@ def transfer_detail(tid: int, request: Request, db: Session = Depends(get_db)):
 # ============================================================ parts
 @app.get("/parts", response_class=HTMLResponse)
 def parts_page(request: Request, db: Session = Depends(get_db)):
+    """Combined items + category browser. The same URL serves four
+    views — root (top-level categories), detail (a single category's
+    sub-cats + direct items), uncategorized, and the flat "all
+    items" power view — picked by the `cat` query param:
+
+      ?cat=        (or absent)        root
+      ?cat=<id>                       detail view of that category
+      ?cat=none                       parts with no category
+      ?cat=all                        flat list, grouped by category
+
+    The shape is mobile-first drill-down (cards + breadcrumb); CSS
+    rearranges into a two-pane layout on wider screens."""
     show_archived = request.query_params.get("archived") == "1"
-    q = db.query(Part)
+    cat_param = (request.query_params.get("cat") or "").strip()
+
+    by_parent, by_id, paths = _cat_index(db)
+    direct_counts, subtree_counts = _category_counts(db, by_parent, show_archived)
+
+    # Decide which view we're rendering. Unknown cat ids fall back to root
+    # rather than erroring — defends against stale bookmarks after a delete.
+    view = "root"
+    current_cat = None
+    if cat_param == "all":
+        view = "all"
+    elif cat_param == "none":
+        view = "uncategorized"
+    elif cat_param:
+        try:
+            sel_id = int(cat_param)
+        except ValueError:
+            sel_id = None
+        if sel_id is not None and sel_id in by_id:
+            view = "detail"
+            current_cat = by_id[sel_id]
+
+    base_q = db.query(Part)
     if not show_archived:
-        q = q.filter(Part.archived == False)  # noqa: E712
-    parts = q.order_by(Part.name).all()
-    cats = category_choices(db)
-    cat_names = {cid: category_path(db, c) for cid, _label, _d, c in cats}
+        base_q = base_q.filter(Part.archived == False)  # noqa: E712
+
+    manage_mode = (request.query_params.get("manage") == "1")
+
+    def _visible_children(parent_id):
+        """Children of `parent_id`, with empty branches hidden unless we're
+        in manage mode. Empties (subtree count 0) just add clutter when
+        browsing; in manage mode they need to be visible so admins can
+        rename / delete / fill them."""
+        kids = by_parent.get(parent_id, [])
+        if manage_mode:
+            return kids
+        return [c for c in kids if subtree_counts.get(c.id, 0) > 0]
+
+    sub_cats = []
+    crumbs = []
+    if view == "root":
+        items = []
+        sub_cats = _visible_children(None)
+    elif view == "detail":
+        # Auto-skip single-child chains: if the current category has no
+        # direct items and exactly one populated sub-category, fall through
+        # to it. Keep going until we hit a node that holds items, has
+        # multiple kids, or is a leaf. Lets a tree like
+        # Wiring → Ethernet → Cat 6 → 7ft land you straight at 7ft.
+        # Disabled in manage mode so admins can park on intermediates to
+        # rename / add siblings.
+        if not manage_mode:
+            seen = set()
+            while current_cat is not None and current_cat.id not in seen:
+                seen.add(current_cat.id)
+                if direct_counts.get(current_cat.id, 0) > 0:
+                    break
+                kids = _visible_children(current_cat.id)
+                if len(kids) == 1:
+                    current_cat = kids[0]
+                    continue
+                break
+        items = base_q.filter(Part.category_id == current_cat.id).order_by(Part.name).all()
+        sub_cats = _visible_children(current_cat.id)
+        crumbs = _category_crumbs(current_cat, by_id)
+    elif view == "uncategorized":
+        items = base_q.filter(Part.category_id.is_(None)).order_by(Part.name).all()
+    else:  # "all"
+        rows = base_q.order_by(Part.name).all()
+        # Sort so categories cluster, with uncategorized at the bottom.
+        def _key(p):
+            label = paths.get(p.category_id, "") if p.category_id else "~"
+            return (label.lower(), (p.name or "").lower())
+        items = sorted(rows, key=_key)
+
+    cats_flat = category_choices(db)
+    cat_names = paths  # already path-formatted, reuse for table column display
+
     locations = (db.query(Location)
                  .filter(Location.active == True, Location.archived == False)  # noqa: E712
                  .order_by(Location.name).all())
-    # Build a {(part_id, loc_id): qty} map for the per-location chips. Cheap —
-    # one query, then group in Python.
+    parts = items  # downstream stock-map builder references `parts`
+    # Scope the per-location stock query to just the parts we're rendering
+    # (root view shows no items, so we skip it entirely). Older versions
+    # pulled the whole stock_levels table on every page hit; this caps the
+    # query to the current page's parts.
     stock_map = {}
-    for sl in db.query(StockLevel).all():
-        stock_map[(sl.part_id, sl.location_id)] = sl.quantity
+    if parts:
+        part_ids = [p.id for p in parts]
+        for sl in (db.query(StockLevel)
+                     .filter(StockLevel.part_id.in_(part_ids)).all()):
+            stock_map[(sl.part_id, sl.location_id)] = sl.quantity
     # Per-part [(loc, qty), ...] for the chips on the table; skip zero rows
     # so the inline row stays compact.
     part_stock = {}
@@ -1595,11 +1854,35 @@ def parts_page(request: Request, db: Session = Depends(get_db)):
                 rows.append((loc, qty))
         part_stock[p.id] = rows
         part_stock_full[p.id] = full
+    total_count = sum(direct_counts.values())
+    uncategorized_count = direct_counts.get(None, 0)
+    def qs(cat=None, archived=None, manage=None):
+        """Build a /parts query string preserving the surrounding state.
+        Passing `None` for an arg means "keep current"; passing `""` or
+        `False` drops it. Lets templates link to the same page with one
+        toggle changed without re-listing every other param."""
+        out_cat = cat_param if cat is None else cat
+        out_arch = show_archived if archived is None else archived
+        out_manage = manage_mode if manage is None else manage
+        parts_qs = []
+        if out_cat:
+            parts_qs.append(f"cat={out_cat}")
+        if out_arch:
+            parts_qs.append("archived=1")
+        if out_manage:
+            parts_qs.append("manage=1")
+        return ("?" + "&".join(parts_qs)) if parts_qs else ""
+
     return templates.TemplateResponse(
         "parts.html",
-        ctx(request, db, parts=parts, categories=cats, cat_names=cat_names,
-            show_archived=show_archived, locations=locations, part_stock=part_stock,
-            part_stock_full=part_stock_full,
+        ctx(request, db, view=view, parts=parts, categories=cats_flat,
+            cat_names=cat_names, current_cat=current_cat, sub_cats=sub_cats,
+            crumbs=crumbs, direct_counts=direct_counts,
+            subtree_counts=subtree_counts, top_cats=by_parent.get(None, []),
+            uncategorized_count=uncategorized_count, total_count=total_count,
+            show_archived=show_archived, locations=locations,
+            part_stock=part_stock, part_stock_full=part_stock_full,
+            manage=manage_mode, cat_param=cat_param, qs=qs,
             prefill=request.query_params.get("barcode", "")),
     )
 
@@ -1877,7 +2160,19 @@ def labels_sheet(request: Request, db: Session = Depends(get_db)):
 # ============================================================ categories
 @app.get("/categories", response_class=HTMLResponse)
 def categories_page(request: Request, db: Session = Depends(get_db)):
-    return templates.TemplateResponse("categories.html", ctx(request, db, tree=category_choices(db)))
+    # Direct (non-archived) item counts per category, so the Categories page
+    # surfaces which buckets are actually populated.
+    cat_counts = {}
+    rows = (db.query(Part.category_id, func.count(Part.id))
+              .filter(Part.archived == False)  # noqa: E712
+              .group_by(Part.category_id).all())
+    for cid, n in rows:
+        if cid is not None:
+            cat_counts[cid] = n
+    return templates.TemplateResponse(
+        "categories.html",
+        ctx(request, db, tree=category_choices(db), cat_counts=cat_counts),
+    )
 
 
 @app.post("/categories/add")
@@ -2115,7 +2410,16 @@ def transactions_page(request: Request, db: Session = Depends(get_db)):
                 selected_loc = lid
             except ValueError:
                 pass
-    txns = q.order_by(Transaction.created_at.desc()).limit(500).all()
+    # selectinload prevents 500× per-row trips to fetch part / client / job /
+    # location relationships from the template (transactions.html touches
+    # all four). One query per relationship instead of one per row.
+    txns = (q.options(
+                selectinload(Transaction.part),
+                selectinload(Transaction.client),
+                selectinload(Transaction.job),
+                selectinload(Transaction.location),
+            )
+            .order_by(Transaction.created_at.desc()).limit(500).all())
     cfg = store.all_settings(db)
     markers = _txn_markers(txns, cfg.get("timezone") or "UTC")
     filter_locs = (db.query(Location)

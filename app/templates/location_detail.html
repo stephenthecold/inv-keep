@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-head">
+  <h1>{{ location.name }}
+    {% if location.archived %}<span class="tag muted">archived</span>
+    {% elif not location.active %}<span class="tag muted">inactive</span>{% endif %}
+  </h1>
+  <div class="head-actions">
+    <a class="btn ghost" href="/locations">← All locations</a>
+    {% if items or show_zero %}
+    <a class="btn ghost" href="/locations/{{ location.id }}{% if show_zero %}{% else %}?zero=1{% endif %}">{% if show_zero %}Hide zero-stock{% else %}Show all items (incl. zero){% endif %}</a>
+    {% endif %}
+  </div>
+</div>
+
+<nav class="crumb" aria-label="Breadcrumb">
+  <a href="/locations">Locations</a>
+  <span class="crumb-sep">›</span>
+  <span class="crumb-cur">{{ location.name }}</span>
+</nav>
+
+{% if location.notes %}<p class="muted">{{ location.notes }}</p>{% endif %}
+
+<div class="loc-summary">
+  <div class="loc-summary-cell"><span class="loc-summary-label">Total units here</span><span class="loc-summary-value">{{ total }}</span></div>
+  <div class="loc-summary-cell"><span class="loc-summary-label">Distinct SKUs</span><span class="loc-summary-value">{{ items | length }}</span></div>
+</div>
+
+{% if not items %}
+  {% if show_zero %}
+  <p class="empty-msg">No items in the catalog. Add one under <a href="/parts">Items</a>.</p>
+  {% else %}
+  <p class="empty-msg">Nothing stocked here yet. <a href="/locations/{{ location.id }}?zero=1">Show all items</a> to add stock, or move some in from another location via <a href="/transfers/new">Transfers</a>.</p>
+  {% endif %}
+{% else %}
+
+<form method="post" action="/locations/{{ location.id }}/stocktake" class="stocktake-form" {% if location.archived or not location.active %}style="opacity:.55;pointer-events:none"{% endif %}>
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+  {# Action bar — sits sticky so on a long count the Save button is
+     always within thumb reach. The reason field is optional but its
+     value lands in the audit log so future-you knows why a count moved. #}
+  <div class="stocktake-bar">
+    <label class="stocktake-reason">
+      <span>Reason (optional)</span>
+      <input name="reason" placeholder="e.g. Monthly audit, breakage write-off" maxlength="200">
+    </label>
+    <div class="stocktake-actions">
+      <button type="button" class="ghost" onclick="resetStocktake()">Reset</button>
+      <button type="submit">Save stocktake</button>
+    </div>
+  </div>
+
+  <div class="table-scroll">
+  <table class="lines stocktake-table">
+    <thead>
+      <tr>
+        <th></th>
+        <th>Item</th>
+        <th>Category</th>
+        <th class="num">On hand</th>
+        <th class="num">New count</th>
+        <th class="num">Δ</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for it in items %}
+      {% set p = it.part %}
+      <tr data-prior="{{ it.qty }}">
+        <td class="item-icon">{% if p.image %}<img class="item-thumb" src="{{ p.image }}" alt="">{% else %}{{ icon_html(p.icon) | safe }}{% endif %}</td>
+        <td>
+          <div class="item-name">{{ p.name }}</div>
+          <div class="muted item-desc"><code>{{ p.barcode }}</code></div>
+        </td>
+        <td class="muted">{{ it.cat_label }}</td>
+        <td class="num {% if it.qty == 0 %}low{% endif %}"><span class="prior-qty">{{ it.qty }}</span></td>
+        <td class="num">
+          <input type="number" name="qty_{{ p.id }}" value="{{ it.qty }}" min="0"
+                 inputmode="numeric" class="stocktake-input"
+                 aria-label="New count for {{ p.name }}">
+        </td>
+        <td class="num delta-cell"><span class="delta">0</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</form>
+{% endif %}
+
+<script>
+(function(){
+  // Live delta calculator. Reads each row's prior qty from data-prior and
+  // recomputes the Δ column when the user edits the input. No coupling to
+  // the post round-trip — server still owns the truth.
+  function updateRow(input){
+    var row = input.closest('tr');
+    var prior = parseInt(row.dataset.prior || '0', 10) || 0;
+    var v = parseInt(input.value, 10);
+    if (isNaN(v)) v = prior;
+    var d = v - prior;
+    var cell = row.querySelector('.delta');
+    if (!cell) return;
+    cell.textContent = (d > 0 ? '+' + d : String(d));
+    cell.classList.toggle('delta-pos', d > 0);
+    cell.classList.toggle('delta-neg', d < 0);
+    cell.classList.toggle('delta-zero', d === 0);
+    row.classList.toggle('row-changed', d !== 0);
+  }
+  document.querySelectorAll('.stocktake-input').forEach(function(inp){
+    inp.addEventListener('input', function(){ updateRow(inp); });
+    inp.addEventListener('focus', function(){ inp.select(); });
+    updateRow(inp);
+  });
+  window.resetStocktake = function(){
+    document.querySelectorAll('.stocktake-input').forEach(function(inp){
+      var row = inp.closest('tr');
+      inp.value = row.dataset.prior || '0';
+      updateRow(inp);
+    });
+  };
+})();
+</script>
+{% endblock %}

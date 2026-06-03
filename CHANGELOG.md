@@ -3,6 +3,75 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.19.0] — 2026-06-03
+- **Per-location detail + audit page.** Each row on `/locations` now
+  links to a new `/locations/<id>` page that shows everything stocked
+  at that location with a touch-friendly stocktake form: prior count,
+  new count input, live Δ chip per row, an optional Reason field, and
+  one Save button that commits every changed row in a single POST.
+  Toggle "Show all items (incl. zero)" to add stock during a count
+  without leaving the page. The form auto-disables on archived /
+  inactive locations.
+- New `POST /locations/<id>/stocktake` endpoint applies bulk deltas
+  through the same `stock_levels`/`Part.quantity_on_hand` plumbing as
+  the per-part stocktake — one `part.stock_set` audit row per changed
+  item plus a `location.stocktake` rollup, so the audit page surfaces
+  the count as a single discoverable event linked to the location.
+- **Optimization pass.** Eliminated N+1 patterns on the busiest pages:
+  `/locations` now totals stock in a single GROUP BY query instead of
+  one-SUM-per-location; `/transactions` and `/` (recent transactions)
+  selectinload `Transaction.part/client/job/location` so row rendering
+  doesn't fan out into hundreds of follow-up queries; `/transfers`
+  selectinloads `Transfer.from_location/to_location/lines`; `/parts`
+  scopes its `stock_levels` query to the parts being rendered.
+  Verified with a query-count harness — `/transactions` dropped from
+  ≥500 SELECTs on a full page to 9; `/transfers` from ~200 to 3.
+
+## [1.18.0] — 2026-06-03
+- **Items page is now a touch-first category browser.** The flat list
+  is gone; `/parts` opens with tap-friendly cards for each populated
+  top-level category (plus Uncategorized and an "All items" flat view).
+  Tap a card to drill in — sub-category cards stack first, items rendered
+  directly in that category follow underneath. Arbitrary nesting is
+  supported (Wiring → Ethernet → Cat 6 → 7ft works); a stack-style
+  breadcrumb (📁 Items › Wiring › Ethernet › Cat 6 › 7ft) sits sticky on
+  phones so the "you are here" path is always visible.
+- **Empty categories are hidden in browse mode** to cut clutter — a
+  category only shows up once it (or one of its descendants) holds an
+  item. Switch the new **Manage** toggle on to see every category
+  (including empties), and to get inline Rename / + Sub / Delete buttons
+  per card so the whole tree can be authored from the same page.
+- **Auto-skip single-child chains.** When a category has no direct items
+  and only one populated branch beneath it, the drill-in lands you at
+  the level where items actually live instead of paging through empty
+  intermediates. The breadcrumb still shows the full path so you can
+  jump back to any level. Disabled in Manage mode so you can park on
+  any intermediate to rename / add siblings.
+- **Add-item respects the current category.** Opening + Add item while
+  inside a category pre-selects that category so the new part lands in
+  the right place by default.
+- Items are still organised the same way they were under the v1.17
+  filter pills — that strip is replaced by the richer drill-down. The
+  `/categories` flat-edit admin page stays available unchanged.
+
+## [1.17.0] — 2026-06-03
+- **Items are now organised by category.** The `/parts` page gains a
+  filter strip of pills — `All`, one per category (with depth
+  indicators for nested cats), and `Uncategorized` when relevant —
+  each carrying a live item count so the populated buckets are
+  obvious at a glance. Clicking a pill narrows the table to that
+  bucket via `?cat=<id>` (or `?cat=none` for uncategorized); the
+  archived-toggle state is preserved across clicks.
+- **Grouped catalog view.** When no filter is active the items table
+  now emits a header row each time the category changes, so the
+  catalog reads as an organised list rather than one long flat dump.
+  Items are sorted by category path then name, with `Uncategorized`
+  sinking to the bottom.
+- **Item counts on the Categories page.** Each category row shows
+  how many (non-archived) items live in it, with a tap-through to
+  the filtered items list. Empty categories render dimmed in the
+  filter strip so users can spot dead buckets at a glance.
+
 ## [1.16.0] — 2026-06-03
 - **Header reorganized around Inventory.** Items, Categories,
   Locations, and Transfers now live in a single Inventory dropdown

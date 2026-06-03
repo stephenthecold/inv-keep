@@ -28,15 +28,17 @@
 </dialog>
 
 <table class="lines">
-  <thead><tr><th>Category</th><th>Description</th><th>Parent</th><th></th></tr></thead>
+  <thead><tr><th>Category</th><th class="num">Items</th><th>Description</th><th>Parent</th><th></th></tr></thead>
   <tbody>
     {% for cid, label, depth, c in tree %}
+    {% set n = cat_counts.get(cid, 0) %}
     <tr>
       <td>
         <form id="cat-{{ cid }}" method="post" action="/categories/{{ cid }}/edit"><input type="hidden" name="_csrf" value="{{ csrf_token }}"></form>
         <span style="display:inline-block;width:{{ depth * 1.4 }}rem"></span>
         <input form="cat-{{ cid }}" name="name" value="{{ c.name }}">
       </td>
+      <td class="num">{% if n %}<a class="tag" href="/parts?cat={{ cid }}" title="View items in this category">{{ n }}</a>{% else %}<span class="muted">0</span>{% endif %}</td>
       <td><input form="cat-{{ cid }}" name="description" value="{{ c.description }}" placeholder="—" style="width:16rem"></td>
       <td>
         <select form="cat-{{ cid }}" name="parent_id">
@@ -57,7 +59,7 @@
       </td>
     </tr>
     {% else %}
-    <tr class="empty"><td colspan="4">No categories yet.</td></tr>
+    <tr class="empty"><td colspan="5">No categories yet.</td></tr>
     {% endfor %}
   </tbody>
 </table>

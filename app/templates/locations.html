@@ -45,7 +45,7 @@
   <tbody>
     {% for l in locations %}
     <tr {% if not l.active or l.archived %}class="voided"{% endif %}>
-      <td><b>{{ l.name }}</b></td>
+      <td><a href="/locations/{{ l.id }}"><b>{{ l.name }}</b></a></td>
       <td class="muted">{{ l.notes }}</td>
       <td class="num">{{ totals.get(l.id, 0) }}</td>
       <td>
@@ -55,6 +55,7 @@
       </td>
       <td class="actions-col">
         <div class="item-actions">
+          <a class="btn ghost" href="/locations/{{ l.id }}">View / Audit</a>
           <button type="button" class="edit-loc"
             data-id="{{ l.id }}" data-name="{{ l.name }}" data-notes="{{ l.notes }}"
             data-active="{{ '1' if l.active else '0' }}">Edit</button>
