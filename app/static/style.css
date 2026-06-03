@@ -267,6 +267,24 @@ dialog.modal h2 { margin-top: 0; }
 .section-h2 .small { font-size: .8rem; text-transform: none; letter-spacing: 0; }
 .empty-msg { color: var(--muted); padding: 1rem; background: var(--panel); border: 1px dashed var(--line); border-radius: 10px; }
 
+/* ===== Per-location detail + stocktake form ===== */
+.loc-summary { display: flex; flex-wrap: wrap; gap: .65rem; margin: 1rem 0; }
+.loc-summary-cell { flex: 1 1 160px; padding: .75rem 1rem; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; gap: .15rem; }
+.loc-summary-label { color: var(--muted); font-size: .8rem; }
+.loc-summary-value { font-size: 1.5rem; font-weight: 700; }
+
+.stocktake-bar { display: flex; flex-wrap: wrap; gap: .75rem; align-items: flex-end; padding: .75rem 1rem; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin: .5rem 0 1rem; position: sticky; top: 3.4rem; z-index: 4; }
+.stocktake-reason { flex: 1 1 240px; display: flex; flex-direction: column; gap: .3rem; }
+.stocktake-reason span { font-size: .8rem; color: var(--muted); }
+.stocktake-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+
+.stocktake-table input.stocktake-input { width: 5.5rem; text-align: right; font-variant-numeric: tabular-nums; font-size: 1rem; }
+.stocktake-table .delta { font-variant-numeric: tabular-nums; font-weight: 600; padding: .15rem .5rem; border-radius: 999px; display: inline-block; min-width: 2.5rem; text-align: center; background: var(--panel-2); color: var(--muted); }
+.stocktake-table .delta.delta-pos { background: rgba(46,160,67,.18); color: var(--good); }
+.stocktake-table .delta.delta-neg { background: rgba(229,83,75,.18); color: var(--bad); }
+.stocktake-table .delta.delta-zero { background: var(--panel-2); color: var(--muted); }
+.stocktake-table tr.row-changed td { background: rgba(47,129,247,.05); }
+
 /* category group header row inside the "all items" flat table */
 table.lines tr.cat-group td { background: var(--panel-2); color: var(--muted); font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; padding-top: .55rem; padding-bottom: .35rem; border-bottom: 1px solid var(--line); }
 table.lines tr.cat-group td a { color: var(--muted); text-decoration: none; }
@@ -341,6 +359,13 @@ body.nav-open .nav-toggle .hamburger-bar:nth-child(3) { transform: translateY(-7
   .items-table th, .items-table td { padding: .65rem .55rem; }
   .head-actions { flex-wrap: wrap; gap: .35rem; }
   .head-actions .btn, .head-actions .add-btn { flex: 0 1 auto; }
+  /* Stocktake on a phone: bigger qty inputs, action bar wraps and the
+     Save button spans the full width so it can't be missed thumbing
+     up the page. */
+  .stocktake-table input.stocktake-input { width: 4.5rem; font-size: 1.1rem; padding: .65rem .5rem; min-height: 44px; }
+  .stocktake-bar { top: 3.6rem; padding: .65rem .75rem; }
+  .stocktake-actions { width: 100%; }
+  .stocktake-actions button { flex: 1; min-height: 44px; }
 }
 
 /* sized label preview on screen */

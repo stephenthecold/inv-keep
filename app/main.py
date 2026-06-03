@@ -19,9 +19,9 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import audit, auth, csrf, emailer, icons, labels, orders, rbac, reports
@@ -788,7 +788,15 @@ def scan_page(request: Request, db: Session = Depends(get_db)):
         .filter(Location.active == True, Location.archived == False)  # noqa: E712
         .order_by(Location.name).all()
     )
-    recent = db.query(Transaction).order_by(Transaction.created_at.desc()).limit(15).all()
+    # Eager-load the relationships the template hits per row so we don't
+    # pay 15× N+1 trips on Part / Client / Job lookups when rendering.
+    recent = (db.query(Transaction)
+                .options(
+                    selectinload(Transaction.part),
+                    selectinload(Transaction.client),
+                    selectinload(Transaction.job),
+                )
+                .order_by(Transaction.created_at.desc()).limit(15).all())
     # Kiosk sessions optionally start with a pinned default location.
     user = current_user(request)
     default_loc = ""
@@ -1433,13 +1441,12 @@ def locations_page(request: Request, db: Session = Depends(get_db)):
     if not show_archived:
         q = q.filter(Location.archived == False)  # noqa: E712
     locs = q.order_by(Location.name).all()
-    # Total stock per location for the index page (cheap sum on stock_levels).
-    totals = {}
-    for loc in locs:
-        totals[loc.id] = (db.query(StockLevel)
-                          .filter(StockLevel.location_id == loc.id)
-                          .with_entities(func.coalesce(func.sum(StockLevel.quantity), 0))
-                          .scalar() or 0)
+    # One GROUP BY for all totals; cuts N round-trips on a long location
+    # list down to a single SUM-and-group query.
+    totals = {lid: n for lid, n in (
+        db.query(StockLevel.location_id, func.sum(StockLevel.quantity))
+          .group_by(StockLevel.location_id).all()
+    )}
     return templates.TemplateResponse(
         "locations.html",
         ctx(request, db, locations=locs, totals=totals, show_archived=show_archived),
@@ -1513,9 +1520,112 @@ def locations_restore(loc_id: int, request: Request, db: Session = Depends(get_d
     return redirect("/locations", f"Location '{loc.name}' restored.")
 
 
+@app.get("/locations/{loc_id}", response_class=HTMLResponse)
+def location_detail(loc_id: int, request: Request, db: Session = Depends(get_db)):
+    """What's at this location, with inputs to run a stocktake. By default
+    only parts with non-zero stock here are listed; ?zero=1 widens the
+    view to every non-archived part so an auditor can add stock for a
+    new SKU during the count without leaving the page."""
+    loc = db.get(Location, loc_id)
+    if not loc:
+        return redirect("/locations", "Location not found.", ok=False)
+    show_zero = request.query_params.get("zero") == "1"
+    # One outer-join so we get every Part + its row at this loc (None if
+    # never stocked here). Filter archived parts out — they'd just be
+    # noise during a count.
+    rows = (db.query(Part, StockLevel)
+              .outerjoin(StockLevel, and_(
+                  StockLevel.part_id == Part.id,
+                  StockLevel.location_id == loc.id,
+              ))
+              .filter(Part.archived == False)  # noqa: E712
+              .order_by(Part.name).all())
+    by_parent, _by_id, paths = _cat_index(db)
+    items = []
+    total = 0
+    for p, sl in rows:
+        qty = sl.quantity if sl else 0
+        if not show_zero and qty == 0:
+            continue
+        items.append({
+            "part": p, "qty": qty,
+            "cat_label": paths.get(p.category_id, "") if p.category_id else "",
+        })
+        total += qty
+    return templates.TemplateResponse(
+        "location_detail.html",
+        ctx(request, db, location=loc, items=items, total=total, show_zero=show_zero),
+    )
+
+
+@app.post("/locations/{loc_id}/stocktake")
+async def location_stocktake(loc_id: int, request: Request, db: Session = Depends(get_db)):
+    """Bulk per-location stocktake. Each input is named `qty_<part_id>` and
+    only rows where the new count differs from the current one are written.
+    Mirrors the per-part /parts/<id>/stock/set path so audit history reads
+    the same regardless of which UI started the adjustment."""
+    loc = db.get(Location, loc_id)
+    if not loc:
+        return redirect("/locations", "Location not found.", ok=False)
+    if loc.archived or not loc.active:
+        return redirect(f"/locations/{loc_id}", "Location is inactive — restore it first.", ok=False)
+    form = await request.form()
+    reason = (form.get("reason") or "").strip()
+    changes = []
+    for key, value in form.multi_items():
+        if not key.startswith("qty_"):
+            continue
+        try:
+            part_id = int(key[4:])
+            new_qty = int(value)
+        except (TypeError, ValueError):
+            continue
+        if new_qty < 0:
+            return redirect(f"/locations/{loc_id}",
+                            "Counts can't be negative.", ok=False)
+        part = db.get(Part, part_id)
+        if part is None or part.archived:
+            continue
+        sl = orders.ensure_stock_row(db, part.id, loc.id)
+        prior = sl.quantity
+        if prior == new_qty:
+            continue
+        delta = new_qty - prior
+        sl.quantity = new_qty
+        part.quantity_on_hand += delta
+        if delta > 0 and part.low_stock_alerted:
+            part.low_stock_alerted = False
+        changes.append((part, prior, new_qty, delta))
+
+    if not changes:
+        return redirect(f"/locations/{loc_id}",
+                        "Stocktake submitted — no counts changed.", ok=True)
+
+    note_suffix = f" — {reason}" if reason else ""
+    user_obj = current_user(request)
+    # Per-part rows for granular history…
+    for part, prior, new_qty, delta in changes:
+        audit.record(db, user_obj, "part.stock_set", "part", part.id,
+                     f"{loc.name}: {prior} → {new_qty} (Δ {delta:+d}) [audit]{note_suffix}")
+    # …plus one roll-up entry so the audit page shows the stocktake as a
+    # single discoverable event linked to the location.
+    audit.record(db, user_obj, "location.stocktake", "location", loc.id,
+                 f"Stocktake at {loc.name}: {len(changes)} item(s) adjusted{note_suffix}")
+    db.commit()
+    return redirect(f"/locations/{loc_id}",
+                    f"Stocktake recorded — {len(changes)} item(s) adjusted.")
+
+
 @app.get("/transfers", response_class=HTMLResponse)
 def transfers_page(request: Request, db: Session = Depends(get_db)):
+    # selectinload on the locations + lines so the index doesn't fire
+    # 200×3 follow-up queries when rendering names + line counts.
     rows = (db.query(Transfer)
+            .options(
+                selectinload(Transfer.from_location),
+                selectinload(Transfer.to_location),
+                selectinload(Transfer.lines),
+            )
             .order_by(Transfer.created_at.desc())
             .limit(200).all())
     return templates.TemplateResponse(
@@ -1718,11 +1828,16 @@ def parts_page(request: Request, db: Session = Depends(get_db)):
                  .filter(Location.active == True, Location.archived == False)  # noqa: E712
                  .order_by(Location.name).all())
     parts = items  # downstream stock-map builder references `parts`
-    # Build a {(part_id, loc_id): qty} map for the per-location chips. Cheap —
-    # one query, then group in Python.
+    # Scope the per-location stock query to just the parts we're rendering
+    # (root view shows no items, so we skip it entirely). Older versions
+    # pulled the whole stock_levels table on every page hit; this caps the
+    # query to the current page's parts.
     stock_map = {}
-    for sl in db.query(StockLevel).all():
-        stock_map[(sl.part_id, sl.location_id)] = sl.quantity
+    if parts:
+        part_ids = [p.id for p in parts]
+        for sl in (db.query(StockLevel)
+                     .filter(StockLevel.part_id.in_(part_ids)).all()):
+            stock_map[(sl.part_id, sl.location_id)] = sl.quantity
     # Per-part [(loc, qty), ...] for the chips on the table; skip zero rows
     # so the inline row stays compact.
     part_stock = {}
@@ -2295,7 +2410,16 @@ def transactions_page(request: Request, db: Session = Depends(get_db)):
                 selected_loc = lid
             except ValueError:
                 pass
-    txns = q.order_by(Transaction.created_at.desc()).limit(500).all()
+    # selectinload prevents 500× per-row trips to fetch part / client / job /
+    # location relationships from the template (transactions.html touches
+    # all four). One query per relationship instead of one per row.
+    txns = (q.options(
+                selectinload(Transaction.part),
+                selectinload(Transaction.client),
+                selectinload(Transaction.job),
+                selectinload(Transaction.location),
+            )
+            .order_by(Transaction.created_at.desc()).limit(500).all())
     cfg = store.all_settings(db)
     markers = _txn_markers(txns, cfg.get("timezone") or "UTC")
     filter_locs = (db.query(Location)

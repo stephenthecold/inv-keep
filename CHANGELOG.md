@@ -3,6 +3,30 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.19.0] — 2026-06-03
+- **Per-location detail + audit page.** Each row on `/locations` now
+  links to a new `/locations/<id>` page that shows everything stocked
+  at that location with a touch-friendly stocktake form: prior count,
+  new count input, live Δ chip per row, an optional Reason field, and
+  one Save button that commits every changed row in a single POST.
+  Toggle "Show all items (incl. zero)" to add stock during a count
+  without leaving the page. The form auto-disables on archived /
+  inactive locations.
+- New `POST /locations/<id>/stocktake` endpoint applies bulk deltas
+  through the same `stock_levels`/`Part.quantity_on_hand` plumbing as
+  the per-part stocktake — one `part.stock_set` audit row per changed
+  item plus a `location.stocktake` rollup, so the audit page surfaces
+  the count as a single discoverable event linked to the location.
+- **Optimization pass.** Eliminated N+1 patterns on the busiest pages:
+  `/locations` now totals stock in a single GROUP BY query instead of
+  one-SUM-per-location; `/transactions` and `/` (recent transactions)
+  selectinload `Transaction.part/client/job/location` so row rendering
+  doesn't fan out into hundreds of follow-up queries; `/transfers`
+  selectinloads `Transfer.from_location/to_location/lines`; `/parts`
+  scopes its `stock_levels` query to the parts being rendered.
+  Verified with a query-count harness — `/transactions` dropped from
+  ≥500 SELECTs on a full page to 9; `/transfers` from ~200 to 3.
+
 ## [1.18.0] — 2026-06-03
 - **Items page is now a touch-first category browser.** The flat list
   is gone; `/parts` opens with tap-friendly cards for each populated
