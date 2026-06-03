@@ -3,6 +3,26 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.16.0] — 2026-06-03
+- **Header reorganized around Inventory.** Items, Categories,
+  Locations, and Transfers now live in a single Inventory dropdown
+  instead of being split across Items and Records. Records keeps
+  History, Report, Map, and Audit.
+- **Per-item Stock dialog.** Each row on `/parts` has a new **Stock**
+  button that opens a focused modal: a per-location quantity table
+  plus three collapsed actions — `+ Add stock` at a chosen location,
+  `↔ Move stock` between two locations (single-line transfer for
+  this part, written via the same Transfer / TransferLine path so
+  history stays uniform), and `Set absolute count` for stocktake
+  corrections (logs the prior count to audit). The inline `+ Stock`
+  chip is gone — everything stock-related for an item now lives in
+  one place.
+- New endpoints `POST /parts/{id}/stock/set` (admin/manager set
+  absolute count, refuses negatives, records Δ in the audit log)
+  and `POST /parts/{id}/stock/move` (single-item transfer that
+  validates source qty + same-location and emits the same kind of
+  Transfer row as the multi-line `/transfers/new` page).
+
 ## [1.15.0] — 2026-06-03
 - **Stock is now counted per location.** A free-form list of locations
   lives in Settings → Locations: the office, work trucks, a job-site

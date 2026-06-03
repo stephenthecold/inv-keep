@@ -31,10 +31,12 @@
       {% if can('checkout') %}<a href="/">Scan</a>{% endif %}
       {% if not user.is_kiosk %}
       <div class="navdrop">
-        <button type="button" class="navdrop-btn" data-menu="#items-menu" aria-haspopup="true" aria-expanded="false">Items <span class="caret">▾</span></button>
-        <div class="account-menu navdrop-menu" id="items-menu" data-menu-pop hidden>
+        <button type="button" class="navdrop-btn" data-menu="#inventory-menu" aria-haspopup="true" aria-expanded="false">Inventory <span class="caret">▾</span></button>
+        <div class="account-menu navdrop-menu" id="inventory-menu" data-menu-pop hidden>
           <a href="/parts">Items</a>
           <a href="/categories">Categories</a>
+          {% if can('manage_locations') %}<a href="/locations">Locations</a>{% endif %}
+          {% if can('manage_locations') %}<a href="/transfers">Transfers</a>{% endif %}
         </div>
       </div>
       <div class="navdrop">
@@ -50,8 +52,6 @@
           <a href="/transactions">History</a>
           <a href="/report">Report</a>
           <a href="/map">Map</a>
-          {% if can('manage_locations') %}<a href="/locations">Locations</a>{% endif %}
-          {% if can('manage_locations') %}<a href="/transfers">Transfers</a>{% endif %}
           {% if can('view_audit') %}<a href="/audit">Audit</a>{% endif %}
         </div>
       </div>
@@ -100,15 +100,18 @@
   <aside class="nav-mobile" id="nav-mobile" aria-label="Mobile navigation">
     {% if can('checkout') %}<a href="/">Scan</a>{% endif %}
     {% if not user.is_kiosk %}
+    <span class="muted nav-mobile-section">Inventory</span>
     <a href="/parts">Items</a>
     <a href="/categories">Categories</a>
+    {% if can('manage_locations') %}<a href="/locations">Locations</a>{% endif %}
+    {% if can('manage_locations') %}<a href="/transfers">Transfers</a>{% endif %}
+    <span class="muted nav-mobile-section">Clients</span>
     <a href="/clients">Clients</a>
     <a href="/jobs">Jobs</a>
+    <span class="muted nav-mobile-section">Records</span>
     <a href="/transactions">History</a>
     <a href="/report">Report</a>
     <a href="/map">Map</a>
-    {% if can('manage_locations') %}<a href="/locations">Locations</a>{% endif %}
-    {% if can('manage_locations') %}<a href="/transfers">Transfers</a>{% endif %}
     {% if can('view_audit') %}<a href="/audit">Audit</a>{% endif %}
     {% else %}
     <a href="/transactions">Recent (24h)</a>
