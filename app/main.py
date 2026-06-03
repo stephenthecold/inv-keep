@@ -202,12 +202,18 @@ PUBLIC_PATHS = {"/welcome", "/login", "/auth/callback", "/logout", "/health", "/
 _KIOSK_PIN_FAILS = {}
 _KIOSK_PIN_MAX_FAILS = 5
 
-# Paths a kiosk-PIN session is allowed to reach. Everything else returns 403
-# from auth_middleware, even when the Kiosk role technically has `view` —
-# `view` is needed for /, /api/cart*, and /transactions but not as a free pass
-# to /parts, /clients, /report, /map, etc.
+# Paths a default-perm kiosk-PIN session is allowed to reach. Used as a
+# *lockdown floor* when the Kiosk role still carries only its built-in
+# permissions ({view, checkout}) — in that case the operator gets a tiny
+# allowlist regardless of `view` covering /parts etc. The moment an admin
+# adds any other permission to the Kiosk role (`view_audit`, `manage_items`,
+# …), this floor is dropped and standard rbac takes over so the customized
+# permissions actually apply. See _kiosk_lockdown_active().
 _KIOSK_ALLOWED_EXACT = {"/", "/transactions", "/logout"}
 _KIOSK_ALLOWED_PREFIXES = ("/api/cart", "/api/search", "/api/checkout", "/api/void")
+# Floor perms = what the built-in Kiosk role ships with. If the user's
+# perms set equals this, the role hasn't been customized.
+_KIOSK_FLOOR_PERMS = frozenset({"view", "checkout"})
 
 
 def _kiosk_allowed(path: str, method: str) -> bool:
@@ -217,6 +223,14 @@ def _kiosk_allowed(path: str, method: str) -> bool:
         if path == p or path.startswith(p + "/") or path.startswith(p + "?"):
             return True
     return False
+
+
+def _kiosk_lockdown_active(perms) -> bool:
+    """True when the Kiosk role has only its built-in floor permissions —
+    in which case the hardcoded allowlist is enforced. False once an admin
+    has granted any additional permission to the Kiosk role, signalling
+    "let RBAC alone govern this session"."""
+    return set(perms or ()) <= _KIOSK_FLOOR_PERMS
 
 _stop_event = threading.Event()
 
@@ -269,11 +283,17 @@ async def auth_middleware(request: Request, call_next):
         return JSONResponse({"detail": "Unauthorized"}, status_code=401)
     request.state.user = user
 
-    # Kiosk sessions are limited to a tiny allowlist of paths regardless of
-    # their `view` permission — the role has `view` because /, /api/cart*, and
-    # /transactions all require it via required_perm(), but the operator
-    # behind a kiosk PIN should not see /parts, /clients, /report, /map, etc.
-    if user.get("is_kiosk") and not _kiosk_allowed(path, request.method):
+    # Kiosk sessions: enforce the hardcoded path allowlist ONLY while the
+    # Kiosk role still has its built-in floor permissions (`view` +
+    # `checkout`). The default Kiosk role has `view` because /,
+    # /api/cart*, and /transactions all need it via required_perm(); the
+    # allowlist exists so that `view` doesn't accidentally unlock /parts,
+    # /clients, /map, etc. for an operator behind a kiosk PIN. Once an
+    # admin grants the Kiosk role any other permission (e.g.
+    # `view_audit`, `manage_items`), the lockdown lifts and standard RBAC
+    # governs the session — that's the whole point of customizing the
+    # role, so a previous version that ignored those edits was a bug.
+    if user.get("is_kiosk") and _kiosk_lockdown_active(user.get("perms")) and not _kiosk_allowed(path, request.method):
         if path.startswith("/api/"):
             return JSONResponse({"ok": False, "error": "kiosk_restricted"}, status_code=403)
         return HTMLResponse(
@@ -1258,13 +1278,20 @@ def api_cart_cancel(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/api/search")
 def api_search(q: str = "", db: Session = Depends(get_db)):
+    """Cart-bar autocomplete. Excludes archived parts — walk-in / one-time
+    custom items are flagged archived so they don't pollute the suggestion
+    list on the scan page after the order they were created for is done."""
     q = (q or "").strip()
     if not q:
         return {"results": []}
     like = f"%{q}%"
     rows = (
         db.query(Part)
-        .filter(Part.active == True, or_(Part.name.ilike(like), Part.barcode.ilike(like)))  # noqa: E712
+        .filter(
+            Part.active == True,         # noqa: E712
+            Part.archived == False,      # noqa: E712
+            or_(Part.name.ilike(like), Part.barcode.ilike(like)),
+        )
         .order_by(Part.name)
         .limit(10)
         .all()

@@ -3,6 +3,24 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.20.1] — 2026-06-04
+- **Kiosk role permissions now take effect.** The kiosk-PIN session was
+  hardcoded to `{view, checkout}` and gated by a built-in path
+  allowlist that ran *before* the RBAC permission check, so adding
+  permissions to the Kiosk role under Users → Roles did nothing. The
+  session now loads the live perm set from the Kiosk role row; the
+  hardcoded allowlist is treated as a *lockdown floor* that applies
+  only while the role still has just `{view, checkout}` — granting it
+  any extra permission (e.g. `view_audit`, `manage_items`,
+  `manage_locations`, `manage_settings`) lifts the lockdown and lets
+  RBAC alone govern the kiosk session. The Kiosk settings panel calls
+  this out so the behavior is discoverable.
+- **Cart-bar search excludes archived items.** The autocomplete
+  dropdown on `/` was filtering by `active = True` but not by
+  `archived = False`, so retired one-time / walk-in `CUSTOM-…` items
+  kept appearing in suggestions after the order they were created
+  for had closed. Added the archived filter to `/api/search`.
+
 ## [1.20.0] — 2026-06-04
 - **Label printing no longer spills onto blank pages.** The print
   stylesheet now hides the page footer, mobile nav, modal dialogs, and
