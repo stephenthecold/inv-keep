@@ -3,6 +3,33 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.18.0] — 2026-06-03
+- **Items page is now a touch-first category browser.** The flat list
+  is gone; `/parts` opens with tap-friendly cards for each populated
+  top-level category (plus Uncategorized and an "All items" flat view).
+  Tap a card to drill in — sub-category cards stack first, items rendered
+  directly in that category follow underneath. Arbitrary nesting is
+  supported (Wiring → Ethernet → Cat 6 → 7ft works); a stack-style
+  breadcrumb (📁 Items › Wiring › Ethernet › Cat 6 › 7ft) sits sticky on
+  phones so the "you are here" path is always visible.
+- **Empty categories are hidden in browse mode** to cut clutter — a
+  category only shows up once it (or one of its descendants) holds an
+  item. Switch the new **Manage** toggle on to see every category
+  (including empties), and to get inline Rename / + Sub / Delete buttons
+  per card so the whole tree can be authored from the same page.
+- **Auto-skip single-child chains.** When a category has no direct items
+  and only one populated branch beneath it, the drill-in lands you at
+  the level where items actually live instead of paging through empty
+  intermediates. The breadcrumb still shows the full path so you can
+  jump back to any level. Disabled in Manage mode so you can park on
+  any intermediate to rename / add siblings.
+- **Add-item respects the current category.** Opening + Add item while
+  inside a category pre-selects that category so the new part lands in
+  the right place by default.
+- Items are still organised the same way they were under the v1.17
+  filter pills — that strip is replaced by the richer drill-down. The
+  `/categories` flat-edit admin page stays available unchanged.
+
 ## [1.17.0] — 2026-06-03
 - **Items are now organised by category.** The `/parts` page gains a
   filter strip of pills — `All`, one per category (with depth

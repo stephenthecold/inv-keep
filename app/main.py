@@ -421,6 +421,65 @@ def category_path(db, cat):
     return " › ".join(reversed(parts))
 
 
+def _cat_index(db):
+    """Indexed category tree. Returns (by_parent, by_id, paths) where
+    `by_parent` maps parent_id (None for top-level) → list of Category
+    sorted by name, `by_id` maps id → Category, and `paths` maps id →
+    " › "-joined path string. One DB query, reused across the page so
+    every row doesn't re-walk the tree."""
+    cats = db.query(Category).all()
+    by_id = {c.id: c for c in cats}
+    by_parent = {}
+    for c in cats:
+        by_parent.setdefault(c.parent_id, []).append(c)
+    for k in by_parent:
+        by_parent[k].sort(key=lambda x: (x.name or "").lower())
+    paths = {}
+
+    def walk(parent_id, prefix):
+        for c in by_parent.get(parent_id, []):
+            paths[c.id] = (prefix + " › " + c.name) if prefix else c.name
+            walk(c.id, paths[c.id])
+
+    walk(None, "")
+    return by_parent, by_id, paths
+
+
+def _category_counts(db, by_parent, show_archived):
+    """Direct + subtree item counts. `direct` maps category_id (or None
+    for uncategorized) → count of parts directly assigned. `subtree`
+    maps category_id → count including every descendant; populated
+    branches are obvious at a glance from card labels."""
+    q = db.query(Part.category_id, func.count(Part.id))
+    if not show_archived:
+        q = q.filter(Part.archived == False)  # noqa: E712
+    direct = {cid: n for cid, n in q.group_by(Part.category_id).all()}
+    subtree = {}
+
+    def walk(cid):
+        total = direct.get(cid, 0)
+        for child in by_parent.get(cid, []):
+            total += walk(child.id)
+        subtree[cid] = total
+        return total
+
+    for top in by_parent.get(None, []):
+        walk(top.id)
+    return direct, subtree
+
+
+def _category_crumbs(cat, by_id):
+    """[(id, name), ...] from root → cat. Cycle-safe via seen-set."""
+    out = []
+    seen = set()
+    cur = cat
+    while cur is not None and cur.id not in seen:
+        seen.add(cur.id)
+        out.append((cur.id, cur.name))
+        cur = by_id.get(cur.parent_id) if cur.parent_id else None
+    return list(reversed(out))
+
+
 def redirect(path, msg="", ok=True):
     sep = "&" if "?" in path else "?"
     if msg:
@@ -1564,58 +1623,101 @@ def transfer_detail(tid: int, request: Request, db: Session = Depends(get_db)):
 # ============================================================ parts
 @app.get("/parts", response_class=HTMLResponse)
 def parts_page(request: Request, db: Session = Depends(get_db)):
+    """Combined items + category browser. The same URL serves four
+    views — root (top-level categories), detail (a single category's
+    sub-cats + direct items), uncategorized, and the flat "all
+    items" power view — picked by the `cat` query param:
+
+      ?cat=        (or absent)        root
+      ?cat=<id>                       detail view of that category
+      ?cat=none                       parts with no category
+      ?cat=all                        flat list, grouped by category
+
+    The shape is mobile-first drill-down (cards + breadcrumb); CSS
+    rearranges into a two-pane layout on wider screens."""
     show_archived = request.query_params.get("archived") == "1"
-    selected_cat = (request.query_params.get("cat") or "").strip()
+    cat_param = (request.query_params.get("cat") or "").strip()
+
+    by_parent, by_id, paths = _cat_index(db)
+    direct_counts, subtree_counts = _category_counts(db, by_parent, show_archived)
+
+    # Decide which view we're rendering. Unknown cat ids fall back to root
+    # rather than erroring — defends against stale bookmarks after a delete.
+    view = "root"
+    current_cat = None
+    if cat_param == "all":
+        view = "all"
+    elif cat_param == "none":
+        view = "uncategorized"
+    elif cat_param:
+        try:
+            sel_id = int(cat_param)
+        except ValueError:
+            sel_id = None
+        if sel_id is not None and sel_id in by_id:
+            view = "detail"
+            current_cat = by_id[sel_id]
 
     base_q = db.query(Part)
     if not show_archived:
         base_q = base_q.filter(Part.archived == False)  # noqa: E712
-    all_parts = base_q.order_by(Part.name).all()
 
-    cats = category_choices(db)
-    cat_names = {cid: category_path(db, c) for cid, _label, _d, c in cats}
+    manage_mode = (request.query_params.get("manage") == "1")
 
-    # Per-category direct counts (over the same visibility set as the table)
-    # so the filter strip totals match what the user will see after clicking.
-    cat_counts = {}
-    uncategorized_count = 0
-    for p in all_parts:
-        if p.category_id is None:
-            uncategorized_count += 1
-        else:
-            cat_counts[p.category_id] = cat_counts.get(p.category_id, 0) + 1
+    def _visible_children(parent_id):
+        """Children of `parent_id`, with empty branches hidden unless we're
+        in manage mode. Empties (subtree count 0) just add clutter when
+        browsing; in manage mode they need to be visible so admins can
+        rename / delete / fill them."""
+        kids = by_parent.get(parent_id, [])
+        if manage_mode:
+            return kids
+        return [c for c in kids if subtree_counts.get(c.id, 0) > 0]
 
-    # Apply the filter selection. "none" = uncategorized only; "<id>" =
-    # parts directly in that category (subtree expansion is intentionally
-    # left out so the pill count matches the filtered table 1:1). When no
-    # filter is active, group by category path so the table reads as an
-    # organised catalog rather than one long flat list.
-    if selected_cat == "none":
-        parts = [p for p in all_parts if p.category_id is None]
-    elif selected_cat:
-        try:
-            sel_id = int(selected_cat)
-        except ValueError:
-            sel_id = None
-        if sel_id is None or not db.get(Category, sel_id):
-            selected_cat = ""
-            parts = all_parts
-        else:
-            parts = [p for p in all_parts if p.category_id == sel_id]
-    else:
-        parts = all_parts
-
-    if not selected_cat:
-        # (cat_path_or_None_for_uncat, name_lowercase) — uncategorized
-        # sinks to the bottom by sorting None as ~.
+    sub_cats = []
+    crumbs = []
+    if view == "root":
+        items = []
+        sub_cats = _visible_children(None)
+    elif view == "detail":
+        # Auto-skip single-child chains: if the current category has no
+        # direct items and exactly one populated sub-category, fall through
+        # to it. Keep going until we hit a node that holds items, has
+        # multiple kids, or is a leaf. Lets a tree like
+        # Wiring → Ethernet → Cat 6 → 7ft land you straight at 7ft.
+        # Disabled in manage mode so admins can park on intermediates to
+        # rename / add siblings.
+        if not manage_mode:
+            seen = set()
+            while current_cat is not None and current_cat.id not in seen:
+                seen.add(current_cat.id)
+                if direct_counts.get(current_cat.id, 0) > 0:
+                    break
+                kids = _visible_children(current_cat.id)
+                if len(kids) == 1:
+                    current_cat = kids[0]
+                    continue
+                break
+        items = base_q.filter(Part.category_id == current_cat.id).order_by(Part.name).all()
+        sub_cats = _visible_children(current_cat.id)
+        crumbs = _category_crumbs(current_cat, by_id)
+    elif view == "uncategorized":
+        items = base_q.filter(Part.category_id.is_(None)).order_by(Part.name).all()
+    else:  # "all"
+        rows = base_q.order_by(Part.name).all()
+        # Sort so categories cluster, with uncategorized at the bottom.
         def _key(p):
-            label = cat_names.get(p.category_id, "") if p.category_id else "~"
+            label = paths.get(p.category_id, "") if p.category_id else "~"
             return (label.lower(), (p.name or "").lower())
-        parts = sorted(parts, key=_key)
+        items = sorted(rows, key=_key)
+
+    cats_flat = category_choices(db)
+    cat_names = paths  # already path-formatted, reuse for table column display
 
     locations = (db.query(Location)
                  .filter(Location.active == True, Location.archived == False)  # noqa: E712
                  .order_by(Location.name).all())
+    parts = items  # downstream stock-map builder references `parts`
     # Build a {(part_id, loc_id): qty} map for the per-location chips. Cheap —
     # one query, then group in Python.
     stock_map = {}
@@ -1637,13 +1739,35 @@ def parts_page(request: Request, db: Session = Depends(get_db)):
                 rows.append((loc, qty))
         part_stock[p.id] = rows
         part_stock_full[p.id] = full
+    total_count = sum(direct_counts.values())
+    uncategorized_count = direct_counts.get(None, 0)
+    def qs(cat=None, archived=None, manage=None):
+        """Build a /parts query string preserving the surrounding state.
+        Passing `None` for an arg means "keep current"; passing `""` or
+        `False` drops it. Lets templates link to the same page with one
+        toggle changed without re-listing every other param."""
+        out_cat = cat_param if cat is None else cat
+        out_arch = show_archived if archived is None else archived
+        out_manage = manage_mode if manage is None else manage
+        parts_qs = []
+        if out_cat:
+            parts_qs.append(f"cat={out_cat}")
+        if out_arch:
+            parts_qs.append("archived=1")
+        if out_manage:
+            parts_qs.append("manage=1")
+        return ("?" + "&".join(parts_qs)) if parts_qs else ""
+
     return templates.TemplateResponse(
         "parts.html",
-        ctx(request, db, parts=parts, categories=cats, cat_names=cat_names,
-            show_archived=show_archived, locations=locations, part_stock=part_stock,
-            part_stock_full=part_stock_full,
-            cat_counts=cat_counts, uncategorized_count=uncategorized_count,
-            total_count=len(all_parts), selected_cat=selected_cat,
+        ctx(request, db, view=view, parts=parts, categories=cats_flat,
+            cat_names=cat_names, current_cat=current_cat, sub_cats=sub_cats,
+            crumbs=crumbs, direct_counts=direct_counts,
+            subtree_counts=subtree_counts, top_cats=by_parent.get(None, []),
+            uncategorized_count=uncategorized_count, total_count=total_count,
+            show_archived=show_archived, locations=locations,
+            part_stock=part_stock, part_stock_full=part_stock_full,
+            manage=manage_mode, cat_param=cat_param, qs=qs,
             prefill=request.query_params.get("barcode", "")),
     )
 
