@@ -3,6 +3,43 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.20.0] — 2026-06-04
+- **Label printing no longer spills onto blank pages.** The print
+  stylesheet now hides the page footer, mobile nav, modal dialogs, and
+  zeroes out body / main padding so a single label is a single sheet
+  again instead of a leading label followed by four padded-only pages.
+  A new `.label-sized` print rule pins the sized-label container's box
+  model to zero so the @page width/height set per preset is the only
+  thing the browser sees.
+- **Label sizes now show inches.** Every preset on the Print / Settings
+  dropdowns is labelled "Inches (mm)" — DYMO 30252 reads "DYMO 30252
+  Address 3.5 × 1.1 in (89 × 28 mm)" rather than mm-only. **New presets:**
+  DYMO 30256 Shipping (4 × 2.31 in), DYMO 30323 Shipping (4 × 2.13 in),
+  DYMO 30277 File-folder (3.5 × 2.13 in), DYMO 30270 Postage
+  (1.62 × 1.25 in) — the omissions that would silently mismatch a
+  loaded label spool.
+- **No more purple visited links.** Internal navigation isn't "content
+  you've read"; the browser's purple :visited recoloring made
+  /locations row links look like they'd been crossed out after a single
+  click. Override :visited per context so colors stay consistent.
+- **Settings has a left-hand sidebar.** /settings is no longer one
+  very long scroll: a sticky sidebar lists every section (App: General /
+  Branding / Printing / Android · Access: Users / Roles · Notifications:
+  Email / Alerts · System: Version / Backup) and clicking switches the
+  pane in place. On phones the sidebar collapses to a horizontal chip
+  row above the content. The last-viewed tab survives form submits via
+  localStorage so the form you just saved stays in view after the
+  POST→redirect round-trip.
+- **Users & Roles nest into the same shell.** /users now renders the
+  Settings sidebar with the right entry highlighted, so the two pages
+  feel like one administration area instead of two unrelated pages.
+- **Check for updates from the UI.** A new "Version & updates" tab
+  proxies the GitHub releases API (5-minute cache) and reports either
+  "Up to date" or "Update available: vX.Y.Z — current is v1.20.0".
+  Self-applying the update would break the container's security
+  boundary, so the section also shows the two-command upgrade recipe
+  (`docker compose pull && docker compose up -d`).
+
 ## [1.19.0] — 2026-06-03
 - **Per-location detail + audit page.** Each row on `/locations` now
   links to a new `/locations/<id>` page that shows everything stocked

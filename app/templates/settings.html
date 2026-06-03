@@ -1,11 +1,17 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Settings</h1>
+<div class="settings-shell">
+{% set current_path = "/settings" %}
+{% set active = "general" %}
+{% include "_settings_nav.html" %}
 
-<p class="muted">Version <b>v{{ version }}</b></p>
+<div class="settings-main">
+<div class="page-head settings-page-head">
+  <h1>Settings <small class="muted settings-section-label" data-section-label></small></h1>
+</div>
 
 <!-- ---------------- General ---------------- -->
-<section class="card">
+<section class="card settings-tab" id="tab-general" data-tab-pane="general" data-tab-title="General">
   <h2>General</h2>
   <form method="post" action="/settings/general" class="grid-form">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -37,7 +43,7 @@
 </section>
 
 <!-- ---------------- White-label / Branding ---------------- -->
-<section class="card">
+<section class="card settings-tab" id="tab-branding" data-tab-pane="branding" data-tab-title="Branding">
   <h2>White-label / Branding</h2>
   <form method="post" action="/settings/branding" class="grid-form">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -81,7 +87,7 @@
 </section>
 
 <!-- ---------------- Printing ---------------- -->
-<section class="card">
+<section class="card settings-tab" id="tab-printing" data-tab-pane="printing" data-tab-title="Printing">
   <h2>Printing</h2>
   <form method="post" action="/settings/printing" class="grid-form">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -193,7 +199,7 @@
 </section>
 
 <!-- ---------------- Android (TWA) ---------------- -->
-<section class="card">
+<section class="card settings-tab" id="tab-android" data-tab-pane="android" data-tab-title="Android (TWA)">
   <h2>Android app (TWA)</h2>
   <form method="post" action="/settings/android" class="grid-form">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -207,7 +213,7 @@
 </section>
 
 <!-- ---------------- Authentication ---------------- -->
-<section class="card">
+<section class="card settings-tab" id="tab-auth" data-tab-pane="auth" data-tab-title="Authentication">
   <h2>Authentication</h2>
   {% if disable_auth %}
   <div class="flash bad">DISABLE_AUTH is set in the environment — auth is bypassed regardless of the settings below. Unset it to enforce these.</div>
@@ -263,7 +269,7 @@
 
 <!-- ---------------- Kiosk PIN ---------------- -->
 {% if user.is_admin %}
-<section class="card">
+<section class="card settings-tab" id="tab-kiosk" data-tab-pane="kiosk" data-tab-title="Kiosk PIN">
   <h2>Kiosk PIN charge-out</h2>
   <p class="muted">When enabled, the sign-in screen shows a numeric PIN entry below the Sign-in button. Entering the PIN starts a locked-down "Kiosk" session that can scan and charge out, and view the last 24 hours of kiosk activity — and nothing else.</p>
   <form method="post" action="/settings/kiosk" class="grid-form" autocomplete="off">
@@ -292,7 +298,7 @@
 {% endif %}
 
 <!-- ---------------- Email ---------------- -->
-<section class="card">
+<section class="card settings-tab" id="tab-email" data-tab-pane="email" data-tab-title="Email">
   <h2>Email</h2>
   <form method="post" action="/settings/email" class="grid-form">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -346,7 +352,7 @@
 </section>
 
 <!-- ---------------- Alerts ---------------- -->
-<section class="card">
+<section class="card settings-tab" id="tab-alerts" data-tab-pane="alerts" data-tab-title="Alerts">
   <h2>Alerts</h2>
   {% set weekdays = [(0,'Monday'),(1,'Tuesday'),(2,'Wednesday'),(3,'Thursday'),(4,'Friday'),(5,'Saturday'),(6,'Sunday')] %}
   <form method="post" action="/settings/alerts" class="grid-form">
@@ -406,7 +412,7 @@
 
 {% if user.is_admin %}
 <!-- ---------------- Backup + Restore ---------------- -->
-<section class="card">
+<section class="card settings-tab" id="tab-backup" data-tab-pane="backup" data-tab-title="Backup / restore">
   <h2>Backup</h2>
   <p class="muted">Downloads a <code>.tar.gz</code> containing a consistent
   SQLite snapshot (uses <code>sqlite3.backup</code>, safe while the app is
@@ -437,7 +443,79 @@
 </section>
 {% endif %}
 
+<!-- ---------------- Version & Updates ---------------- -->
+<section class="card settings-tab" id="tab-version" data-tab-pane="version" data-tab-title="Version &amp; updates">
+  <h2>Version & updates</h2>
+  <p>Current: <b>v{{ version }}</b></p>
+  <div id="update-status" class="muted" style="margin:.5rem 0">Click <b>Check now</b> to compare against the latest GitHub release.</div>
+  <button type="button" id="check-update-btn" class="btn">Check for updates</button>
+  <a class="btn ghost" href="https://github.com/stephenthecold/inv-keep/releases" target="_blank" rel="noopener">View all releases ↗</a>
+
+  <h3 style="margin-top:1.5rem">How to update</h3>
+  <p class="muted">Updates ship as new Docker images on GHCR. To pull and restart in place:</p>
+  <pre style="background:var(--panel-2);padding:.75rem;border-radius:6px;overflow:auto"><code>docker compose pull
+docker compose up -d</code></pre>
+  <p class="muted"><small>Self-update from inside the UI requires the app to control its own container, which would break the security boundary. Running the two commands above on the host takes ~10 seconds; existing sessions reconnect automatically.</small></p>
+</section>
+
 <p class="muted"><small>Only the session secret, database location, and the DISABLE_AUTH break-glass flag stay in environment variables; everything above (including auth) is stored in the app database.</small></p>
+
+</div>{# /.settings-main #}
+</div>{# /.settings-shell #}
+
+<script>
+(function(){
+  // "Check for updates" — async fetch against /settings/check-update which
+  // proxies to the GitHub releases API. Disabled while in flight so a
+  // double-click can't fire two requests. Errors surfaced inline; the
+  // app never tries to apply the update itself.
+  var btn = document.getElementById('check-update-btn');
+  var status = document.getElementById('update-status');
+  if (btn && status) {
+    btn.addEventListener('click', function(){
+      btn.disabled = true;
+      status.textContent = 'Checking…';
+      status.className = 'muted';
+      fetch('/settings/check-update', {headers: {'Accept': 'application/json'}})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          btn.disabled = false;
+          status.innerHTML = '';
+          if (d.error) {
+            status.textContent = 'Couldn’t reach GitHub (' + d.error + '). Try again later.';
+            status.className = 'flash bad';
+            return;
+          }
+          if (d.behind) {
+            var msg = document.createElement('span');
+            msg.textContent = 'Update available: ';
+            var strong = document.createElement('b');
+            strong.textContent = d.latest;
+            msg.appendChild(strong);
+            var sep = document.createTextNode(' — current is v' + d.current + '. ');
+            msg.appendChild(sep);
+            var link = document.createElement('a');
+            link.href = d.url || 'https://github.com/stephenthecold/inv-keep/releases';
+            link.target = '_blank';
+            link.rel = 'noopener';
+            link.textContent = 'Release notes ↗';
+            msg.appendChild(link);
+            status.appendChild(msg);
+            status.className = 'flash good';
+          } else {
+            status.textContent = '✓ Up to date — running ' + d.latest + ' (latest).';
+            status.className = 'flash good';
+          }
+        })
+        .catch(function(e){
+          btn.disabled = false;
+          status.textContent = 'Couldn’t check: ' + (e && e.message ? e.message : 'network error');
+          status.className = 'flash bad';
+        });
+    });
+  }
+})();
+</script>
 
 <script>
 function emailMode() {
@@ -462,5 +540,50 @@ function monthlyMode() {
   document.querySelectorAll('.mm-wd').forEach(function (el) { el.style.display = wd ? '' : 'none'; });
 }
 monthlyMode();
+
+// Settings tabs: each .settings-tab is hidden by default; activate one
+// based on the URL hash (e.g. #branding) or localStorage memory of the
+// last tab. Sidebar clicks update both. POST handlers in Python keep
+// redirecting to /settings; the JS replays the saved hash so the form
+// you just edited stays visible after the round-trip.
+(function(){
+  var TABS_KEY = 'inv-keep:last-settings-tab';
+  function activate(slug){
+    if (!slug) slug = 'general';
+    var any = false;
+    document.querySelectorAll('.settings-tab').forEach(function(p){
+      var match = (p.dataset.tabPane === slug);
+      p.style.display = match ? '' : 'none';
+      if (match) {
+        any = true;
+        var lbl = document.querySelector('[data-section-label]');
+        if (lbl) lbl.textContent = '— ' + (p.dataset.tabTitle || slug);
+      }
+    });
+    if (!any) { activate('general'); return; }
+    document.querySelectorAll('.settings-nav-item').forEach(function(a){
+      a.classList.toggle('is-active', a.dataset.tab === slug);
+    });
+    try { localStorage.setItem(TABS_KEY, slug); } catch (_) {}
+  }
+  function fromHash(){
+    var h = (location.hash || '').replace(/^#/, '');
+    if (h && document.querySelector('[data-tab-pane="' + h + '"]')) return h;
+    try { return localStorage.getItem(TABS_KEY) || ''; } catch (_) { return ''; }
+  }
+  activate(fromHash());
+  document.querySelectorAll('.settings-nav-item').forEach(function(a){
+    a.addEventListener('click', function(ev){
+      var slug = a.dataset.tab;
+      // Cross-page entries (Users / Roles) navigate normally.
+      if (a.getAttribute('href').indexOf('#') !== 0 && a.getAttribute('href').indexOf('/settings#') !== 0) return;
+      ev.preventDefault();
+      history.replaceState(null, '', '#' + slug);
+      activate(slug);
+      window.scrollTo({top: 0, behavior: 'instant'});
+    });
+  });
+  window.addEventListener('hashchange', function(){ activate(fromHash()); });
+})();
 </script>
 {% endblock %}

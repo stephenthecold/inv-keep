@@ -1,11 +1,19 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Users &amp; roles</h1>
+<div class="settings-shell">
+{% set current_path = "/users" %}
+{% set active = "users" %}
+{% include "_settings_nav.html" %}
+
+<div class="settings-main">
+<div class="page-head settings-page-head">
+  <h1>Users &amp; roles</h1>
+</div>
 <p class="muted">People who sign in via OIDC (OpenID Connect) appear here on first login.
 Assign a role, or tick <b>Lock</b> to keep their role from being overwritten by group mapping.
-Configure group→role mapping under <a href="/settings">Settings → Authentication</a>.</p>
+Configure group→role mapping under <a href="/settings#auth">Settings → Authentication</a>.</p>
 
-<h2>Users</h2>
+<h2 id="users">Users</h2>
 <div class="table-scroll">
 <table class="lines">
   <thead><tr><th>User</th><th>Email</th><th>Source</th><th>Role</th><th>Active</th><th>Lock role</th><th></th></tr></thead>
@@ -32,8 +40,8 @@ Configure group→role mapping under <a href="/settings">Settings → Authentica
 </table>
 </div>
 
-<div class="page-head" style="margin-top:2rem">
-  <h2 style="border:none">Roles</h2>
+<div class="page-head" id="roles" style="margin-top:2rem;scroll-margin-top:1rem">
+  <h2 style="border:none">Roles / Groups</h2>
   <button class="add-btn" onclick="openModal('add-role')">+ Add role</button>
 </div>
 
@@ -77,4 +85,24 @@ Configure group→role mapping under <a href="/settings">Settings → Authentica
   {% endif %}
 </details>
 {% endfor %}
+</div>{# /.settings-main #}
+</div>{# /.settings-shell #}
+
+<script>
+// Highlight "Roles / Groups" in the sidebar when scrolled to or linked
+// via #roles, so the active sidebar entry tracks where you're working.
+(function(){
+  function syncActive(){
+    var on = location.hash === '#roles';
+    document.querySelectorAll('.settings-nav-item').forEach(function(a){
+      a.classList.remove('is-active');
+    });
+    var slug = on ? 'roles' : 'users';
+    var match = document.querySelector('.settings-nav-item[data-tab="' + slug + '"]');
+    if (match) match.classList.add('is-active');
+  }
+  syncActive();
+  window.addEventListener('hashchange', syncActive);
+})();
+</script>
 {% endblock %}
