@@ -315,8 +315,10 @@ jobs:
           main_id = db.query(Location).filter(Location.name == 'Main').first().id
           db.close()
           c.post('/parts/' + str(p_id) + '/restock', data={'_csrf': tok, 'amount': '4', 'location_id': str(truck_id)})
-          # Stock button renders with per-location JSON payload
-          page = c.get('/parts').text
+          # Stock button renders with per-location JSON payload. v1.18 turned
+          # /parts into a drill-down browser (root shows category cards, no
+          # item rows); the flat table now lives at /parts?cat=all.
+          page = c.get('/parts?cat=all').text
           m = re.search(r'class=\"manage-stock\"\s+data-id=\"' + str(p_id) + r'\"\s+data-name=\"[^\"]+\"\s+data-total=\"(\d+)\"\s+data-stock=\\'([^\\']+)\\'', page)
           assert m, 'Stock button missing'
           assert m.group(1) == '14'
