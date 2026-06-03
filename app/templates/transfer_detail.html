@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Transfer #{{ transfer.id }}</h1>
+  <div class="head-actions">
+    <a class="btn ghost" href="/transfers">All transfers</a>
+  </div>
+</div>
+
+<div class="card">
+  <p>
+    <b>{{ transfer.from_location.name if transfer.from_location else '—' }}</b>
+    &rarr;
+    <b>{{ transfer.to_location.name if transfer.to_location else '—' }}</b>
+  </p>
+  <p class="muted">
+    {{ transfer.created_at | local_dt(cfg.timezone) }} ·
+    by {{ transfer.created_by or '—' }} · status <code>{{ transfer.status }}</code>
+  </p>
+  {% if transfer.notes %}<p>Notes: {{ transfer.notes }}</p>{% endif %}
+
+  <table class="lines">
+    <thead><tr><th>Part</th><th>Barcode</th><th class="num">Quantity</th></tr></thead>
+    <tbody>
+      {% for ln in transfer.lines %}
+      <tr>
+        <td>{{ ln.part.name if ln.part else '—' }}</td>
+        <td><code>{{ ln.part.barcode if ln.part else '' }}</code></td>
+        <td class="num">{{ ln.quantity }}</td>
+      </tr>
+      {% else %}
+      <tr class="empty"><td colspan="3">No lines.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

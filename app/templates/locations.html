@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Locations {% if show_archived %}<small class="muted">— including archived</small>{% endif %}</h1>
+  <div class="head-actions">
+    <a class="btn ghost" href="{% if show_archived %}/locations{% else %}/locations?archived=1{% endif %}">{% if show_archived %}Hide archived{% else %}Show archived{% endif %}</a>
+    <a class="btn ghost" href="/transfers">Transfers history</a>
+    <a class="btn" href="/transfers/new">+ New transfer</a>
+    <button class="add-btn" onclick="openModal('add-location')">+ Add location</button>
+  </div>
+</div>
+
+<p class="muted">Locations are where you keep stock — the office, a work truck, a job-site cage, anything you want counted separately. The first scan in a cart picks a source location from the dropdown; transfers move stock between locations atomically.</p>
+
+<dialog id="add-location" class="modal">
+  <h2>Add location</h2>
+  <form method="post" action="/locations/add" class="grid-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label class="wide">Name <input name="name" required maxlength="80" placeholder="e.g. Truck 1, Warehouse"></label>
+    <label class="wide">Notes <textarea name="notes" rows="2" placeholder="optional"></textarea></label>
+    <menu class="modal-actions">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit">Add location</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="edit-location" class="modal">
+  <h2>Edit location</h2>
+  <form id="edit-loc-form" method="post" action="" class="grid-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label class="wide">Name <input name="name" id="el-name" required maxlength="80"></label>
+    <label class="wide">Notes <textarea name="notes" id="el-notes" rows="2"></textarea></label>
+    <label class="check">Active <input type="checkbox" name="active" id="el-active"></label>
+    <menu class="modal-actions">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit">Save</button>
+    </menu>
+  </form>
+</dialog>
+
+<div class="table-scroll">
+<table class="lines">
+  <thead><tr><th>Name</th><th>Notes</th><th class="num">Total units</th><th>Status</th><th class="actions-col">Actions</th></tr></thead>
+  <tbody>
+    {% for l in locations %}
+    <tr {% if not l.active or l.archived %}class="voided"{% endif %}>
+      <td><b>{{ l.name }}</b></td>
+      <td class="muted">{{ l.notes }}</td>
+      <td class="num">{{ totals.get(l.id, 0) }}</td>
+      <td>
+        {% if l.archived %}<span class="tag muted">archived</span>
+        {% elif not l.active %}<span class="tag muted">inactive</span>
+        {% else %}<span class="tag good">active</span>{% endif %}
+      </td>
+      <td class="actions-col">
+        <div class="item-actions">
+          <button type="button" class="edit-loc"
+            data-id="{{ l.id }}" data-name="{{ l.name }}" data-notes="{{ l.notes }}"
+            data-active="{{ '1' if l.active else '0' }}">Edit</button>
+          {% if l.archived %}
+            <form method="post" action="/locations/{{ l.id }}/restore" style="display:inline">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <button type="submit" class="ghost">Restore</button>
+            </form>
+          {% else %}
+            <form method="post" action="/locations/{{ l.id }}/archive" style="display:inline" onsubmit="return confirm('Archive {{ l.name }}? Stock here must be zero.');">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <button type="submit" class="ghost">Archive</button>
+            </form>
+          {% endif %}
+        </div>
+      </td>
+    </tr>
+    {% else %}
+    <tr class="empty"><td colspan="5">No locations yet — add one above.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+  document.querySelectorAll('.edit-loc').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var d = btn.dataset;
+      document.getElementById('el-name').value = d.name;
+      document.getElementById('el-notes').value = d.notes || '';
+      document.getElementById('el-active').checked = d.active === '1';
+      document.getElementById('edit-loc-form').action = '/locations/' + d.id + '/edit';
+      document.getElementById('edit-location').showModal();
+    });
+  });
+});
+</script>
+{% endblock %}

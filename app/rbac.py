@@ -14,6 +14,7 @@ PERMISSIONS = [
     ("checkout", "Scan / charge out & void"),
     ("manage_items", "Add/edit items & categories, restock"),
     ("manage_clients", "Manage clients & jobs"),
+    ("manage_locations", "Manage stock locations & transfers"),
     ("view_audit", "View the audit log"),
     ("manage_settings", "Change settings (branding, email, printing, auth)"),
     ("manage_users", "Manage users, roles & permissions"),
@@ -22,17 +23,34 @@ ALL_PERMS = [p[0] for p in PERMISSIONS]
 
 DEFAULT_ROLES = {
     "Admin":    {"perms": ALL_PERMS, "admin": True},
-    "Manager":  {"perms": ["view", "checkout", "manage_items", "manage_clients", "view_audit"], "admin": False},
+    "Manager":  {"perms": ["view", "checkout", "manage_items", "manage_clients", "manage_locations", "view_audit"], "admin": False},
     "Operator": {"perms": ["view", "checkout"], "admin": False},
     "Viewer":   {"perms": ["view"], "admin": False},
+    # Kiosk role is granted automatically when a session authenticates via the
+    # kiosk PIN on /welcome. It must include `view` because required_perm()
+    # returns "view" for /, /api/cart*, and /transactions — without it the
+    # scan page itself 403s. The /transactions handler additionally restricts
+    # what a kiosk session sees (last 24h, kiosk-submitted only).
+    "Kiosk":    {"perms": ["view", "checkout"], "admin": False},
 }
 
 
 def seed_roles(db):
     for name, info in DEFAULT_ROLES.items():
-        if not db.query(Role).filter(Role.name == name).first():
+        row = db.query(Role).filter(Role.name == name).first()
+        if row is None:
             db.add(Role(name=name, permissions=",".join(info["perms"]),
                         is_admin=info["admin"], builtin=True))
+            continue
+        # Backfill: a previously-seeded built-in role may have an older perm
+        # set. Add any default perm it's missing, but never remove what an
+        # admin has manually toggled on.
+        if row.builtin:
+            existing = {p.strip() for p in (row.permissions or "").split(",") if p.strip()}
+            missing = [p for p in info["perms"] if p not in existing]
+            if missing:
+                merged = sorted(existing.union(info["perms"]))
+                row.permissions = ",".join(merged)
     db.commit()
 
 
@@ -134,6 +152,8 @@ def required_perm(path, method):
         return "manage_settings"
     if path.startswith("/audit"):
         return "view_audit"
+    if path.startswith("/locations") or path.startswith("/transfers"):
+        return "manage_locations"
     if method == "POST" and (path.startswith("/parts") or path.startswith("/categories")):
         return "manage_items"
     if method == "POST" and (path.startswith("/clients") or path.startswith("/jobs")):

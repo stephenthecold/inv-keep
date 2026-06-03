@@ -100,7 +100,15 @@
       </td>
       <td><code>{{ p.barcode }}</code>{% if p.barcode_generated %} <a href="/parts/{{ p.id }}/label" title="Print label">🏷️</a>{% endif %}</td>
       <td>{{ cat_names.get(p.category_id, '') }}</td>
-      <td class="num {% if p.quantity_on_hand <= 0 %}low{% endif %}">{{ p.quantity_on_hand }}</td>
+      <td class="num {% if p.quantity_on_hand <= 0 %}low{% endif %}">
+        {{ p.quantity_on_hand }}
+        {% set chips = part_stock.get(p.id, []) %}
+        {% if chips %}
+        <div class="muted" style="font-size:.75rem;font-weight:normal;margin-top:.15rem;text-align:left">
+          {% for loc, qty in chips %}<span class="tag muted" title="{{ loc.name }}">{{ loc.name }}: {{ qty }}</span>{% if not loop.last %} {% endif %}{% endfor %}
+        </div>
+        {% endif %}
+      </td>
       <td class="num">{{ p.unit_cost | money(cfg.currency) }}</td>
       <td class="num">{{ p.unit_price | money(cfg.currency) }}</td>
       <td class="actions-col">
@@ -113,7 +121,15 @@
             data-active="{{ '1' if p.active else '0' }}" data-barcode="{{ p.barcode }}" data-type="{{ p.type }}">Edit</button>
           <form method="post" action="/parts/{{ p.id }}/restock" class="restock-form" title="Add stock">
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-            <input name="amount" type="number" value="10" aria-label="restock amount"><button type="submit">+ Stock</button>
+            <input name="amount" type="number" value="10" aria-label="restock amount">
+            {% if locations | length > 1 %}
+            <select name="location_id" aria-label="restock location">
+              {% for l in locations %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
+            </select>
+            {% elif locations %}
+            <input type="hidden" name="location_id" value="{{ locations[0].id }}">
+            {% endif %}
+            <button type="submit">+ Stock</button>
           </form>
         </div>
       </td>

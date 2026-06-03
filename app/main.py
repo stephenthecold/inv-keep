@@ -19,7 +19,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
@@ -36,12 +36,18 @@ if (not settings.session_secret
         "SESSION_SECRET must be a random value of 32+ characters. "
         "Generate one with:  python -c \"import secrets; print(secrets.token_hex(32))\""
     )
-from .database import Base, SessionLocal, engine, ensure_columns, get_db
-from .models import AuditLog, Category, Client, Job, Order, Part, Role, Transaction, User
+from .database import Base, SessionLocal, engine, ensure_columns, get_db, seed_locations_and_stock
+from .models import (
+    AuditLog, Category, Client, Job, Location, Order, Part, Role,
+    StockLevel, Transaction, Transfer, TransferLine, User,
+)
 from .version import __version__
 
 Base.metadata.create_all(bind=engine)
 ensure_columns()
+# v1.15: seed the Main location + per-part stock_levels from the legacy
+# Part.quantity_on_hand counter, and auto-cancel any pre-existing open carts.
+seed_locations_and_stock()
 
 # Seed the built-in roles (Admin/Manager/Operator/Viewer) if missing.
 _seed_db = SessionLocal()
@@ -188,7 +194,29 @@ self.addEventListener('fetch', (e) => {
 """.strip()
 
 PUBLIC_PATHS = {"/welcome", "/login", "/auth/callback", "/logout", "/health", "/manifest.webmanifest",
-                "/sw.js", "/.well-known/assetlinks.json"}
+                "/sw.js", "/.well-known/assetlinks.json", "/kiosk/login"}
+
+# In-memory PIN-attempt throttle keyed by client IP. Single-process app, so a
+# dict is fine; matches the rest of the codebase (no Redis dependency).
+# Maps ip -> (failure_count, locked_until_epoch).
+_KIOSK_PIN_FAILS = {}
+_KIOSK_PIN_MAX_FAILS = 5
+
+# Paths a kiosk-PIN session is allowed to reach. Everything else returns 403
+# from auth_middleware, even when the Kiosk role technically has `view` —
+# `view` is needed for /, /api/cart*, and /transactions but not as a free pass
+# to /parts, /clients, /report, /map, etc.
+_KIOSK_ALLOWED_EXACT = {"/", "/transactions", "/logout"}
+_KIOSK_ALLOWED_PREFIXES = ("/api/cart", "/api/search", "/api/checkout", "/api/void")
+
+
+def _kiosk_allowed(path: str, method: str) -> bool:
+    if path in _KIOSK_ALLOWED_EXACT:
+        return True
+    for p in _KIOSK_ALLOWED_PREFIXES:
+        if path == p or path.startswith(p + "/") or path.startswith(p + "?"):
+            return True
+    return False
 
 _stop_event = threading.Event()
 
@@ -240,6 +268,20 @@ async def auth_middleware(request: Request, call_next):
                 return RedirectResponse("/welcome")
         return JSONResponse({"detail": "Unauthorized"}, status_code=401)
     request.state.user = user
+
+    # Kiosk sessions are limited to a tiny allowlist of paths regardless of
+    # their `view` permission — the role has `view` because /, /api/cart*, and
+    # /transactions all require it via required_perm(), but the operator
+    # behind a kiosk PIN should not see /parts, /clients, /report, /map, etc.
+    if user.get("is_kiosk") and not _kiosk_allowed(path, request.method):
+        if path.startswith("/api/"):
+            return JSONResponse({"ok": False, "error": "kiosk_restricted"}, status_code=403)
+        return HTMLResponse(
+            "<html><body style='font-family:system-ui;max-width:560px;margin:4rem auto;color:#333'>"
+            "<h2>Kiosk mode</h2><p>This page isn't available in kiosk charge-out mode. "
+            "<a href='/'>← Back to scan</a></p></body></html>",
+            status_code=403,
+        )
 
     # Permission enforcement
     perm = rbac.required_perm(path, request.method)
@@ -330,6 +372,19 @@ def ctx(request: Request, db: Session, **kwargs):
     base["can"] = lambda p: bool(u.get("is_admin")) or p in u.get("perms", set())
     base["msg"] = request.query_params.get("msg", "")
     base["ok"] = request.query_params.get("ok", "1") != "0"
+    # Roles for the admin impersonation dropdown in the header user menu.
+    # Cheap query (handful of rows). Real_is_admin gates rendering in the
+    # template — a session that's already impersonating shouldn't see it
+    # twice. We expose the real-admin flag explicitly so the template
+    # doesn't have to introspect session state.
+    base["real_is_admin"] = bool(u.get("is_admin") or u.get("is_impersonating"))
+    if base["real_is_admin"]:
+        base["impersonate_roles"] = [
+            r.name for r in db.query(Role).order_by(Role.name).all()
+            if r.name != "Admin"
+        ]
+    else:
+        base["impersonate_roles"] = []
     base.update(kwargs)
     return base
 
@@ -464,6 +519,22 @@ def welcome(request: Request, db: Session = Depends(get_db)):
     title = html.escape(store.get(db, "app_title") or "Inv-Keep")
     accent = html.escape(store.get(db, "brand_accent") or "#2f81f7")
     emoji = html.escape(store.get(db, "brand_emoji") or "📦")
+    kiosk_enabled = store.get_bool(db, "kiosk_enabled") and bool(store.get(db, "kiosk_pin"))
+    tok = html.escape(csrf.issue(request), quote=True)
+    err = html.escape(request.query_params.get("err", ""))
+    kiosk_block = ""
+    if kiosk_enabled:
+        err_html = f'<div class="err">{err}</div>' if err else ""
+        kiosk_block = f"""
+<div class="kiosk-sep"><span>or</span></div>
+<form class="kiosk-form" method="post" action="/kiosk/login" autocomplete="off">
+  <input type="hidden" name="_csrf" value="{tok}">
+  <label for="kiosk-pin">Kiosk PIN</label>
+  <input id="kiosk-pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" required>
+  {err_html}
+  <button type="submit">Enter charge-out mode</button>
+  <small>Limited mode: scan &amp; charge out only.</small>
+</form>"""
     return HTMLResponse(
         f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -483,12 +554,25 @@ def welcome(request: Request, db: Session = Depends(get_db)):
     -webkit-tap-highlight-color:transparent;touch-action:manipulation}}
   .splash a.btn:active{{transform:scale(.98)}}
   .splash small{{display:block;margin-top:1.25rem;color:#6b7280;font-size:.8rem}}
+  .kiosk-sep{{display:flex;align-items:center;gap:.75rem;margin:1.5rem 0 1rem;color:#6b7280;font-size:.85rem}}
+  .kiosk-sep::before,.kiosk-sep::after{{content:"";flex:1;height:1px;background:#26303d}}
+  .kiosk-form{{display:flex;flex-direction:column;gap:.5rem;text-align:left}}
+  .kiosk-form label{{font-size:.85rem;color:#9aa4b2}}
+  .kiosk-form input[type=password]{{padding:.85rem 1rem;border-radius:12px;border:1px solid #2a3340;
+    background:#161b22;color:#e6e6e6;font-size:1.15rem;letter-spacing:.25rem;text-align:center}}
+  .kiosk-form button{{margin-top:.4rem;padding:.9rem 1rem;border:0;border-radius:12px;background:#1f2730;
+    color:#e6e6e6;font-weight:600;font-size:1rem;cursor:pointer}}
+  .kiosk-form button:active{{transform:scale(.98)}}
+  .kiosk-form small{{color:#6b7280;margin-top:.25rem;text-align:center}}
+  .kiosk-form .err{{background:#3a1d22;border:1px solid #5a2a32;color:#fca5a5;padding:.5rem .75rem;
+    border-radius:8px;font-size:.85rem;text-align:center}}
 </style></head><body><div class="splash">
 <div class="mark" aria-hidden="true">{emoji}</div>
 <h1>{title}</h1>
 <p>Tap below to sign in.</p>
 <a class="btn" href="/login">Sign in</a>
 <small>You'll be redirected to your identity provider.</small>
+{kiosk_block}
 </div></body></html>"""
     )
 
@@ -532,7 +616,97 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
 @app.post("/logout")
 async def logout(request: Request):
     request.session.pop("user", None)
+    request.session.pop("kiosk", None)
+    request.session.pop("kiosk_started_at", None)
+    request.session.pop("impersonate_role", None)
+    return RedirectResponse("/welcome", status_code=303)
+
+
+def _client_ip(request: Request) -> str:
+    # X-Forwarded-For is fine to trust for rate-limit bucketing (worst case a
+    # spoofer just lengthens their own lockout). Falls back to direct client.
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+@app.post("/kiosk/login")
+async def kiosk_login(
+    request: Request,
+    pin: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Validate the configured kiosk PIN and grant a locked-down Kiosk
+    session. CSRF-protected via the global middleware (the /welcome page
+    issues the token). Throttled per-IP after _KIOSK_PIN_MAX_FAILS bad
+    attempts."""
+    import time as _time
+    if not store.get_bool(db, "kiosk_enabled"):
+        return RedirectResponse("/welcome", status_code=303)
+    expected = store.get(db, "kiosk_pin") or ""
+    if not expected:
+        return RedirectResponse("/welcome?err=Kiosk+is+enabled+but+no+PIN+is+set.", status_code=303)
+    ip = _client_ip(request)
+    now = _time.time()
+    fails, locked_until = _KIOSK_PIN_FAILS.get(ip, (0, 0))
+    if locked_until and now < locked_until:
+        wait = int(locked_until - now)
+        return RedirectResponse(f"/welcome?err=Too+many+attempts.+Try+again+in+{wait}s.", status_code=303)
+    submitted = (pin or "").strip()
+    import hmac as _hmac
+    if not submitted or not _hmac.compare_digest(submitted, expected.strip()):
+        fails += 1
+        cooldown = 0
+        if fails >= _KIOSK_PIN_MAX_FAILS:
+            mins = store.get_int(db, "kiosk_lockout_minutes", 5) or 5
+            cooldown = int(now + mins * 60)
+            fails = 0  # reset after locking
+        _KIOSK_PIN_FAILS[ip] = (fails, cooldown)
+        return RedirectResponse("/welcome?err=Incorrect+PIN.", status_code=303)
+    # Success — clear throttle, drop any stale OIDC session, install kiosk flag.
+    _KIOSK_PIN_FAILS.pop(ip, None)
+    request.session.pop("user", None)
+    request.session.pop("impersonate_role", None)
+    request.session["kiosk"] = True
+    request.session["kiosk_started_at"] = datetime.utcnow().isoformat()
+    audit.record(db, {"username": store.get(db, "kiosk_username") or "kiosk"},
+                 "kiosk.login", "kiosk", None, f"PIN session opened from {ip}")
+    db.commit()
     return RedirectResponse("/", status_code=303)
+
+
+@app.post("/impersonate")
+async def impersonate(
+    request: Request,
+    role: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Admin-only: assume another role's permissions for this session.
+    Posting role="" (or "stop") clears the override."""
+    user = current_user(request)
+    # Block when the request is already running under an impersonated identity:
+    # otherwise an admin who downgraded to Viewer would still see the dropdown
+    # and could chain switches. The "Stop" action below is allowed.
+    target = (role or "").strip()
+    if target.lower() in ("", "stop", "off", "none"):
+        if user.get("is_impersonating") or user.get("is_admin"):
+            request.session.pop("impersonate_role", None)
+        return redirect("/", "Stopped impersonating.")
+    if not user.get("is_admin"):
+        return JSONResponse({"detail": "Admin only"}, status_code=403)
+    role_row = db.query(Role).filter(Role.name == target).first()
+    if not role_row:
+        return redirect("/", f"Unknown role '{target}'.", ok=False)
+    # Refuse impersonating Admin — pointless and confusing (it's the same
+    # permission surface but with the banner permanently up).
+    if role_row.is_admin:
+        return redirect("/", "Impersonating another Admin role is a no-op.", ok=False)
+    request.session["impersonate_role"] = role_row.name
+    audit.record(db, user, "impersonate.start", "rbac", role_row.id,
+                 f"Admin {user.get('username','')} now viewing as {role_row.name}")
+    db.commit()
+    return redirect("/", f"Now viewing as {role_row.name}.")
 
 
 # ============================================================ scan page
@@ -550,8 +724,22 @@ def scan_page(request: Request, db: Session = Depends(get_db)):
         .filter(Job.active == True, Client.archived == False)  # noqa: E712
         .order_by(Job.name).all()
     )
+    locations = (
+        db.query(Location)
+        .filter(Location.active == True, Location.archived == False)  # noqa: E712
+        .order_by(Location.name).all()
+    )
     recent = db.query(Transaction).order_by(Transaction.created_at.desc()).limit(15).all()
-    return templates.TemplateResponse("scan.html", ctx(request, db, clients=clients, jobs=jobs, recent=recent))
+    # Kiosk sessions optionally start with a pinned default location.
+    user = current_user(request)
+    default_loc = ""
+    if user.get("is_kiosk"):
+        default_loc = store.get(db, "kiosk_location_id") or ""
+    return templates.TemplateResponse(
+        "scan.html",
+        ctx(request, db, clients=clients, jobs=jobs, recent=recent,
+            locations=locations, default_location_id=default_loc),
+    )
 
 
 # -------------------- cart helpers (response serializer) --------------------
@@ -575,6 +763,8 @@ def _cart_payload(db, cart):
         "client_walkin": bool(cart.client and cart.client.archived),
         "job_id": cart.job_id,
         "job_name": cart.job.name if cart.job else "",
+        "location_id": cart.location_id,
+        "location_name": cart.location.name if cart.location else "",
         "lines": [
             {
                 "id": ln.id,
@@ -612,6 +802,7 @@ class CartScanIn(BaseModel):
 class CartSetIn(BaseModel):
     client_id: Optional[int] = None
     job_id: Optional[int] = None
+    location_id: Optional[int] = None
 
 
 class CartLineIn(BaseModel):
@@ -659,18 +850,34 @@ def api_cart_scan(payload: CartScanIn, request: Request, db: Session = Depends(g
         return {"ok": False, "error": "unknown_barcode", "barcode": barcode}
 
     qty = 1 if part.type == "unique" else max(1, payload.quantity)
-    if part.quantity_on_hand < qty:
-        return {"ok": False, "error": "insufficient_stock",
-                "available": part.quantity_on_hand, "part": part.name}
 
     cart = orders.open_cart_for(db, user.get("username", ""))
     fresh = False
     if cart is None:
         cart = Order(status="open", created_by=user.get("username", ""))
+        # Default to the first active location so the first scan doesn't
+        # bounce; the operator can change it via the dropdown.
+        cart.location_id = orders.default_location_id(db)
         db.add(cart)
         db.flush()
         fresh = True
         audit.record(db, user, "order.open", "order", cart.id, f"Opened cart #{cart.id}")
+
+    # Enforce stock at the cart's source location. Falls back to a no-location
+    # row if the cart somehow still has no location pinned (no active
+    # locations) — old behaviour, decrementing Part.quantity_on_hand only.
+    location_id = cart.location_id
+    if location_id is not None:
+        sl = orders.ensure_stock_row(db, part.id, location_id)
+        if sl.quantity < qty:
+            return {"ok": False, "error": "insufficient_stock",
+                    "available": sl.quantity, "part": part.name,
+                    "location": cart.location.name if cart.location else ""}
+        sl.quantity -= qty
+    else:
+        if part.quantity_on_hand < qty:
+            return {"ok": False, "error": "insufficient_stock",
+                    "available": part.quantity_on_hand, "part": part.name}
 
     part.quantity_on_hand -= qty
     lat, lng, acc = _sanitize_geo(payload)
@@ -679,6 +886,7 @@ def api_cart_scan(payload: CartScanIn, request: Request, db: Session = Depends(g
         part_id=part.id,
         customer_id=cart.customer_id,  # null until /api/cart/set; backfilled on client pick
         job_id=cart.job_id,
+        location_id=location_id,
         quantity=qty,
         unit_cost_at_time=part.unit_cost,
         unit_price_at_time=part.unit_price,
@@ -718,6 +926,7 @@ async def api_cart_custom(
     fresh = False
     if cart is None:
         cart = Order(status="open", created_by=user.get("username", ""))
+        cart.location_id = orders.default_location_id(db)
         db.add(cart)
         db.flush()
         fresh = True
@@ -743,6 +952,12 @@ async def api_cart_custom(
         part.image = img_path
     # Decrement stock to 0 — the qty we "bought" is what we're billing.
     part.quantity_on_hand -= qty
+    # Stamp a stock_levels row at the cart's location too so the per-location
+    # ledger stays consistent: this transient part starts with qty, then we
+    # immediately decrement it to 0.
+    if cart.location_id is not None:
+        sl = orders.ensure_stock_row(db, part.id, cart.location_id)
+        sl.quantity = 0
     # Reuse the strict finite-check from _sanitize_geo so a NaN/Infinity in
     # the multipart body can't poison Transaction.lat.
     g_lat = lat if (_finite(lat) and -90 <= lat <= 90) else None
@@ -756,6 +971,7 @@ async def api_cart_custom(
         part_id=part.id,
         customer_id=cart.customer_id,
         job_id=cart.job_id,
+        location_id=cart.location_id,
         quantity=qty,
         unit_cost_at_time=part.unit_cost,
         unit_price_at_time=part.unit_price,
@@ -791,13 +1007,27 @@ def api_cart_set(payload: CartSetIn, request: Request, db: Session = Depends(get
     else:
         # 0 or None → caller is clearing the job association.
         cart.job_id = None
-    # Backfill the new client/job onto open transactions so submitted lines
-    # carry the right customer/job at report time.
+    # Source location can be changed mid-cart. Validate it's a real, active
+    # location, then re-stamp all open lines so reporting + voids point at
+    # the right location.
+    if payload.location_id is not None:
+        loc = db.get(Location, payload.location_id) if payload.location_id else None
+        if payload.location_id and (not loc or not loc.active or loc.archived):
+            return {"ok": False, "error": "bad_location"}
+        cart.location_id = loc.id if loc else None
+    # Backfill the new client/job/location onto open transactions so
+    # submitted lines carry the right values at report time.
+    line_updates = {}
     if cart.customer_id:
+        line_updates["customer_id"] = cart.customer_id
+        line_updates["job_id"] = cart.job_id
+    if payload.location_id is not None:
+        line_updates["location_id"] = cart.location_id
+    if line_updates:
         db.query(Transaction).filter(
             Transaction.order_id == cart.id,
             Transaction.voided == False,  # noqa: E712
-        ).update({"customer_id": cart.customer_id, "job_id": cart.job_id})
+        ).update(line_updates)
     db.commit()
     return {"ok": True, "cart": _cart_payload(db, cart)}
 
@@ -822,6 +1052,7 @@ def api_cart_walkin(payload: CartWalkinIn, request: Request, db: Session = Depen
     fresh_cart = False
     if cart is None:
         cart = Order(status="open", created_by=user.get("username", ""))
+        cart.location_id = orders.default_location_id(db)
         db.add(cart)
         db.flush()
         fresh_cart = True
@@ -855,9 +1086,18 @@ def api_cart_line_update(line_id: int, payload: CartLineIn, request: Request, db
     if line.part.type == "unique":
         new_qty = 1
     delta = new_qty - line.quantity
-    if delta > 0 and line.part.quantity_on_hand < delta:
-        return {"ok": False, "error": "insufficient_stock",
-                "available": line.part.quantity_on_hand, "part": line.part.name}
+    # Stock check is against the line's source location (set when scanned).
+    if line.location_id is not None:
+        sl = orders.ensure_stock_row(db, line.part_id, line.location_id)
+        if delta > 0 and sl.quantity < delta:
+            return {"ok": False, "error": "insufficient_stock",
+                    "available": sl.quantity, "part": line.part.name,
+                    "location": line.location.name if line.location else ""}
+        sl.quantity -= delta
+    else:
+        if delta > 0 and line.part.quantity_on_hand < delta:
+            return {"ok": False, "error": "insufficient_stock",
+                    "available": line.part.quantity_on_hand, "part": line.part.name}
     line.part.quantity_on_hand -= delta
     line.quantity = new_qty
     db.commit()
@@ -873,6 +1113,10 @@ def api_cart_line_remove(line_id: int, request: Request, db: Session = Depends(g
     line = db.get(Transaction, line_id)
     if not line or line.order_id != cart.id or line.voided:
         return {"ok": False, "error": "bad_line"}
+    # Restore to the same location the stock came from.
+    if line.location_id is not None:
+        sl = orders.ensure_stock_row(db, line.part_id, line.location_id)
+        sl.quantity += line.quantity
     line.part.quantity_on_hand += line.quantity
     line.voided = True
     db.commit()
@@ -929,6 +1173,9 @@ def api_cart_cancel(request: Request, db: Session = Depends(get_db)):
     lines = orders.cart_lines(db, cart)
     charge, _cost, _margin = orders.cart_totals(lines)
     for ln in lines:
+        if ln.location_id is not None:
+            sl = orders.ensure_stock_row(db, ln.part_id, ln.location_id)
+            sl.quantity += ln.quantity
         ln.part.quantity_on_hand += ln.quantity
         ln.voided = True
     cart.status = "cancelled"
@@ -1106,12 +1353,212 @@ def api_void(txn_id: int, request: Request, db: Session = Depends(get_db)):
     part = db.get(Part, txn.part_id)
     if part:
         part.quantity_on_hand += txn.quantity
+    # Restore to the location the line came from. Legacy rows without
+    # a location_id only restore the aggregate Part.quantity_on_hand.
+    if txn.location_id is not None:
+        sl = orders.ensure_stock_row(db, txn.part_id, txn.location_id)
+        sl.quantity += txn.quantity
     audit.record(
         db, current_user(request), "sale.void", "transaction", txn.id,
         f"Voided {txn.quantity} × {part.name if part else '?'}",
     )
     db.commit()
     return {"ok": True}
+
+
+# ============================================================ locations + transfers
+@app.get("/locations", response_class=HTMLResponse)
+def locations_page(request: Request, db: Session = Depends(get_db)):
+    show_archived = request.query_params.get("archived") == "1"
+    q = db.query(Location)
+    if not show_archived:
+        q = q.filter(Location.archived == False)  # noqa: E712
+    locs = q.order_by(Location.name).all()
+    # Total stock per location for the index page (cheap sum on stock_levels).
+    totals = {}
+    for loc in locs:
+        totals[loc.id] = (db.query(StockLevel)
+                          .filter(StockLevel.location_id == loc.id)
+                          .with_entities(func.coalesce(func.sum(StockLevel.quantity), 0))
+                          .scalar() or 0)
+    return templates.TemplateResponse(
+        "locations.html",
+        ctx(request, db, locations=locs, totals=totals, show_archived=show_archived),
+    )
+
+
+@app.post("/locations/add")
+def locations_add(request: Request, name: str = Form(...), notes: str = Form(""),
+                  db: Session = Depends(get_db)):
+    nm = (name or "").strip()
+    if not nm:
+        return redirect("/locations", "Name is required.", ok=False)
+    if db.query(Location).filter(Location.name == nm).first():
+        return redirect("/locations", f"A location named '{nm}' already exists.", ok=False)
+    loc = Location(name=nm, notes=notes.strip(), active=True, archived=False)
+    db.add(loc)
+    db.flush()
+    audit.record(db, current_user(request), "location.add", "location", loc.id, f"Added {nm}")
+    db.commit()
+    return redirect("/locations", f"Location '{nm}' added.")
+
+
+@app.post("/locations/{loc_id}/edit")
+def locations_edit(loc_id: int, request: Request, name: str = Form(...), notes: str = Form(""),
+                   active: str = Form(""), db: Session = Depends(get_db)):
+    loc = db.get(Location, loc_id)
+    if not loc:
+        return redirect("/locations", "Location not found.", ok=False)
+    nm = (name or "").strip()
+    if not nm:
+        return redirect("/locations", "Name is required.", ok=False)
+    dup = db.query(Location).filter(Location.name == nm, Location.id != loc.id).first()
+    if dup:
+        return redirect("/locations", f"A location named '{nm}' already exists.", ok=False)
+    loc.name = nm
+    loc.notes = notes.strip()
+    loc.active = active == "on"
+    audit.record(db, current_user(request), "location.edit", "location", loc.id, f"Edited {nm}")
+    db.commit()
+    return redirect("/locations", "Location saved.")
+
+
+@app.post("/locations/{loc_id}/archive")
+def locations_archive(loc_id: int, request: Request, db: Session = Depends(get_db)):
+    loc = db.get(Location, loc_id)
+    if not loc:
+        return redirect("/locations", "Location not found.", ok=False)
+    # Refuse if there's still stock here — archiving would orphan it.
+    stock = (db.query(func.coalesce(func.sum(StockLevel.quantity), 0))
+             .filter(StockLevel.location_id == loc.id).scalar() or 0)
+    if stock > 0:
+        return redirect("/locations",
+                        f"Move the remaining {stock} unit(s) out of '{loc.name}' before archiving.",
+                        ok=False)
+    loc.archived = True
+    loc.active = False
+    audit.record(db, current_user(request), "location.archive", "location", loc.id, f"Archived {loc.name}")
+    db.commit()
+    return redirect("/locations", f"Location '{loc.name}' archived.")
+
+
+@app.post("/locations/{loc_id}/restore")
+def locations_restore(loc_id: int, request: Request, db: Session = Depends(get_db)):
+    loc = db.get(Location, loc_id)
+    if not loc:
+        return redirect("/locations", "Location not found.", ok=False)
+    loc.archived = False
+    loc.active = True
+    audit.record(db, current_user(request), "location.restore", "location", loc.id, f"Restored {loc.name}")
+    db.commit()
+    return redirect("/locations", f"Location '{loc.name}' restored.")
+
+
+@app.get("/transfers", response_class=HTMLResponse)
+def transfers_page(request: Request, db: Session = Depends(get_db)):
+    rows = (db.query(Transfer)
+            .order_by(Transfer.created_at.desc())
+            .limit(200).all())
+    return templates.TemplateResponse(
+        "transfers.html",
+        ctx(request, db, transfers=rows),
+    )
+
+
+@app.get("/transfers/new", response_class=HTMLResponse)
+def transfer_new_page(request: Request, db: Session = Depends(get_db)):
+    locs = (db.query(Location)
+            .filter(Location.active == True, Location.archived == False)  # noqa: E712
+            .order_by(Location.name).all())
+    parts = (db.query(Part)
+             .filter(Part.active == True, Part.archived == False)  # noqa: E712
+             .order_by(Part.name).all())
+    return templates.TemplateResponse(
+        "transfer_form.html",
+        ctx(request, db, locations=locs, parts=parts),
+    )
+
+
+@app.post("/transfers/new")
+async def transfer_create(
+    request: Request,
+    from_location_id: int = Form(...),
+    to_location_id: int = Form(...),
+    notes: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    user = current_user(request)
+    if from_location_id == to_location_id:
+        return redirect("/transfers/new", "Source and destination must differ.", ok=False)
+    src = db.get(Location, from_location_id)
+    dst = db.get(Location, to_location_id)
+    if not src or not dst:
+        return redirect("/transfers/new", "Unknown location.", ok=False)
+    if src.archived or dst.archived or not src.active or not dst.active:
+        return redirect("/transfers/new", "Both locations must be active.", ok=False)
+
+    # Lines are submitted as parallel arrays (part_id[] + quantity[]). FastAPI
+    # parses repeated form fields when typed as List, but we read the raw form
+    # to keep the markup simple.
+    form = await request.form()
+    part_ids = form.getlist("part_id")
+    qtys = form.getlist("quantity")
+    pairs = []
+    for pid, q in zip(part_ids, qtys):
+        try:
+            pid_i = int(pid)
+            q_i = int(q)
+        except (TypeError, ValueError):
+            continue
+        if pid_i and q_i > 0:
+            pairs.append((pid_i, q_i))
+    if not pairs:
+        return redirect("/transfers/new", "Add at least one part + quantity.", ok=False)
+
+    # Validate sufficient stock at source for every line *before* mutating.
+    insufficient = []
+    for pid, q in pairs:
+        sl = orders.ensure_stock_row(db, pid, src.id)
+        if sl.quantity < q:
+            part = db.get(Part, pid)
+            insufficient.append(f"{part.name if part else '#'+str(pid)}: need {q}, have {sl.quantity}")
+    if insufficient:
+        return redirect("/transfers/new",
+                        "Source doesn't have enough stock — " + "; ".join(insufficient),
+                        ok=False)
+
+    # Apply atomically. Source decrement + dest increment + Transfer row, one commit.
+    transfer = Transfer(
+        from_location_id=src.id,
+        to_location_id=dst.id,
+        status="completed",
+        created_by=user.get("username", ""),
+        notes=notes.strip(),
+        completed_at=datetime.utcnow(),
+    )
+    db.add(transfer)
+    db.flush()
+    for pid, q in pairs:
+        src_sl = orders.ensure_stock_row(db, pid, src.id)
+        dst_sl = orders.ensure_stock_row(db, pid, dst.id)
+        src_sl.quantity -= q
+        dst_sl.quantity += q
+        db.add(TransferLine(transfer_id=transfer.id, part_id=pid, quantity=q))
+    audit.record(db, user, "transfer.complete", "transfer", transfer.id,
+                 f"{src.name} → {dst.name}: {len(pairs)} line(s)")
+    db.commit()
+    return redirect(f"/transfers/{transfer.id}", f"Transfer #{transfer.id} completed.")
+
+
+@app.get("/transfers/{tid}", response_class=HTMLResponse)
+def transfer_detail(tid: int, request: Request, db: Session = Depends(get_db)):
+    t = db.get(Transfer, tid)
+    if not t:
+        return redirect("/transfers", "Transfer not found.", ok=False)
+    return templates.TemplateResponse(
+        "transfer_detail.html",
+        ctx(request, db, transfer=t),
+    )
 
 
 # ============================================================ parts
@@ -1124,10 +1571,28 @@ def parts_page(request: Request, db: Session = Depends(get_db)):
     parts = q.order_by(Part.name).all()
     cats = category_choices(db)
     cat_names = {cid: category_path(db, c) for cid, _label, _d, c in cats}
+    locations = (db.query(Location)
+                 .filter(Location.active == True, Location.archived == False)  # noqa: E712
+                 .order_by(Location.name).all())
+    # Build a {(part_id, loc_id): qty} map for the per-location chips. Cheap —
+    # one query, then group in Python.
+    stock_map = {}
+    for sl in db.query(StockLevel).all():
+        stock_map[(sl.part_id, sl.location_id)] = sl.quantity
+    # Per-part [(loc, qty), ...] for the template; skip zero rows so the chip
+    # row stays compact.
+    part_stock = {}
+    for p in parts:
+        rows = []
+        for loc in locations:
+            qty = stock_map.get((p.id, loc.id), 0)
+            if qty:
+                rows.append((loc, qty))
+        part_stock[p.id] = rows
     return templates.TemplateResponse(
         "parts.html",
         ctx(request, db, parts=parts, categories=cats, cat_names=cat_names,
-            show_archived=show_archived,
+            show_archived=show_archived, locations=locations, part_stock=part_stock,
             prefill=request.query_params.get("barcode", "")),
     )
 
@@ -1180,6 +1645,12 @@ async def parts_add(
     img_path = await _save_item_image(image, part.id)
     if img_path:
         part.image = img_path
+    # Seed the new part's stock at the default location so per-location
+    # accounting matches the legacy single counter on day one.
+    default_loc = orders.default_location_id(db)
+    if default_loc is not None and part.quantity_on_hand:
+        sl = orders.ensure_stock_row(db, part.id, default_loc)
+        sl.quantity = part.quantity_on_hand
     audit.record(db, current_user(request), "part.create", "part", part.id, f"Created {part.name} ({part.barcode})")
     db.commit()
     if generated:
@@ -1224,14 +1695,33 @@ async def parts_edit(
 
 
 @app.post("/parts/{part_id}/restock")
-def parts_restock(part_id: int, request: Request, amount: int = Form(...), db: Session = Depends(get_db)):
+def parts_restock(part_id: int, request: Request, amount: int = Form(...),
+                  location_id: str = Form(""), db: Session = Depends(get_db)):
     part = db.get(Part, part_id)
-    if part:
-        part.quantity_on_hand += amount
-        if part.low_stock_alerted:
-            part.low_stock_alerted = False
-        audit.record(db, current_user(request), "part.restock", "part", part.id, f"+{amount} → {part.quantity_on_hand}")
-        db.commit()
+    if not part:
+        return redirect("/parts", "Part not found.", ok=False)
+    # Resolve target location: explicit -> first active.
+    loc_id = None
+    if location_id.strip():
+        try:
+            loc_id = int(location_id)
+        except ValueError:
+            loc_id = None
+    if loc_id is None:
+        loc_id = orders.default_location_id(db)
+    if loc_id is None:
+        return redirect("/parts", "No active location to restock into — add one in Settings → Locations.", ok=False)
+    loc = db.get(Location, loc_id)
+    if not loc or loc.archived or not loc.active:
+        return redirect("/parts", "Pick an active location.", ok=False)
+    sl = orders.ensure_stock_row(db, part.id, loc.id)
+    sl.quantity += amount
+    part.quantity_on_hand += amount
+    if part.low_stock_alerted:
+        part.low_stock_alerted = False
+    audit.record(db, current_user(request), "part.restock", "part", part.id,
+                 f"+{amount} → {loc.name} (total {part.quantity_on_hand})")
+    db.commit()
     return redirect("/parts", "Stock updated.")
 
 
@@ -1496,6 +1986,7 @@ def _txn_markers(txns, tz_name):
 
 @app.get("/transactions", response_class=HTMLResponse)
 def transactions_page(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request)
     # Exclude lines that still belong to an open / cancelled cart — they
     # aren't real history. Legacy rows with order_id=NULL stay visible.
     q = (
@@ -1504,19 +1995,46 @@ def transactions_page(request: Request, db: Session = Depends(get_db)):
         .filter((Order.id.is_(None)) | (Order.status == "submitted"))
     )
     month = request.query_params.get("month", "")
-    if month:
-        try:
-            year, mon = (int(x) for x in month.split("-"))
-            start, end = reports.month_bounds(year, mon)
-            q = q.filter(Transaction.created_at >= start, Transaction.created_at < end)
-        except ValueError:
-            pass
+    location_id_q = request.query_params.get("location_id", "")
+    selected_loc = None
+    if user.get("is_kiosk"):
+        # Kiosk sessions only see the past 24h of kiosk-submitted charge-outs.
+        # The month + location query strings are ignored.
+        kiosk_username = store.get(db, "kiosk_username") or "kiosk"
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+        q = q.filter(
+            Transaction.created_at >= cutoff,
+            Transaction.scanned_by == kiosk_username,
+        )
+        month = ""
+        location_id_q = ""
+    else:
+        if month:
+            try:
+                year, mon = (int(x) for x in month.split("-"))
+                start, end = reports.month_bounds(year, mon)
+                q = q.filter(Transaction.created_at >= start, Transaction.created_at < end)
+            except ValueError:
+                pass
+        if location_id_q:
+            try:
+                lid = int(location_id_q)
+                q = q.filter(Transaction.location_id == lid)
+                selected_loc = lid
+            except ValueError:
+                pass
     txns = q.order_by(Transaction.created_at.desc()).limit(500).all()
     cfg = store.all_settings(db)
     markers = _txn_markers(txns, cfg.get("timezone") or "UTC")
+    filter_locs = (db.query(Location)
+                   .filter(Location.archived == False)  # noqa: E712
+                   .order_by(Location.name).all())
     return templates.TemplateResponse(
         "transactions.html",
-        ctx(request, db, txns=txns, month=month, markers=markers, currency=cfg.get("currency", "$")),
+        ctx(request, db, txns=txns, month=month, markers=markers,
+            currency=cfg.get("currency", "$"),
+            filter_locations=filter_locs,
+            selected_location_id=selected_loc if selected_loc is not None else ""),
     )
 
 
@@ -1692,19 +2210,35 @@ def _selected_client_ids(qp):
     return out
 
 
+def _selected_location_id(qp):
+    raw = qp.get("location_id", "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
 @app.get("/report", response_class=HTMLResponse)
 def report_page(request: Request, db: Session = Depends(get_db)):
     qp = request.query_params
     start, end, label, month_str, date_from, date_to = _resolve_report_window(qp)
     client_ids = _selected_client_ids(qp)
-    report, totals = reports.build_report_range(db, start, end, client_ids=client_ids or None)
+    loc_id = _selected_location_id(qp)
+    report, totals = reports.build_report_range(db, start, end, client_ids=client_ids or None,
+                                                 location_id=loc_id)
     all_clients = db.query(Client).filter(Client.active == True).order_by(Client.name).all()  # noqa: E712
+    all_locations = (db.query(Location)
+                     .filter(Location.archived == False)  # noqa: E712
+                     .order_by(Location.name).all())
     return templates.TemplateResponse(
         "report.html",
         ctx(request, db, report=report, totals=totals,
             month=month_str, range_label=label,
             date_from=date_from, date_to=date_to,
-            all_clients=all_clients, selected_client_ids=set(client_ids)),
+            all_clients=all_clients, selected_client_ids=set(client_ids),
+            all_locations=all_locations, selected_location_id=loc_id),
     )
 
 
@@ -1713,7 +2247,9 @@ def report_csv(request: Request, db: Session = Depends(get_db)):
     qp = request.query_params
     start, end, label, month_str, date_from, date_to = _resolve_report_window(qp)
     client_ids = _selected_client_ids(qp)
-    report, totals = reports.build_report_range(db, start, end, client_ids=client_ids or None)
+    loc_id = _selected_location_id(qp)
+    report, totals = reports.build_report_range(db, start, end, client_ids=client_ids or None,
+                                                 location_id=loc_id)
     csv_text = reports.report_csv_for(report, totals)
     if month_str:
         filename = f"charge-out-{month_str}.csv"
@@ -1729,13 +2265,17 @@ def report_csv(request: Request, db: Session = Depends(get_db)):
 # ============================================================ settings
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request, db: Session = Depends(get_db)):
+    kiosk_locs = (db.query(Location)
+                  .filter(Location.active == True, Location.archived == False)  # noqa: E712
+                  .order_by(Location.name).all())
     return templates.TemplateResponse(
         "settings.html",
         ctx(request, db, providers=emailer.PROVIDERS, this_month=datetime.utcnow().strftime("%Y-%m"),
             disable_auth=settings.disable_auth, size_groups=labels.grouped_sizes(),
             currencies=CURRENCIES, label_sizes=labels.LABEL_SIZES,
             timezones=TIMEZONES,
-            roles=db.query(Role).order_by(Role.name).all()),
+            roles=db.query(Role).order_by(Role.name).all(),
+            kiosk_locations=kiosk_locs),
     )
 
 
@@ -2173,6 +2713,59 @@ def settings_auth(
     if auth_mode == "oidc":
         note += " Log out and back in to test it (break-glass: set DISABLE_AUTH=1 if locked out)."
     return redirect("/settings", note)
+
+
+@app.post("/settings/kiosk")
+def settings_kiosk(
+    request: Request,
+    kiosk_enabled: str = Form(""),
+    kiosk_pin: str = Form(""),
+    kiosk_username: str = Form("kiosk"),
+    kiosk_lockout_minutes: str = Form("5"),
+    kiosk_location_id: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Admin-only kiosk PIN settings. Enabling without a PIN is rejected so
+    the welcome page never shows a form that nothing can answer."""
+    user = current_user(request)
+    if not user.get("is_admin"):
+        return JSONResponse({"detail": "Admin only"}, status_code=403)
+    enabled = "1" if kiosk_enabled == "on" else "0"
+    pin = (kiosk_pin or "").strip()
+    if pin:
+        if not pin.isdigit() or len(pin) < 4 or len(pin) > 12:
+            return redirect("/settings", "Kiosk PIN must be 4–12 digits.", ok=False)
+        store.set(db, "kiosk_pin", pin)
+    if enabled == "1" and not (pin or store.get(db, "kiosk_pin")):
+        return redirect("/settings", "Set a PIN before enabling kiosk mode.", ok=False)
+    store.set(db, "kiosk_enabled", enabled)
+    uname = (kiosk_username or "kiosk").strip() or "kiosk"
+    store.set(db, "kiosk_username", uname)
+    try:
+        mins = max(1, min(1440, int(kiosk_lockout_minutes or "5")))
+    except ValueError:
+        mins = 5
+    store.set(db, "kiosk_lockout_minutes", str(mins))
+    # Default kiosk source location: validate it's a real, active location.
+    raw_loc = (kiosk_location_id or "").strip()
+    if raw_loc:
+        try:
+            lid = int(raw_loc)
+        except ValueError:
+            lid = None
+        if lid is None:
+            store.set(db, "kiosk_location_id", "")
+        else:
+            loc = db.get(Location, lid)
+            if not loc or loc.archived or not loc.active:
+                return redirect("/settings", "Pick an active location for the kiosk default.", ok=False)
+            store.set(db, "kiosk_location_id", str(lid))
+    else:
+        store.set(db, "kiosk_location_id", "")
+    audit.record(db, user, "settings.kiosk", "settings", None,
+                 f"Kiosk mode {'enabled' if enabled == '1' else 'disabled'}")
+    db.commit()
+    return redirect("/settings", "Kiosk settings saved.")
 
 
 @app.post("/settings/email")

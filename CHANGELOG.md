@@ -3,6 +3,59 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.15.0] — 2026-06-03
+- **Stock is now counted per location.** A free-form list of locations
+  lives in Settings → Locations: the office, work trucks, a job-site
+  cage, anything you want counted separately. Every part has an
+  independent per-location count; the legacy aggregate
+  `quantity_on_hand` remains as the sum across locations so every
+  existing page, report, and low-stock alert keeps working.
+- **Scan from the right truck.** The cart card has a "From location"
+  dropdown. Each scan decrements stock at that location, and the
+  resulting transaction line records which location it came off —
+  cancellations and voids restore stock back to the same place.
+- **Stock transfers between locations.** Admins/managers can post an
+  atomic transfer (multiple lines, source → destination) from
+  `/transfers/new`. The full history is at `/transfers/<id>`, and
+  inadequate source stock blocks the transfer cleanly before any
+  rows are mutated.
+- **Per-location billing breakdown on the report.** `/report` now has
+  a location filter and a "By location" subtotal section showing
+  lines, cost, charge, and margin per location. The CSV export
+  honours the filter.
+- **Kiosk PIN can pin a session to a default location.** Trucks that
+  run as kiosks no longer need an operator to remember to pick the
+  right source on every cart. The dropdown is still there for override.
+- New built-in permission `manage_locations` (Admin + Manager). A
+  one-time additive backfill grants it to existing Manager rows on
+  startup so nothing breaks for upgrade-in-place users.
+- Migration on first boot: a `Main` location is created and each
+  part's existing quantity is copied into a per-location row there.
+  Any open carts at the moment of upgrade are auto-cancelled and
+  their stock restored to `Main` — pre-1.15 carts have no
+  location stamp on their lines, so this is the only safe path.
+
+## [1.14.0] — 2026-06-02
+- **Kiosk PIN charge-out.** A new admin-configurable PIN can be entered on
+  the sign-in screen to start a locked-down "Kiosk" session — scan and
+  charge out only, plus a 24-hour rear-view of kiosk-submitted orders.
+  Designed for shared front-counter tablets where forcing every operator
+  through OIDC is impractical and signing in once as a human gives the
+  audit log the wrong attribution. PIN attempts are throttled per IP
+  (5 bad attempts → cooldown), the PIN is masked in the Settings UI like
+  other secrets, and toggling the feature off immediately drops live
+  kiosk sessions.
+- **Admin "View as…" impersonation.** Admins now get a role dropdown in
+  the header user menu that drops their session into another role's
+  permission set (Manager / Operator / Viewer / Kiosk) so they can
+  verify what each role actually sees without keeping a second test
+  account. A banner stays pinned across the top while impersonating
+  with a one-click Stop. Admin-only audited action; non-admins cannot
+  reach the route.
+- Built-in **Kiosk** role added to RBAC (`view` + `checkout`); the
+  /transactions handler now scopes its query to the last 24 hours and
+  the kiosk username when the request is from a kiosk session.
+
 ## [1.13.0] — 2026-06-02
 - **Security headers on every response.** Added `Content-Security-Policy`
   (lax — allows the app's inline scripts/styles, and OpenStreetMap tiles for the

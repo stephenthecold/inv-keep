@@ -94,6 +94,17 @@ DEFAULTS = {
     "alert_daily_hour": "6",
     "alert_daily_recipients": "",
     "alert_daily_last_sent": "",
+    # Kiosk PIN charge-out. When enabled, the /welcome page shows a PIN
+    # input that grants a locked-down "Kiosk" session (scan + checkout +
+    # a 24-hour rear-view of kiosk-submitted orders).
+    "kiosk_enabled": "0",
+    "kiosk_pin": "",
+    "kiosk_username": "kiosk",
+    "kiosk_lockout_minutes": "5",
+    # When set, a kiosk-PIN session has this location pre-selected on the
+    # cart card (operator can still override via the dropdown). Empty falls
+    # back to the first active location.
+    "kiosk_location_id": "",
 }
 
 SECRET_KEYS = {
@@ -102,6 +113,7 @@ SECRET_KEYS = {
     "oauth_refresh_token",
     "oauth_access_token",
     "oidc_client_secret",
+    "kiosk_pin",
 }
 
 

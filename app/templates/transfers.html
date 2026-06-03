@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Stock transfers</h1>
+  <div class="head-actions">
+    <a class="btn ghost" href="/locations">Locations</a>
+    <a class="btn" href="/transfers/new">+ New transfer</a>
+  </div>
+</div>
+
+<p class="muted">Atomic stock moves between locations. Each transfer decrements the source and increments the destination in one transaction so partial moves can't strand inventory.</p>
+
+<div class="table-scroll">
+<table class="lines">
+  <thead><tr><th>When</th><th>From</th><th>To</th><th class="num">Lines</th><th>By</th><th>Notes</th><th></th></tr></thead>
+  <tbody>
+    {% for t in transfers %}
+    <tr>
+      <td>{{ t.created_at | local_dt(cfg.timezone) }}</td>
+      <td>{{ t.from_location.name if t.from_location else '—' }}</td>
+      <td>{{ t.to_location.name if t.to_location else '—' }}</td>
+      <td class="num">{{ t.lines | length }}</td>
+      <td>{{ t.created_by }}</td>
+      <td class="muted">{{ t.notes }}</td>
+      <td><a href="/transfers/{{ t.id }}">View</a></td>
+    </tr>
+    {% else %}
+    <tr class="empty"><td colspan="7">No transfers yet — <a href="/transfers/new">create one</a>.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

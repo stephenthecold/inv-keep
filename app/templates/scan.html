@@ -33,6 +33,12 @@
   </header>
 
   <div class="grid-form cart-targets">
+    <label>From location
+      <select id="cart-location" data-default="{{ default_location_id }}">
+        {% if not locations %}<option value="">— add a location first —</option>{% endif %}
+        {% for l in locations %}<option value="{{ l.id }}" {% if default_location_id and default_location_id|string == l.id|string %}selected{% endif %}>{{ l.name }}</option>{% endfor %}
+      </select>
+    </label>
     <label>Client
       <select id="cart-client">
         <option value="">— pick a client —</option>

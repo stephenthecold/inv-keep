@@ -29,6 +29,7 @@
     </button>
     <nav>
       {% if can('checkout') %}<a href="/">Scan</a>{% endif %}
+      {% if not user.is_kiosk %}
       <div class="navdrop">
         <button type="button" class="navdrop-btn" data-menu="#items-menu" aria-haspopup="true" aria-expanded="false">Items <span class="caret">▾</span></button>
         <div class="account-menu navdrop-menu" id="items-menu" data-menu-pop hidden>
@@ -49,9 +50,14 @@
           <a href="/transactions">History</a>
           <a href="/report">Report</a>
           <a href="/map">Map</a>
+          {% if can('manage_locations') %}<a href="/locations">Locations</a>{% endif %}
+          {% if can('manage_locations') %}<a href="/transfers">Transfers</a>{% endif %}
           {% if can('view_audit') %}<a href="/audit">Audit</a>{% endif %}
         </div>
       </div>
+      {% else %}
+      <a href="/transactions">Recent (24h)</a>
+      {% endif %}
     </nav>
     <div class="global-search">
       <input type="text" id="global-search" placeholder="Search items, clients, jobs, orders…" autocomplete="off" aria-label="Global search">
@@ -66,14 +72,34 @@
       <div class="account-menu" id="account-menu" data-menu-pop hidden>
         {% if can('manage_users') %}<a href="/users">Users &amp; roles</a>{% endif %}
         {% if can('manage_settings') %}<a href="/settings">Settings</a>{% endif %}
-        {% if cfg.auth_mode == 'oidc' %}<form method="post" action="/logout" class="logout-form"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="logout" type="submit">Log out</button></form>{% endif %}
-        {% if not (can('manage_users') or can('manage_settings') or cfg.auth_mode == 'oidc') %}<span class="muted" style="display:block;padding:.5rem .7rem">Signed in as {{ user.role or 'user' }}</span>{% endif %}
+        {% if real_is_admin and impersonate_roles %}
+        <div class="impersonate-block">
+          <span class="muted impersonate-label">View as…</span>
+          <form method="post" action="/impersonate" class="impersonate-form">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <select name="role" onchange="this.form.submit()">
+              <option value="">— role —</option>
+              {% for rn in impersonate_roles %}<option value="{{ rn }}" {% if user.is_impersonating and user.role == rn %}selected{% endif %}>{{ rn }}</option>{% endfor %}
+            </select>
+          </form>
+          {% if user.is_impersonating %}
+          <form method="post" action="/impersonate" class="impersonate-stop">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <input type="hidden" name="role" value="stop">
+            <button type="submit">Stop impersonating</button>
+          </form>
+          {% endif %}
+        </div>
+        {% endif %}
+        {% if user.is_kiosk or cfg.auth_mode == 'oidc' %}<form method="post" action="/logout" class="logout-form"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="logout" type="submit">{% if user.is_kiosk %}Exit kiosk{% else %}Log out{% endif %}</button></form>{% endif %}
+        {% if not (can('manage_users') or can('manage_settings') or user.is_kiosk or cfg.auth_mode == 'oidc') %}<span class="muted" style="display:block;padding:.5rem .7rem">Signed in as {{ user.role or 'user' }}</span>{% endif %}
       </div>
     </div>
   </header>
   <div class="nav-backdrop" aria-hidden="true"></div>
   <aside class="nav-mobile" id="nav-mobile" aria-label="Mobile navigation">
     {% if can('checkout') %}<a href="/">Scan</a>{% endif %}
+    {% if not user.is_kiosk %}
     <a href="/parts">Items</a>
     <a href="/categories">Categories</a>
     <a href="/clients">Clients</a>
@@ -81,15 +107,28 @@
     <a href="/transactions">History</a>
     <a href="/report">Report</a>
     <a href="/map">Map</a>
+    {% if can('manage_locations') %}<a href="/locations">Locations</a>{% endif %}
+    {% if can('manage_locations') %}<a href="/transfers">Transfers</a>{% endif %}
     {% if can('view_audit') %}<a href="/audit">Audit</a>{% endif %}
+    {% else %}
+    <a href="/transactions">Recent (24h)</a>
+    {% endif %}
     <div class="nav-mobile-sep" role="separator"></div>
     <span class="muted nav-mobile-user">Signed in as {{ user.username or 'user' }}{% if user.role %} · {{ user.role }}{% endif %}</span>
     {% if can('manage_users') %}<a href="/users">Users &amp; roles</a>{% endif %}
     {% if can('manage_settings') %}<a href="/settings">Settings</a>{% endif %}
-    {% if cfg.auth_mode == 'oidc' %}<form method="post" action="/logout" class="nav-mobile-logout"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button type="submit">Log out</button></form>{% endif %}
+    {% if user.is_kiosk or cfg.auth_mode == 'oidc' %}<form method="post" action="/logout" class="nav-mobile-logout"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button type="submit">{% if user.is_kiosk %}Exit kiosk{% else %}Log out{% endif %}</button></form>{% endif %}
   </aside>
   <main>
     {% if disable_auth %}<div class="flash bad" role="alert"><b>⚠️ DISABLE_AUTH is active</b> — all authentication is bypassed. This is a break-glass recovery setting; unset <code>DISABLE_AUTH</code> in the environment and restart before exposing this app.</div>{% endif %}
+    {% if user.is_impersonating %}<div class="flash bad impersonate-banner" role="status"><b>👁 Viewing as {{ user.role }}</b> · You're an Admin previewing what a {{ user.role }} sees.
+      <form method="post" action="/impersonate" style="display:inline">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <input type="hidden" name="role" value="stop">
+        <button type="submit" class="link-btn">Stop</button>
+      </form>
+    </div>{% endif %}
+    {% if user.is_kiosk %}<div class="flash good" role="status"><b>🏷 Kiosk charge-out mode</b> · Limited to scan, charge out, and the last 24h of kiosk activity.</div>{% endif %}
     {% if msg %}<div class="flash {{ 'good' if ok else 'bad' }}">{{ msg }}</div>{% endif %}
     {% block content %}{% endblock %}
   </main>

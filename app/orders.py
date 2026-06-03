@@ -9,7 +9,7 @@ from datetime import datetime
 
 from sqlalchemy import func
 
-from .models import Order, Transaction
+from .models import Location, Order, StockLevel, Transaction
 
 
 _NUM_RE = re.compile(r"^ORD-(\d{6})-(\d+)$")
@@ -68,3 +68,37 @@ def cart_totals(lines):
     charge = sum(float(ln.unit_price_at_time) * ln.quantity for ln in lines)
     cost = sum(float(ln.unit_cost_at_time) * ln.quantity for ln in lines)
     return charge, cost, charge - cost
+
+
+def stock_at(db, part_id: int, location_id: int) -> int:
+    """Quantity of `part_id` currently at `location_id`. Returns 0 if there's
+    no row yet — callers that want to write should use ``ensure_stock_row``."""
+    row = (db.query(StockLevel)
+           .filter(StockLevel.part_id == part_id,
+                   StockLevel.location_id == location_id)
+           .first())
+    return row.quantity if row else 0
+
+
+def ensure_stock_row(db, part_id: int, location_id: int) -> StockLevel:
+    """Return the StockLevel row for (part, location), creating a zero row
+    if it doesn't exist yet. Caller commits."""
+    row = (db.query(StockLevel)
+           .filter(StockLevel.part_id == part_id,
+                   StockLevel.location_id == location_id)
+           .first())
+    if row is None:
+        row = StockLevel(part_id=part_id, location_id=location_id, quantity=0)
+        db.add(row)
+        db.flush()
+    return row
+
+
+def default_location_id(db) -> int | None:
+    """Return the id of the first active, non-archived location. Used as the
+    fallback when a cart hasn't been pointed at one yet."""
+    row = (db.query(Location)
+           .filter(Location.active == True, Location.archived == False)  # noqa: E712
+           .order_by(Location.id.asc())
+           .first())
+    return row.id if row else None
