@@ -256,6 +256,23 @@ document.addEventListener("click", (e) => {
   if (rm) rm.checked = false;
   const fileInput = document.querySelector("#edit-part input[type=file]");
   if (fileInput) fileInput.value = "";
+  // Lifecycle action targets — archive flips to restore when the row is
+  // already archived (data-active === '0' was historically the inactive
+  // state; archived rows render with data-archived too, set below).
+  const archForm = document.getElementById("ep-archive-form");
+  const archBtn = document.getElementById("ep-archive-btn");
+  const isArchived = (d.archived === "1");
+  if (archForm && archBtn) {
+    if (isArchived) {
+      archForm.action = "/parts/" + d.id + "/restore";
+      archBtn.textContent = "Restore from archive";
+    } else {
+      archForm.action = "/parts/" + d.id + "/archive";
+      archBtn.textContent = "Archive";
+    }
+  }
+  const delForm = document.getElementById("ep-delete-form");
+  if (delForm) delForm.action = "/parts/" + d.id + "/delete";
   openModal("edit-part");
 });
 
@@ -359,6 +376,7 @@ if (scan && cart) {
         tdName.textContent = ln.part;
         tr.appendChild(tdName);
         const tdBc = document.createElement("td");
+        tdBc.className = "col-barcode";
         const code = document.createElement("code");
         code.textContent = ln.barcode;
         tdBc.appendChild(code);
@@ -382,7 +400,7 @@ if (scan && cart) {
         }
         tr.appendChild(tdQty);
         // money cells — numeric, safe
-        const tdUnit = document.createElement("td"); tdUnit.className = "num"; tdUnit.textContent = money(ln.unit_price); tr.appendChild(tdUnit);
+        const tdUnit = document.createElement("td"); tdUnit.className = "num col-unit"; tdUnit.textContent = money(ln.unit_price); tr.appendChild(tdUnit);
         const tdCh = document.createElement("td"); tdCh.className = "num"; tdCh.textContent = money(ln.charge); tr.appendChild(tdCh);
         const tdAct = document.createElement("td");
         const btn = document.createElement("button");
@@ -424,6 +442,8 @@ if (scan && cart) {
     suggest.innerHTML = "";
     results.forEach((p) => {
       const row = document.createElement("div");
+      const oos = (p.qty || 0) <= 0;
+      if (oos) row.classList.add("oos");
       // image / icon (server-controlled or trusted icon set)
       if (p.image) {
         const img = document.createElement("img");
@@ -444,6 +464,15 @@ if (scan && cart) {
       meta.className = "muted";
       meta.textContent = " · " + p.barcode + " · on hand " + p.qty + " · " + money(p.unit_price);
       row.appendChild(meta);
+      if (oos) {
+        const oosBadge = document.createElement("span");
+        oosBadge.className = "tag oos-tag";
+        oosBadge.textContent = "Out of stock";
+        row.appendChild(oosBadge);
+      }
+      // Tap is still allowed so the user gets the explicit
+      // insufficient-stock toast — but the row is dimmed so they can
+      // see in advance the part has zero on hand.
       row.onclick = () => { hideSuggest(); addToCart(p.barcode); };
       suggest.appendChild(row);
     });

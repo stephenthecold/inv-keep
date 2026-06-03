@@ -373,6 +373,16 @@ body.nav-open .nav-toggle .hamburger-bar:nth-child(3) { transform: translateY(-7
   .cart-actions { width: 100%; gap: .4rem; }
   .cart-actions button { flex: 1 1 auto; min-width: 0; padding: .55rem .45rem; font-size: .9rem; }
 
+  /* Cart-lines on a narrow scanner: even with the table-scroll wrapper
+     handling overflow, the row was so tall that Qty bled into the next
+     row. Hide the redundant Barcode + Unit columns (both still printed
+     on the receipt; the cart UI doesn't need them while scanning) and
+     compress the qty input so the table fits in one screen-width. */
+  .cart-lines th.col-barcode, .cart-lines td.col-barcode,
+  .cart-lines th.col-unit, .cart-lines td.col-unit { display: none; }
+  .cart-lines .line-qty { width: 4rem !important; padding: .35rem .4rem; }
+  .cart-lines th, .cart-lines td { padding: .45rem .4rem; }
+
   /* /parts touch tuning: bigger card hit-targets, bigger action buttons
      on item rows so thumbs don't fat-finger Edit vs Stock. */
   .cat-grid { grid-template-columns: 1fr; gap: .5rem; }
@@ -428,6 +438,14 @@ body.nav-open .nav-toggle .hamburger-bar:nth-child(3) { transform: translateY(-7
 @media (min-width: 1100px) {
   main:has(> .settings-shell) { max-width: 1280px; }
 }
+
+/* Out-of-stock badge. Shown on /parts and inside the cart-bar search
+   dropdown so zero-stock items announce themselves before a scan turns
+   into an "insufficient stock" toast. The dim+amber palette mirrors a
+   shelf tag rather than the red "low" emphasis to keep the row legible. */
+.oos-tag { background: rgba(210, 153, 34, .15); color: var(--warn); border-color: rgba(210, 153, 34, .35); margin-left: .35rem; font-size: .7rem; }
+.suggest div.oos { opacity: .6; }
+.suggest div.oos b { text-decoration: line-through; text-decoration-thickness: 1px; }
 
 /* sized label preview on screen */
 .label-sized .label { border: 1px dashed var(--line); margin: .35rem; }
