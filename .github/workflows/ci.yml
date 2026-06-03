@@ -178,9 +178,19 @@ jobs:
           assert r.status_code == 303 and r.headers['location'] == '/'
           # Scan page OK with banner
           assert 'Kiosk charge-out mode' in c.get('/').text
-          # Locked-down: /parts, /settings, /users, /audit, /report, /map are 403
-          for p in ['/parts','/categories','/clients','/jobs','/settings','/users','/audit','/report','/map']:
+          # v1.21: default Kiosk role has view + view_catalog + checkout.
+          # The lockdown floor allows the four catalog browse paths
+          # (/parts, /categories, /clients, /jobs) so a front-desk
+          # operator can look up an item / client without elevating.
+          # Analytics + printing (/map, /report, /labels) and admin
+          # surfaces (/settings, /users, /audit, /locations, /transfers)
+          # stay 403.
+          for p in ['/parts','/categories','/clients','/jobs']:
+              assert c.get(p, follow_redirects=False).status_code == 200, p
+          for p in ['/settings','/users','/audit','/locations','/transfers','/map','/report','/labels']:
               assert c.get(p, follow_redirects=False).status_code == 403, p
+          # POST endpoints still 403 — view_catalog grants read only.
+          assert c.post('/parts/add', data={'_csrf': tok, 'name': 'kiosk-cant'}, follow_redirects=False).status_code == 403
           assert c.get('/transactions').status_code == 200
           # Disabling kiosk_enabled invalidates the live session
           db = SessionLocal(); store.set(db, 'kiosk_enabled', '0'); db.commit(); db.close()
