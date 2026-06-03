@@ -272,6 +272,10 @@
 <section class="card settings-tab" id="tab-kiosk" data-tab-pane="kiosk" data-tab-title="Kiosk PIN">
   <h2>Kiosk PIN charge-out</h2>
   <p class="muted">When enabled, the sign-in screen shows a numeric PIN entry below the Sign-in button. Entering the PIN starts a locked-down "Kiosk" session that can scan and charge out, and view the last 24 hours of kiosk activity — and nothing else.</p>
+  <div class="notice" style="background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:.65rem .85rem;margin:.5rem 0">
+    <b>Need a kiosk to see more than the defaults?</b>
+    The PIN lockdown is active <i>only while the Kiosk role still has its built-in <code>view</code> + <code>checkout</code> permissions</i>. As soon as you grant the role any extra permission — e.g.&nbsp;<code>view_audit</code>, <code>manage_items</code>, <code>view_catalog</code> — the lockdown lifts and standard role permissions take over. Edit perms under <a href="/users#roles">Users &amp; Roles → Kiosk</a>.
+  </div>
   <form method="post" action="/settings/kiosk" class="grid-form" autocomplete="off">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label class="check">Enable kiosk PIN on /welcome <input type="checkbox" name="kiosk_enabled" {% if cfg.kiosk_enabled == '1' %}checked{% endif %}></label>

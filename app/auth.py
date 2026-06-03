@@ -37,13 +37,18 @@ def build_oidc(db):
 
 
 def _kiosk_user(db):
-    """Synthetic auth dict for a PIN-authenticated kiosk session."""
+    """Synthetic auth dict for a PIN-authenticated kiosk session. Loads
+    the live perm set from the Kiosk role in the DB so admin edits in
+    /users#roles → Kiosk actually take effect; falls back to the
+    minimum {view, checkout} floor if the role row is somehow missing."""
     username = store.get(db, "kiosk_username") or "kiosk"
+    role = rbac._role_by_name(db, "Kiosk")
+    perms = rbac.perms_for_role(role) if role else {"view", "checkout"}
     return {
         "username": username,
         "email": "",
         "role": "Kiosk",
-        "perms": {"view", "checkout"},
+        "perms": perms,
         "is_admin": False,
         "is_kiosk": True,
     }
