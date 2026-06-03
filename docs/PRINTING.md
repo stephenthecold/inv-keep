@@ -14,21 +14,43 @@ and **Brother** thermal printers — without printer-specific drivers in the app
 - In the print dialog: select the thermal printer, set paper size to match, and
   **turn off** headers/footers and any “fit to page”/scaling.
 
-## Size presets (top 4 label brands)
+## Size presets (six label brands)
 The label-size dropdown is grouped by brand. Pick the one that matches your media.
+Sizes are labelled inches-first since the supported printer fleet is mostly US.
 
-**Brother** — QL 62×29 mm die-cut, QL 62 mm continuous, QL 29×90 mm address,
-P-touch 24 / 18 / 12 mm tapes.
+**Brother** — QL 2.4×1.1 in (62×29 mm) die-cut, QL 2.4×1.6 in (62×40 mm) continuous,
+QL 3.5×1.1 in (90×29 mm) address, P-touch 0.94 in (24 mm) / 0.71 in (18 mm) /
+0.47 in (12 mm) tapes.
 
-**DYMO** — LabelWriter 30252 Address (89×28 mm), 30336 Multipurpose (54×25 mm),
-30334 Medium (57×32 mm), 30330 Return (51×19 mm), LabelManager 12 mm tape.
+**DYMO** — LabelWriter **30252 Address** (3.5×1.1 in / 89×28 mm),
+**30256 Shipping** (4×2.31 in / 101×59 mm),
+**30323 Shipping** (4×2.13 in / 101×54 mm),
+**30277 File-folder** (3.5×2.13 in / 89×54 mm),
+**30334 Medium** (2.25×1.25 in / 57×32 mm),
+**30336 Multipurpose** (2.13×1 in / 54×25 mm),
+**30330 Return** (2×0.75 in / 51×19 mm),
+**30270 Postage** (1.62×1.25 in / 41×32 mm),
+LabelManager **0.47 in (12 mm)** tape.
 
 **Zebra** — 2×1 in (51×25 mm), 2.25×1.25 in (57×32 mm), 3×2 in (76×51 mm),
 4×6 in (102×152 mm).
 
 **Rollo** — 4×6 in (102×152 mm), 2.25×1.25 in (57×32 mm).
 
-**Generic** — plain paper sheet (many per page), 50×25 mm.
+**Epson** — ColorWorks 4×6 in / 2.25×1.25 in / 2×1 in, plus LabelWorks
+0.94 in (24 mm) / 0.71 in (18 mm) / 0.47 in (12 mm) tape.
+
+**Brady** — M21 0.75 in (19 mm) / 0.5 in (12.7 mm) tape, 1×0.5 in (25×13 mm)
+label, self-laminating wire 1×1.5 in (25×38 mm), 2×1 in (51×25 mm) label.
+
+**Generic** — plain paper sheet (many per page), 2×1 in (50×25 mm).
+
+> **Match the loaded label.** The most common print bug we've seen is the app
+> preset and the physically-loaded label disagreeing. If the print preview shows
+> the right label-sized first sheet followed by 4–5 blank ones, the printer is
+> tiling the @page across mismatched paper. Either change the preset to match the
+> physical media or load the media the preset expects. The presets above carry
+> both inches and mm so cross-referencing the box label is easy.
 
 ## Rollo
 Rollo printers install as a normal system printer (USB or network) via Rollo's
