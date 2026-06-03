@@ -1565,12 +1565,54 @@ def transfer_detail(tid: int, request: Request, db: Session = Depends(get_db)):
 @app.get("/parts", response_class=HTMLResponse)
 def parts_page(request: Request, db: Session = Depends(get_db)):
     show_archived = request.query_params.get("archived") == "1"
-    q = db.query(Part)
+    selected_cat = (request.query_params.get("cat") or "").strip()
+
+    base_q = db.query(Part)
     if not show_archived:
-        q = q.filter(Part.archived == False)  # noqa: E712
-    parts = q.order_by(Part.name).all()
+        base_q = base_q.filter(Part.archived == False)  # noqa: E712
+    all_parts = base_q.order_by(Part.name).all()
+
     cats = category_choices(db)
     cat_names = {cid: category_path(db, c) for cid, _label, _d, c in cats}
+
+    # Per-category direct counts (over the same visibility set as the table)
+    # so the filter strip totals match what the user will see after clicking.
+    cat_counts = {}
+    uncategorized_count = 0
+    for p in all_parts:
+        if p.category_id is None:
+            uncategorized_count += 1
+        else:
+            cat_counts[p.category_id] = cat_counts.get(p.category_id, 0) + 1
+
+    # Apply the filter selection. "none" = uncategorized only; "<id>" =
+    # parts directly in that category (subtree expansion is intentionally
+    # left out so the pill count matches the filtered table 1:1). When no
+    # filter is active, group by category path so the table reads as an
+    # organised catalog rather than one long flat list.
+    if selected_cat == "none":
+        parts = [p for p in all_parts if p.category_id is None]
+    elif selected_cat:
+        try:
+            sel_id = int(selected_cat)
+        except ValueError:
+            sel_id = None
+        if sel_id is None or not db.get(Category, sel_id):
+            selected_cat = ""
+            parts = all_parts
+        else:
+            parts = [p for p in all_parts if p.category_id == sel_id]
+    else:
+        parts = all_parts
+
+    if not selected_cat:
+        # (cat_path_or_None_for_uncat, name_lowercase) — uncategorized
+        # sinks to the bottom by sorting None as ~.
+        def _key(p):
+            label = cat_names.get(p.category_id, "") if p.category_id else "~"
+            return (label.lower(), (p.name or "").lower())
+        parts = sorted(parts, key=_key)
+
     locations = (db.query(Location)
                  .filter(Location.active == True, Location.archived == False)  # noqa: E712
                  .order_by(Location.name).all())
@@ -1600,6 +1642,8 @@ def parts_page(request: Request, db: Session = Depends(get_db)):
         ctx(request, db, parts=parts, categories=cats, cat_names=cat_names,
             show_archived=show_archived, locations=locations, part_stock=part_stock,
             part_stock_full=part_stock_full,
+            cat_counts=cat_counts, uncategorized_count=uncategorized_count,
+            total_count=len(all_parts), selected_cat=selected_cat,
             prefill=request.query_params.get("barcode", "")),
     )
 
@@ -1877,7 +1921,19 @@ def labels_sheet(request: Request, db: Session = Depends(get_db)):
 # ============================================================ categories
 @app.get("/categories", response_class=HTMLResponse)
 def categories_page(request: Request, db: Session = Depends(get_db)):
-    return templates.TemplateResponse("categories.html", ctx(request, db, tree=category_choices(db)))
+    # Direct (non-archived) item counts per category, so the Categories page
+    # surfaces which buckets are actually populated.
+    cat_counts = {}
+    rows = (db.query(Part.category_id, func.count(Part.id))
+              .filter(Part.archived == False)  # noqa: E712
+              .group_by(Part.category_id).all())
+    for cid, n in rows:
+        if cid is not None:
+            cat_counts[cid] = n
+    return templates.TemplateResponse(
+        "categories.html",
+        ctx(request, db, tree=category_choices(db), cat_counts=cat_counts),
+    )
 
 
 @app.post("/categories/add")

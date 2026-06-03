@@ -166,13 +166,39 @@
   </menu>
 </dialog>
 
+{# Category filter strip. "All" + one pill per existing category + an
+   "Uncategorized" pill when there's anything uncategorized. Pills carry
+   counts so the populated buckets are obvious at a glance; selecting a
+   pill rewrites the table to just that bucket via ?cat=. show_archived
+   is preserved across clicks so the toggle state survives navigation. #}
+{% set arch_qs = '&archived=1' if show_archived else '' %}
+<div class="cat-filter">
+  <a class="cat-pill {% if not selected_cat %}is-active{% endif %}" href="/parts?cat={{ arch_qs }}">All <span class="cat-pill-n">{{ total_count }}</span></a>
+  {% for cid, label, depth, c in categories %}
+    {% set n = cat_counts.get(cid, 0) %}
+    <a class="cat-pill {% if selected_cat == cid|string %}is-active{% endif %} {% if not n %}is-empty{% endif %}"
+       href="/parts?cat={{ cid }}{{ arch_qs }}">{% if depth %}<span class="cat-pill-depth">{{ '· ' * depth }}</span>{% endif %}{{ c.name }} <span class="cat-pill-n">{{ n }}</span></a>
+  {% endfor %}
+  {% if uncategorized_count %}
+  <a class="cat-pill {% if selected_cat == 'none' %}is-active{% endif %}" href="/parts?cat=none{{ arch_qs }}">Uncategorized <span class="cat-pill-n">{{ uncategorized_count }}</span></a>
+  {% endif %}
+</div>
+
 <div class="table-scroll">
 <table class="lines">
   <thead>
     <tr><th></th><th>Name</th><th>Barcode</th><th>Category</th><th class="num">On hand</th><th class="num">Our cost</th><th class="num">Client price</th><th class="actions-col">Actions</th></tr>
   </thead>
   <tbody>
+    {# When viewing "All", the route hands us `parts` pre-sorted by
+       category path then name — emit a header row each time the
+       category changes so the table reads as an organised catalog. #}
+    {% set ns = namespace(last_cat=-1) %}
     {% for p in parts %}
+    {% if not selected_cat and p.category_id != ns.last_cat %}
+    <tr class="cat-group"><td colspan="8">{% if p.category_id %}{{ cat_names.get(p.category_id, '—') }}{% else %}Uncategorized{% endif %}</td></tr>
+    {% set ns.last_cat = p.category_id %}
+    {% endif %}
     <tr {% if not p.active %}class="voided"{% endif %}>
       <td class="item-icon">{% if p.image %}<img class="item-thumb" src="{{ p.image }}" alt="">{% else %}{{ icon_html(p.icon) | safe }}{% endif %}</td>
       <td>

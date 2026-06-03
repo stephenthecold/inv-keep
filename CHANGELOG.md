@@ -3,6 +3,24 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.17.0] — 2026-06-03
+- **Items are now organised by category.** The `/parts` page gains a
+  filter strip of pills — `All`, one per category (with depth
+  indicators for nested cats), and `Uncategorized` when relevant —
+  each carrying a live item count so the populated buckets are
+  obvious at a glance. Clicking a pill narrows the table to that
+  bucket via `?cat=<id>` (or `?cat=none` for uncategorized); the
+  archived-toggle state is preserved across clicks.
+- **Grouped catalog view.** When no filter is active the items table
+  now emits a header row each time the category changes, so the
+  catalog reads as an organised list rather than one long flat dump.
+  Items are sorted by category path then name, with `Uncategorized`
+  sinking to the bottom.
+- **Item counts on the Categories page.** Each category row shows
+  how many (non-archived) items live in it, with a tap-through to
+  the filtered items list. Empty categories render dimmed in the
+  filter strip so users can spot dead buckets at a glance.
+
 ## [1.16.0] — 2026-06-03
 - **Header reorganized around Inventory.** Items, Categories,
   Locations, and Transfers now live in a single Inventory dropdown

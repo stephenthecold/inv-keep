@@ -221,6 +221,19 @@ dialog.modal h2 { margin-top: 0; }
 /* footer */
 .app-footer { text-align: center; color: var(--muted); font-size: .8rem; padding: 2rem 1rem 1.5rem; }
 
+/* category filter pills on /parts */
+.cat-filter { display: flex; flex-wrap: wrap; gap: .35rem; margin: .75rem 0 1rem; }
+.cat-pill { display: inline-flex; align-items: center; gap: .35rem; padding: .3rem .7rem; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--text); text-decoration: none; font-size: .85rem; white-space: nowrap; }
+.cat-pill:hover { border-color: var(--accent); }
+.cat-pill.is-active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.cat-pill.is-empty { opacity: .55; }
+.cat-pill .cat-pill-n { font-size: .75rem; color: var(--muted); background: var(--panel-2); border-radius: 999px; padding: 0 .45rem; }
+.cat-pill.is-active .cat-pill-n { color: #fff; background: rgba(255,255,255,.18); }
+.cat-pill .cat-pill-depth { color: var(--muted); font-size: .75rem; }
+
+/* category group header row in the items table */
+table.lines tr.cat-group td { background: var(--panel-2); color: var(--muted); font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; padding-top: .55rem; padding-bottom: .35rem; border-bottom: 1px solid var(--line); }
+
 /* wide tables scroll on small screens */
 .table-scroll { overflow-x: auto; }
 
