@@ -19,7 +19,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
@@ -36,12 +36,18 @@ if (not settings.session_secret
         "SESSION_SECRET must be a random value of 32+ characters. "
         "Generate one with:  python -c \"import secrets; print(secrets.token_hex(32))\""
     )
-from .database import Base, SessionLocal, engine, ensure_columns, get_db
-from .models import AuditLog, Category, Client, Job, Order, Part, Role, Transaction, User
+from .database import Base, SessionLocal, engine, ensure_columns, get_db, seed_locations_and_stock
+from .models import (
+    AuditLog, Category, Client, Job, Location, Order, Part, Role,
+    StockLevel, Transaction, Transfer, TransferLine, User,
+)
 from .version import __version__
 
 Base.metadata.create_all(bind=engine)
 ensure_columns()
+# v1.15: seed the Main location + per-part stock_levels from the legacy
+# Part.quantity_on_hand counter, and auto-cancel any pre-existing open carts.
+seed_locations_and_stock()
 
 # Seed the built-in roles (Admin/Manager/Operator/Viewer) if missing.
 _seed_db = SessionLocal()
@@ -718,8 +724,22 @@ def scan_page(request: Request, db: Session = Depends(get_db)):
         .filter(Job.active == True, Client.archived == False)  # noqa: E712
         .order_by(Job.name).all()
     )
+    locations = (
+        db.query(Location)
+        .filter(Location.active == True, Location.archived == False)  # noqa: E712
+        .order_by(Location.name).all()
+    )
     recent = db.query(Transaction).order_by(Transaction.created_at.desc()).limit(15).all()
-    return templates.TemplateResponse("scan.html", ctx(request, db, clients=clients, jobs=jobs, recent=recent))
+    # Kiosk sessions optionally start with a pinned default location.
+    user = current_user(request)
+    default_loc = ""
+    if user.get("is_kiosk"):
+        default_loc = store.get(db, "kiosk_location_id") or ""
+    return templates.TemplateResponse(
+        "scan.html",
+        ctx(request, db, clients=clients, jobs=jobs, recent=recent,
+            locations=locations, default_location_id=default_loc),
+    )
 
 
 # -------------------- cart helpers (response serializer) --------------------
@@ -743,6 +763,8 @@ def _cart_payload(db, cart):
         "client_walkin": bool(cart.client and cart.client.archived),
         "job_id": cart.job_id,
         "job_name": cart.job.name if cart.job else "",
+        "location_id": cart.location_id,
+        "location_name": cart.location.name if cart.location else "",
         "lines": [
             {
                 "id": ln.id,
@@ -780,6 +802,7 @@ class CartScanIn(BaseModel):
 class CartSetIn(BaseModel):
     client_id: Optional[int] = None
     job_id: Optional[int] = None
+    location_id: Optional[int] = None
 
 
 class CartLineIn(BaseModel):
@@ -827,18 +850,34 @@ def api_cart_scan(payload: CartScanIn, request: Request, db: Session = Depends(g
         return {"ok": False, "error": "unknown_barcode", "barcode": barcode}
 
     qty = 1 if part.type == "unique" else max(1, payload.quantity)
-    if part.quantity_on_hand < qty:
-        return {"ok": False, "error": "insufficient_stock",
-                "available": part.quantity_on_hand, "part": part.name}
 
     cart = orders.open_cart_for(db, user.get("username", ""))
     fresh = False
     if cart is None:
         cart = Order(status="open", created_by=user.get("username", ""))
+        # Default to the first active location so the first scan doesn't
+        # bounce; the operator can change it via the dropdown.
+        cart.location_id = orders.default_location_id(db)
         db.add(cart)
         db.flush()
         fresh = True
         audit.record(db, user, "order.open", "order", cart.id, f"Opened cart #{cart.id}")
+
+    # Enforce stock at the cart's source location. Falls back to a no-location
+    # row if the cart somehow still has no location pinned (no active
+    # locations) — old behaviour, decrementing Part.quantity_on_hand only.
+    location_id = cart.location_id
+    if location_id is not None:
+        sl = orders.ensure_stock_row(db, part.id, location_id)
+        if sl.quantity < qty:
+            return {"ok": False, "error": "insufficient_stock",
+                    "available": sl.quantity, "part": part.name,
+                    "location": cart.location.name if cart.location else ""}
+        sl.quantity -= qty
+    else:
+        if part.quantity_on_hand < qty:
+            return {"ok": False, "error": "insufficient_stock",
+                    "available": part.quantity_on_hand, "part": part.name}
 
     part.quantity_on_hand -= qty
     lat, lng, acc = _sanitize_geo(payload)
@@ -847,6 +886,7 @@ def api_cart_scan(payload: CartScanIn, request: Request, db: Session = Depends(g
         part_id=part.id,
         customer_id=cart.customer_id,  # null until /api/cart/set; backfilled on client pick
         job_id=cart.job_id,
+        location_id=location_id,
         quantity=qty,
         unit_cost_at_time=part.unit_cost,
         unit_price_at_time=part.unit_price,
@@ -886,6 +926,7 @@ async def api_cart_custom(
     fresh = False
     if cart is None:
         cart = Order(status="open", created_by=user.get("username", ""))
+        cart.location_id = orders.default_location_id(db)
         db.add(cart)
         db.flush()
         fresh = True
@@ -911,6 +952,12 @@ async def api_cart_custom(
         part.image = img_path
     # Decrement stock to 0 — the qty we "bought" is what we're billing.
     part.quantity_on_hand -= qty
+    # Stamp a stock_levels row at the cart's location too so the per-location
+    # ledger stays consistent: this transient part starts with qty, then we
+    # immediately decrement it to 0.
+    if cart.location_id is not None:
+        sl = orders.ensure_stock_row(db, part.id, cart.location_id)
+        sl.quantity = 0
     # Reuse the strict finite-check from _sanitize_geo so a NaN/Infinity in
     # the multipart body can't poison Transaction.lat.
     g_lat = lat if (_finite(lat) and -90 <= lat <= 90) else None
@@ -924,6 +971,7 @@ async def api_cart_custom(
         part_id=part.id,
         customer_id=cart.customer_id,
         job_id=cart.job_id,
+        location_id=cart.location_id,
         quantity=qty,
         unit_cost_at_time=part.unit_cost,
         unit_price_at_time=part.unit_price,
@@ -959,13 +1007,27 @@ def api_cart_set(payload: CartSetIn, request: Request, db: Session = Depends(get
     else:
         # 0 or None → caller is clearing the job association.
         cart.job_id = None
-    # Backfill the new client/job onto open transactions so submitted lines
-    # carry the right customer/job at report time.
+    # Source location can be changed mid-cart. Validate it's a real, active
+    # location, then re-stamp all open lines so reporting + voids point at
+    # the right location.
+    if payload.location_id is not None:
+        loc = db.get(Location, payload.location_id) if payload.location_id else None
+        if payload.location_id and (not loc or not loc.active or loc.archived):
+            return {"ok": False, "error": "bad_location"}
+        cart.location_id = loc.id if loc else None
+    # Backfill the new client/job/location onto open transactions so
+    # submitted lines carry the right values at report time.
+    line_updates = {}
     if cart.customer_id:
+        line_updates["customer_id"] = cart.customer_id
+        line_updates["job_id"] = cart.job_id
+    if payload.location_id is not None:
+        line_updates["location_id"] = cart.location_id
+    if line_updates:
         db.query(Transaction).filter(
             Transaction.order_id == cart.id,
             Transaction.voided == False,  # noqa: E712
-        ).update({"customer_id": cart.customer_id, "job_id": cart.job_id})
+        ).update(line_updates)
     db.commit()
     return {"ok": True, "cart": _cart_payload(db, cart)}
 
@@ -990,6 +1052,7 @@ def api_cart_walkin(payload: CartWalkinIn, request: Request, db: Session = Depen
     fresh_cart = False
     if cart is None:
         cart = Order(status="open", created_by=user.get("username", ""))
+        cart.location_id = orders.default_location_id(db)
         db.add(cart)
         db.flush()
         fresh_cart = True
@@ -1023,9 +1086,18 @@ def api_cart_line_update(line_id: int, payload: CartLineIn, request: Request, db
     if line.part.type == "unique":
         new_qty = 1
     delta = new_qty - line.quantity
-    if delta > 0 and line.part.quantity_on_hand < delta:
-        return {"ok": False, "error": "insufficient_stock",
-                "available": line.part.quantity_on_hand, "part": line.part.name}
+    # Stock check is against the line's source location (set when scanned).
+    if line.location_id is not None:
+        sl = orders.ensure_stock_row(db, line.part_id, line.location_id)
+        if delta > 0 and sl.quantity < delta:
+            return {"ok": False, "error": "insufficient_stock",
+                    "available": sl.quantity, "part": line.part.name,
+                    "location": line.location.name if line.location else ""}
+        sl.quantity -= delta
+    else:
+        if delta > 0 and line.part.quantity_on_hand < delta:
+            return {"ok": False, "error": "insufficient_stock",
+                    "available": line.part.quantity_on_hand, "part": line.part.name}
     line.part.quantity_on_hand -= delta
     line.quantity = new_qty
     db.commit()
@@ -1041,6 +1113,10 @@ def api_cart_line_remove(line_id: int, request: Request, db: Session = Depends(g
     line = db.get(Transaction, line_id)
     if not line or line.order_id != cart.id or line.voided:
         return {"ok": False, "error": "bad_line"}
+    # Restore to the same location the stock came from.
+    if line.location_id is not None:
+        sl = orders.ensure_stock_row(db, line.part_id, line.location_id)
+        sl.quantity += line.quantity
     line.part.quantity_on_hand += line.quantity
     line.voided = True
     db.commit()
@@ -1097,6 +1173,9 @@ def api_cart_cancel(request: Request, db: Session = Depends(get_db)):
     lines = orders.cart_lines(db, cart)
     charge, _cost, _margin = orders.cart_totals(lines)
     for ln in lines:
+        if ln.location_id is not None:
+            sl = orders.ensure_stock_row(db, ln.part_id, ln.location_id)
+            sl.quantity += ln.quantity
         ln.part.quantity_on_hand += ln.quantity
         ln.voided = True
     cart.status = "cancelled"
@@ -1274,12 +1353,212 @@ def api_void(txn_id: int, request: Request, db: Session = Depends(get_db)):
     part = db.get(Part, txn.part_id)
     if part:
         part.quantity_on_hand += txn.quantity
+    # Restore to the location the line came from. Legacy rows without
+    # a location_id only restore the aggregate Part.quantity_on_hand.
+    if txn.location_id is not None:
+        sl = orders.ensure_stock_row(db, txn.part_id, txn.location_id)
+        sl.quantity += txn.quantity
     audit.record(
         db, current_user(request), "sale.void", "transaction", txn.id,
         f"Voided {txn.quantity} × {part.name if part else '?'}",
     )
     db.commit()
     return {"ok": True}
+
+
+# ============================================================ locations + transfers
+@app.get("/locations", response_class=HTMLResponse)
+def locations_page(request: Request, db: Session = Depends(get_db)):
+    show_archived = request.query_params.get("archived") == "1"
+    q = db.query(Location)
+    if not show_archived:
+        q = q.filter(Location.archived == False)  # noqa: E712
+    locs = q.order_by(Location.name).all()
+    # Total stock per location for the index page (cheap sum on stock_levels).
+    totals = {}
+    for loc in locs:
+        totals[loc.id] = (db.query(StockLevel)
+                          .filter(StockLevel.location_id == loc.id)
+                          .with_entities(func.coalesce(func.sum(StockLevel.quantity), 0))
+                          .scalar() or 0)
+    return templates.TemplateResponse(
+        "locations.html",
+        ctx(request, db, locations=locs, totals=totals, show_archived=show_archived),
+    )
+
+
+@app.post("/locations/add")
+def locations_add(request: Request, name: str = Form(...), notes: str = Form(""),
+                  db: Session = Depends(get_db)):
+    nm = (name or "").strip()
+    if not nm:
+        return redirect("/locations", "Name is required.", ok=False)
+    if db.query(Location).filter(Location.name == nm).first():
+        return redirect("/locations", f"A location named '{nm}' already exists.", ok=False)
+    loc = Location(name=nm, notes=notes.strip(), active=True, archived=False)
+    db.add(loc)
+    db.flush()
+    audit.record(db, current_user(request), "location.add", "location", loc.id, f"Added {nm}")
+    db.commit()
+    return redirect("/locations", f"Location '{nm}' added.")
+
+
+@app.post("/locations/{loc_id}/edit")
+def locations_edit(loc_id: int, request: Request, name: str = Form(...), notes: str = Form(""),
+                   active: str = Form(""), db: Session = Depends(get_db)):
+    loc = db.get(Location, loc_id)
+    if not loc:
+        return redirect("/locations", "Location not found.", ok=False)
+    nm = (name or "").strip()
+    if not nm:
+        return redirect("/locations", "Name is required.", ok=False)
+    dup = db.query(Location).filter(Location.name == nm, Location.id != loc.id).first()
+    if dup:
+        return redirect("/locations", f"A location named '{nm}' already exists.", ok=False)
+    loc.name = nm
+    loc.notes = notes.strip()
+    loc.active = active == "on"
+    audit.record(db, current_user(request), "location.edit", "location", loc.id, f"Edited {nm}")
+    db.commit()
+    return redirect("/locations", "Location saved.")
+
+
+@app.post("/locations/{loc_id}/archive")
+def locations_archive(loc_id: int, request: Request, db: Session = Depends(get_db)):
+    loc = db.get(Location, loc_id)
+    if not loc:
+        return redirect("/locations", "Location not found.", ok=False)
+    # Refuse if there's still stock here — archiving would orphan it.
+    stock = (db.query(func.coalesce(func.sum(StockLevel.quantity), 0))
+             .filter(StockLevel.location_id == loc.id).scalar() or 0)
+    if stock > 0:
+        return redirect("/locations",
+                        f"Move the remaining {stock} unit(s) out of '{loc.name}' before archiving.",
+                        ok=False)
+    loc.archived = True
+    loc.active = False
+    audit.record(db, current_user(request), "location.archive", "location", loc.id, f"Archived {loc.name}")
+    db.commit()
+    return redirect("/locations", f"Location '{loc.name}' archived.")
+
+
+@app.post("/locations/{loc_id}/restore")
+def locations_restore(loc_id: int, request: Request, db: Session = Depends(get_db)):
+    loc = db.get(Location, loc_id)
+    if not loc:
+        return redirect("/locations", "Location not found.", ok=False)
+    loc.archived = False
+    loc.active = True
+    audit.record(db, current_user(request), "location.restore", "location", loc.id, f"Restored {loc.name}")
+    db.commit()
+    return redirect("/locations", f"Location '{loc.name}' restored.")
+
+
+@app.get("/transfers", response_class=HTMLResponse)
+def transfers_page(request: Request, db: Session = Depends(get_db)):
+    rows = (db.query(Transfer)
+            .order_by(Transfer.created_at.desc())
+            .limit(200).all())
+    return templates.TemplateResponse(
+        "transfers.html",
+        ctx(request, db, transfers=rows),
+    )
+
+
+@app.get("/transfers/new", response_class=HTMLResponse)
+def transfer_new_page(request: Request, db: Session = Depends(get_db)):
+    locs = (db.query(Location)
+            .filter(Location.active == True, Location.archived == False)  # noqa: E712
+            .order_by(Location.name).all())
+    parts = (db.query(Part)
+             .filter(Part.active == True, Part.archived == False)  # noqa: E712
+             .order_by(Part.name).all())
+    return templates.TemplateResponse(
+        "transfer_form.html",
+        ctx(request, db, locations=locs, parts=parts),
+    )
+
+
+@app.post("/transfers/new")
+async def transfer_create(
+    request: Request,
+    from_location_id: int = Form(...),
+    to_location_id: int = Form(...),
+    notes: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    user = current_user(request)
+    if from_location_id == to_location_id:
+        return redirect("/transfers/new", "Source and destination must differ.", ok=False)
+    src = db.get(Location, from_location_id)
+    dst = db.get(Location, to_location_id)
+    if not src or not dst:
+        return redirect("/transfers/new", "Unknown location.", ok=False)
+    if src.archived or dst.archived or not src.active or not dst.active:
+        return redirect("/transfers/new", "Both locations must be active.", ok=False)
+
+    # Lines are submitted as parallel arrays (part_id[] + quantity[]). FastAPI
+    # parses repeated form fields when typed as List, but we read the raw form
+    # to keep the markup simple.
+    form = await request.form()
+    part_ids = form.getlist("part_id")
+    qtys = form.getlist("quantity")
+    pairs = []
+    for pid, q in zip(part_ids, qtys):
+        try:
+            pid_i = int(pid)
+            q_i = int(q)
+        except (TypeError, ValueError):
+            continue
+        if pid_i and q_i > 0:
+            pairs.append((pid_i, q_i))
+    if not pairs:
+        return redirect("/transfers/new", "Add at least one part + quantity.", ok=False)
+
+    # Validate sufficient stock at source for every line *before* mutating.
+    insufficient = []
+    for pid, q in pairs:
+        sl = orders.ensure_stock_row(db, pid, src.id)
+        if sl.quantity < q:
+            part = db.get(Part, pid)
+            insufficient.append(f"{part.name if part else '#'+str(pid)}: need {q}, have {sl.quantity}")
+    if insufficient:
+        return redirect("/transfers/new",
+                        "Source doesn't have enough stock — " + "; ".join(insufficient),
+                        ok=False)
+
+    # Apply atomically. Source decrement + dest increment + Transfer row, one commit.
+    transfer = Transfer(
+        from_location_id=src.id,
+        to_location_id=dst.id,
+        status="completed",
+        created_by=user.get("username", ""),
+        notes=notes.strip(),
+        completed_at=datetime.utcnow(),
+    )
+    db.add(transfer)
+    db.flush()
+    for pid, q in pairs:
+        src_sl = orders.ensure_stock_row(db, pid, src.id)
+        dst_sl = orders.ensure_stock_row(db, pid, dst.id)
+        src_sl.quantity -= q
+        dst_sl.quantity += q
+        db.add(TransferLine(transfer_id=transfer.id, part_id=pid, quantity=q))
+    audit.record(db, user, "transfer.complete", "transfer", transfer.id,
+                 f"{src.name} → {dst.name}: {len(pairs)} line(s)")
+    db.commit()
+    return redirect(f"/transfers/{transfer.id}", f"Transfer #{transfer.id} completed.")
+
+
+@app.get("/transfers/{tid}", response_class=HTMLResponse)
+def transfer_detail(tid: int, request: Request, db: Session = Depends(get_db)):
+    t = db.get(Transfer, tid)
+    if not t:
+        return redirect("/transfers", "Transfer not found.", ok=False)
+    return templates.TemplateResponse(
+        "transfer_detail.html",
+        ctx(request, db, transfer=t),
+    )
 
 
 # ============================================================ parts
@@ -1292,10 +1571,28 @@ def parts_page(request: Request, db: Session = Depends(get_db)):
     parts = q.order_by(Part.name).all()
     cats = category_choices(db)
     cat_names = {cid: category_path(db, c) for cid, _label, _d, c in cats}
+    locations = (db.query(Location)
+                 .filter(Location.active == True, Location.archived == False)  # noqa: E712
+                 .order_by(Location.name).all())
+    # Build a {(part_id, loc_id): qty} map for the per-location chips. Cheap —
+    # one query, then group in Python.
+    stock_map = {}
+    for sl in db.query(StockLevel).all():
+        stock_map[(sl.part_id, sl.location_id)] = sl.quantity
+    # Per-part [(loc, qty), ...] for the template; skip zero rows so the chip
+    # row stays compact.
+    part_stock = {}
+    for p in parts:
+        rows = []
+        for loc in locations:
+            qty = stock_map.get((p.id, loc.id), 0)
+            if qty:
+                rows.append((loc, qty))
+        part_stock[p.id] = rows
     return templates.TemplateResponse(
         "parts.html",
         ctx(request, db, parts=parts, categories=cats, cat_names=cat_names,
-            show_archived=show_archived,
+            show_archived=show_archived, locations=locations, part_stock=part_stock,
             prefill=request.query_params.get("barcode", "")),
     )
 
@@ -1348,6 +1645,12 @@ async def parts_add(
     img_path = await _save_item_image(image, part.id)
     if img_path:
         part.image = img_path
+    # Seed the new part's stock at the default location so per-location
+    # accounting matches the legacy single counter on day one.
+    default_loc = orders.default_location_id(db)
+    if default_loc is not None and part.quantity_on_hand:
+        sl = orders.ensure_stock_row(db, part.id, default_loc)
+        sl.quantity = part.quantity_on_hand
     audit.record(db, current_user(request), "part.create", "part", part.id, f"Created {part.name} ({part.barcode})")
     db.commit()
     if generated:
@@ -1392,14 +1695,33 @@ async def parts_edit(
 
 
 @app.post("/parts/{part_id}/restock")
-def parts_restock(part_id: int, request: Request, amount: int = Form(...), db: Session = Depends(get_db)):
+def parts_restock(part_id: int, request: Request, amount: int = Form(...),
+                  location_id: str = Form(""), db: Session = Depends(get_db)):
     part = db.get(Part, part_id)
-    if part:
-        part.quantity_on_hand += amount
-        if part.low_stock_alerted:
-            part.low_stock_alerted = False
-        audit.record(db, current_user(request), "part.restock", "part", part.id, f"+{amount} → {part.quantity_on_hand}")
-        db.commit()
+    if not part:
+        return redirect("/parts", "Part not found.", ok=False)
+    # Resolve target location: explicit -> first active.
+    loc_id = None
+    if location_id.strip():
+        try:
+            loc_id = int(location_id)
+        except ValueError:
+            loc_id = None
+    if loc_id is None:
+        loc_id = orders.default_location_id(db)
+    if loc_id is None:
+        return redirect("/parts", "No active location to restock into — add one in Settings → Locations.", ok=False)
+    loc = db.get(Location, loc_id)
+    if not loc or loc.archived or not loc.active:
+        return redirect("/parts", "Pick an active location.", ok=False)
+    sl = orders.ensure_stock_row(db, part.id, loc.id)
+    sl.quantity += amount
+    part.quantity_on_hand += amount
+    if part.low_stock_alerted:
+        part.low_stock_alerted = False
+    audit.record(db, current_user(request), "part.restock", "part", part.id,
+                 f"+{amount} → {loc.name} (total {part.quantity_on_hand})")
+    db.commit()
     return redirect("/parts", "Stock updated.")
 
 
@@ -1673,9 +1995,11 @@ def transactions_page(request: Request, db: Session = Depends(get_db)):
         .filter((Order.id.is_(None)) | (Order.status == "submitted"))
     )
     month = request.query_params.get("month", "")
+    location_id_q = request.query_params.get("location_id", "")
+    selected_loc = None
     if user.get("is_kiosk"):
         # Kiosk sessions only see the past 24h of kiosk-submitted charge-outs.
-        # The month query string is ignored — broader access requires signing in.
+        # The month + location query strings are ignored.
         kiosk_username = store.get(db, "kiosk_username") or "kiosk"
         cutoff = datetime.utcnow() - timedelta(hours=24)
         q = q.filter(
@@ -1683,19 +2007,34 @@ def transactions_page(request: Request, db: Session = Depends(get_db)):
             Transaction.scanned_by == kiosk_username,
         )
         month = ""
-    elif month:
-        try:
-            year, mon = (int(x) for x in month.split("-"))
-            start, end = reports.month_bounds(year, mon)
-            q = q.filter(Transaction.created_at >= start, Transaction.created_at < end)
-        except ValueError:
-            pass
+        location_id_q = ""
+    else:
+        if month:
+            try:
+                year, mon = (int(x) for x in month.split("-"))
+                start, end = reports.month_bounds(year, mon)
+                q = q.filter(Transaction.created_at >= start, Transaction.created_at < end)
+            except ValueError:
+                pass
+        if location_id_q:
+            try:
+                lid = int(location_id_q)
+                q = q.filter(Transaction.location_id == lid)
+                selected_loc = lid
+            except ValueError:
+                pass
     txns = q.order_by(Transaction.created_at.desc()).limit(500).all()
     cfg = store.all_settings(db)
     markers = _txn_markers(txns, cfg.get("timezone") or "UTC")
+    filter_locs = (db.query(Location)
+                   .filter(Location.archived == False)  # noqa: E712
+                   .order_by(Location.name).all())
     return templates.TemplateResponse(
         "transactions.html",
-        ctx(request, db, txns=txns, month=month, markers=markers, currency=cfg.get("currency", "$")),
+        ctx(request, db, txns=txns, month=month, markers=markers,
+            currency=cfg.get("currency", "$"),
+            filter_locations=filter_locs,
+            selected_location_id=selected_loc if selected_loc is not None else ""),
     )
 
 
@@ -1871,19 +2210,35 @@ def _selected_client_ids(qp):
     return out
 
 
+def _selected_location_id(qp):
+    raw = qp.get("location_id", "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
 @app.get("/report", response_class=HTMLResponse)
 def report_page(request: Request, db: Session = Depends(get_db)):
     qp = request.query_params
     start, end, label, month_str, date_from, date_to = _resolve_report_window(qp)
     client_ids = _selected_client_ids(qp)
-    report, totals = reports.build_report_range(db, start, end, client_ids=client_ids or None)
+    loc_id = _selected_location_id(qp)
+    report, totals = reports.build_report_range(db, start, end, client_ids=client_ids or None,
+                                                 location_id=loc_id)
     all_clients = db.query(Client).filter(Client.active == True).order_by(Client.name).all()  # noqa: E712
+    all_locations = (db.query(Location)
+                     .filter(Location.archived == False)  # noqa: E712
+                     .order_by(Location.name).all())
     return templates.TemplateResponse(
         "report.html",
         ctx(request, db, report=report, totals=totals,
             month=month_str, range_label=label,
             date_from=date_from, date_to=date_to,
-            all_clients=all_clients, selected_client_ids=set(client_ids)),
+            all_clients=all_clients, selected_client_ids=set(client_ids),
+            all_locations=all_locations, selected_location_id=loc_id),
     )
 
 
@@ -1892,7 +2247,9 @@ def report_csv(request: Request, db: Session = Depends(get_db)):
     qp = request.query_params
     start, end, label, month_str, date_from, date_to = _resolve_report_window(qp)
     client_ids = _selected_client_ids(qp)
-    report, totals = reports.build_report_range(db, start, end, client_ids=client_ids or None)
+    loc_id = _selected_location_id(qp)
+    report, totals = reports.build_report_range(db, start, end, client_ids=client_ids or None,
+                                                 location_id=loc_id)
     csv_text = reports.report_csv_for(report, totals)
     if month_str:
         filename = f"charge-out-{month_str}.csv"
@@ -1908,13 +2265,17 @@ def report_csv(request: Request, db: Session = Depends(get_db)):
 # ============================================================ settings
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request, db: Session = Depends(get_db)):
+    kiosk_locs = (db.query(Location)
+                  .filter(Location.active == True, Location.archived == False)  # noqa: E712
+                  .order_by(Location.name).all())
     return templates.TemplateResponse(
         "settings.html",
         ctx(request, db, providers=emailer.PROVIDERS, this_month=datetime.utcnow().strftime("%Y-%m"),
             disable_auth=settings.disable_auth, size_groups=labels.grouped_sizes(),
             currencies=CURRENCIES, label_sizes=labels.LABEL_SIZES,
             timezones=TIMEZONES,
-            roles=db.query(Role).order_by(Role.name).all()),
+            roles=db.query(Role).order_by(Role.name).all(),
+            kiosk_locations=kiosk_locs),
     )
 
 
@@ -2361,6 +2722,7 @@ def settings_kiosk(
     kiosk_pin: str = Form(""),
     kiosk_username: str = Form("kiosk"),
     kiosk_lockout_minutes: str = Form("5"),
+    kiosk_location_id: str = Form(""),
     db: Session = Depends(get_db),
 ):
     """Admin-only kiosk PIN settings. Enabling without a PIN is rejected so
@@ -2384,6 +2746,22 @@ def settings_kiosk(
     except ValueError:
         mins = 5
     store.set(db, "kiosk_lockout_minutes", str(mins))
+    # Default kiosk source location: validate it's a real, active location.
+    raw_loc = (kiosk_location_id or "").strip()
+    if raw_loc:
+        try:
+            lid = int(raw_loc)
+        except ValueError:
+            lid = None
+        if lid is None:
+            store.set(db, "kiosk_location_id", "")
+        else:
+            loc = db.get(Location, lid)
+            if not loc or loc.archived or not loc.active:
+                return redirect("/settings", "Pick an active location for the kiosk default.", ok=False)
+            store.set(db, "kiosk_location_id", str(lid))
+    else:
+        store.set(db, "kiosk_location_id", "")
     audit.record(db, user, "settings.kiosk", "settings", None,
                  f"Kiosk mode {'enabled' if enabled == '1' else 'disabled'}")
     db.commit()

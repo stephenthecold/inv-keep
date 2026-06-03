@@ -217,6 +217,81 @@ jobs:
           assert r.status_code == 303 and 'Unknown' in r.headers['location']
           print('impersonation flow OK')
           "
+      - name: Per-location stock + transfers (feature smoke)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_loc.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import re
+          from fastapi.testclient import TestClient
+          from app.main import app
+          from app.database import SessionLocal
+          from app.models import Location, StockLevel, Part
+          c = TestClient(app)
+          r = c.get('/'); tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', r.text).group(1)
+          h = {'X-CSRF-Token': tok}
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'Widget', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2', 'quantity_on_hand': '10'})
+          db = SessionLocal()
+          p = db.query(Part).first()
+          db.close()
+          # Seeded stock at Main = 10
+          db = SessionLocal()
+          sl = db.query(StockLevel).filter(StockLevel.part_id == p.id).all()
+          assert any(s.quantity == 10 for s in sl), 'seed missing'
+          db.close()
+          # Add Truck 1
+          assert c.post('/locations/add', data={'_csrf': tok, 'name': 'Truck 1'}, follow_redirects=False).status_code == 303
+          db = SessionLocal(); truck_id = db.query(Location).filter(Location.name == 'Truck 1').first().id; main_id = db.query(Location).filter(Location.name == 'Main').first().id; db.close()
+          # Restock 5 at Truck
+          c.post('/parts/' + str(p.id) + '/restock', data={'_csrf': tok, 'amount': '5', 'location_id': str(truck_id)})
+          db = SessionLocal()
+          lvl = {sl.location_id: sl.quantity for sl in db.query(StockLevel).filter(StockLevel.part_id == p.id).all()}
+          assert lvl[truck_id] == 5 and lvl[main_id] == 10
+          assert db.query(Part).first().quantity_on_hand == 15
+          db.close()
+          # Transfer 3 Main -> Truck
+          r = c.post('/transfers/new', data={'_csrf': tok, 'from_location_id': str(main_id), 'to_location_id': str(truck_id), 'part_id': str(p.id), 'quantity': '3'}, follow_redirects=False)
+          assert r.status_code == 303
+          db = SessionLocal()
+          lvl = {sl.location_id: sl.quantity for sl in db.query(StockLevel).filter(StockLevel.part_id == p.id).all()}
+          assert lvl[main_id] == 7 and lvl[truck_id] == 8, lvl
+          assert db.query(Part).first().quantity_on_hand == 15
+          db.close()
+          # Transfer with insufficient stock at source is rejected before mutating
+          r = c.post('/transfers/new', data={'_csrf': tok, 'from_location_id': str(truck_id), 'to_location_id': str(main_id), 'part_id': str(p.id), 'quantity': '999'}, follow_redirects=False)
+          assert r.status_code == 303 and 'doesn' in r.headers['location'].lower()
+          db = SessionLocal()
+          lvl = {sl.location_id: sl.quantity for sl in db.query(StockLevel).filter(StockLevel.part_id == p.id).all()}
+          assert lvl[main_id] == 7 and lvl[truck_id] == 8, 'transfer should be no-op when rejected'
+          db.close()
+          # Scan from Truck only — set cart location, then scan
+          c.post('/clients/add', data={'_csrf': tok, 'name': 'Demo Co'})
+          bc = c.get('/api/search?q=Widget').json()['results'][0]['barcode']
+          # First scan starts a cart (defaults to Main); switch location, then scan again so we test both paths.
+          assert c.post('/api/cart/scan', json={'barcode': bc, 'quantity': 1}, headers=h).json()['ok']
+          assert c.post('/api/cart/set', json={'client_id': 1, 'job_id': None, 'location_id': truck_id}, headers=h).json()['ok']
+          assert c.post('/api/cart/scan', json={'barcode': bc, 'quantity': 2}, headers=h).json()['ok']
+          db = SessionLocal()
+          lvl = {sl.location_id: sl.quantity for sl in db.query(StockLevel).filter(StockLevel.part_id == p.id).all()}
+          assert lvl[main_id] == 6 and lvl[truck_id] == 6, lvl
+          db.close()
+          # Insufficient stock at location returns 409-style json with the location name
+          r = c.post('/api/cart/scan', json={'barcode': bc, 'quantity': 999}, headers=h)
+          j = r.json()
+          assert j['ok'] is False and j['error'] == 'insufficient_stock'
+          # Archive blocked while stock > 0
+          r = c.post('/locations/' + str(truck_id) + '/archive', data={'_csrf': tok}, follow_redirects=False)
+          assert r.status_code == 303 and 'Move' in r.headers['location']
+          # Submit, then verify /transactions and /report render
+          assert c.post('/api/cart/submit', headers=h).json()['ok']
+          assert c.get('/transactions').status_code == 200
+          assert c.get('/report').status_code == 200
+          assert c.get('/locations').status_code == 200
+          assert c.get('/transfers').status_code == 200
+          print('per-location stock + transfers flow OK')
+          "
       - name: Check JavaScript syntax
         run: node --check app/static/app.js
       - name: Lint shell installer

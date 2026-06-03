@@ -50,6 +50,8 @@
           <a href="/transactions">History</a>
           <a href="/report">Report</a>
           <a href="/map">Map</a>
+          {% if can('manage_locations') %}<a href="/locations">Locations</a>{% endif %}
+          {% if can('manage_locations') %}<a href="/transfers">Transfers</a>{% endif %}
           {% if can('view_audit') %}<a href="/audit">Audit</a>{% endif %}
         </div>
       </div>
@@ -105,6 +107,8 @@
     <a href="/transactions">History</a>
     <a href="/report">Report</a>
     <a href="/map">Map</a>
+    {% if can('manage_locations') %}<a href="/locations">Locations</a>{% endif %}
+    {% if can('manage_locations') %}<a href="/transfers">Transfers</a>{% endif %}
     {% if can('view_audit') %}<a href="/audit">Audit</a>{% endif %}
     {% else %}
     <a href="/transactions">Recent (24h)</a>

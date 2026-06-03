@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>New stock transfer</h1>
+  <div class="head-actions">
+    <a class="btn ghost" href="/transfers">All transfers</a>
+  </div>
+</div>
+
+{% if locations | length < 2 %}
+<div class="flash bad">You need at least two active locations to transfer between. <a href="/locations">Add one</a>.</div>
+{% else %}
+
+<form method="post" action="/transfers/new" class="card">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="grid-form">
+    <label>From
+      <select name="from_location_id" required>
+        {% for l in locations %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>To
+      <select name="to_location_id" required>
+        {% for l in locations %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="wide">Notes <input name="notes" placeholder="optional (e.g. loading Truck 1 for Monday)"></label>
+  </div>
+
+  <h2>Lines</h2>
+  <table class="lines">
+    <thead><tr><th>Part</th><th class="num" style="width:8rem">Quantity</th><th></th></tr></thead>
+    <tbody id="xfer-body">
+      <tr class="xfer-line">
+        <td>
+          <select name="part_id">
+            <option value="">— pick a part —</option>
+            {% for p in parts %}<option value="{{ p.id }}">{{ p.name }} <span class="muted">({{ p.barcode }})</span></option>{% endfor %}
+          </select>
+        </td>
+        <td class="num"><input name="quantity" type="number" min="1" value="1" style="width:6rem"></td>
+        <td><button type="button" class="ghost xfer-remove" aria-label="Remove line">✕</button></td>
+      </tr>
+    </tbody>
+  </table>
+  <p><button type="button" class="ghost" id="xfer-add-line">+ Add another line</button></p>
+
+  <menu class="modal-actions" style="margin-top:1rem">
+    <a class="btn ghost" href="/transfers">Cancel</a>
+    <button type="submit">Post transfer</button>
+  </menu>
+</form>
+
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+  var body = document.getElementById('xfer-body');
+  var addBtn = document.getElementById('xfer-add-line');
+  function bindRow(row){
+    var rm = row.querySelector('.xfer-remove');
+    if (rm) rm.addEventListener('click', function(){
+      if (body.children.length > 1) row.remove();
+    });
+  }
+  body.querySelectorAll('.xfer-line').forEach(bindRow);
+  addBtn.addEventListener('click', function(){
+    var first = body.querySelector('.xfer-line');
+    var clone = first.cloneNode(true);
+    clone.querySelector('select').value = '';
+    clone.querySelector('input[name=quantity]').value = '1';
+    body.appendChild(clone);
+    bindRow(clone);
+  });
+});
+</script>
+
+{% endif %}
+{% endblock %}

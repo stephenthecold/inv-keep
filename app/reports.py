@@ -23,16 +23,17 @@ def month_bounds(year: int, month: int):
     return start, end
 
 
-def build_report(db, year: int, month: int, client_ids=None):
+def build_report(db, year: int, month: int, client_ids=None, location_id=None):
     start, end = month_bounds(year, month)
-    return build_report_range(db, start, end, client_ids=client_ids)
+    return build_report_range(db, start, end, client_ids=client_ids, location_id=location_id)
 
 
-def build_report_range(db, start, end, client_ids=None):
+def build_report_range(db, start, end, client_ids=None, location_id=None):
     """Clients -> jobs -> line items in [start, end), plus charge/cost/margin totals.
 
     If ``client_ids`` is provided (non-empty iterable), restrict to just those
     client IDs. Empty / None means "all clients" (the historical behavior).
+    If ``location_id`` is provided, restrict to lines billed from that location.
     """
     q = (
         db.query(Transaction)
@@ -49,6 +50,8 @@ def build_report_range(db, start, end, client_ids=None):
     )
     if client_ids:
         q = q.filter(Transaction.customer_id.in_(list(client_ids)))
+    if location_id:
+        q = q.filter(Transaction.location_id == location_id)
     txns = q.all()
 
     clients = {}
@@ -98,6 +101,20 @@ def build_report_range(db, start, end, client_ids=None):
         "cost": sum(c["cost"] for c in result),
     }
     totals["margin"] = totals["charge"] - totals["cost"]
+    # Per-location breakdown so the report page can show e.g.
+    # "Office: $1,200.00 / Truck 1: $480.00". Computed off the same txn set
+    # we already loaded so it stays consistent with the per-client roll-up.
+    by_loc = {}
+    for t in txns:
+        loc_name = t.location.name if t.location else "(no location)"
+        b = by_loc.setdefault(loc_name, {"name": loc_name, "charge": 0.0, "cost": 0.0, "lines": 0})
+        b["charge"] += t.total_charge
+        b["cost"] += t.total_cost
+        b["lines"] += 1
+    by_location = sorted(by_loc.values(), key=lambda r: r["name"].lower())
+    for b in by_location:
+        b["margin"] = b["charge"] - b["cost"]
+    totals["by_location"] = by_location
     return result, totals
 
 

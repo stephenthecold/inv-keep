@@ -266,6 +266,7 @@ if (scan && cart) {
   const suggest = document.getElementById("suggest");
   const clientSel = document.getElementById("cart-client");
   const jobSel = document.getElementById("cart-job");
+  const locationSel = document.getElementById("cart-location");
   const body = document.getElementById("cart-body");
   const subtotalEl = document.getElementById("cart-subtotal");
   const statusEl = document.getElementById("cart-status");
@@ -321,6 +322,9 @@ if (scan && cart) {
     }
     filterJobsToClient(c.client_id);
     jobSel.value = c.job_id ? String(c.job_id) : "";
+    if (locationSel) {
+      locationSel.value = c.location_id ? String(c.location_id) : (locationSel.dataset.default || "");
+    }
 
     body.innerHTML = "";
     if (!c.lines.length) {
@@ -477,7 +481,10 @@ if (scan && cart) {
     const d = await res.json();
     if (!d.ok) {
       beep(false);
-      if (d.error === "insufficient_stock") toast(`Out of stock: ${d.part} (have ${d.available})`, false);
+      if (d.error === "insufficient_stock") {
+        const where = d.location ? ` at ${d.location}` : "";
+        toast(`Out of stock: ${d.part}${where} (have ${d.available})`, false);
+      }
       else if (d.error === "unknown_barcode") toast(`Unknown barcode ${d.barcode}`, false);
       else toast("Could not add to cart", false);
       return;
@@ -494,21 +501,26 @@ if (scan && cart) {
     scan.focus();
   }
 
-  // Client / Job selectors push to the server immediately.
+  // Client / Job / Location selectors push to the server immediately.
   async function pushTarget() {
     const cid = clientSel.value ? parseInt(clientSel.value, 10) : null;
     filterJobsToClient(cid);
     const jid = jobSel.value ? parseInt(jobSel.value, 10) : null;
+    const lid = locationSel && locationSel.value ? parseInt(locationSel.value, 10) : null;
+    const payload = { client_id: cid, job_id: jid };
+    if (locationSel) payload.location_id = lid;
     const res = await fetch("/api/cart/set", {
       method: "POST",
       headers: csrfHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ client_id: cid, job_id: jid }),
+      body: JSON.stringify(payload),
     });
     const d = await res.json();
     if (d.ok) render(d.cart);
+    else if (d.error === "bad_location") toast("Pick an active source location", false);
   }
   clientSel.addEventListener("change", pushTarget);
   jobSel.addEventListener("change", pushTarget);
+  if (locationSel) locationSel.addEventListener("change", pushTarget);
 
   // Qty edits + remove on cart lines.
   body.addEventListener("change", async (e) => {

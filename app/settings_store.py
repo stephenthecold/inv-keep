@@ -101,6 +101,10 @@ DEFAULTS = {
     "kiosk_pin": "",
     "kiosk_username": "kiosk",
     "kiosk_lockout_minutes": "5",
+    # When set, a kiosk-PIN session has this location pre-selected on the
+    # cart card (operator can still override via the dropdown). Empty falls
+    # back to the first active location.
+    "kiosk_location_id": "",
 }
 
 SECRET_KEYS = {

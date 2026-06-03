@@ -276,6 +276,13 @@
     <label>Kiosk username (recorded on orders)
       <input name="kiosk_username" value="{{ cfg.kiosk_username or 'kiosk' }}" maxlength="64">
     </label>
+    <label>Default source location for kiosk scans (optional)
+      <select name="kiosk_location_id">
+        <option value="">— first active location —</option>
+        {% for l in kiosk_locations %}<option value="{{ l.id }}" {% if cfg.kiosk_location_id|string == l.id|string %}selected{% endif %}>{{ l.name }}</option>{% endfor %}
+      </select>
+      <small class="muted">A kiosk PIN session starts with this location pre-selected on the cart. Operator can still change it.</small>
+    </label>
     <label>Lockout (minutes after 5 bad attempts)
       <input name="kiosk_lockout_minutes" type="number" min="1" max="1440" value="{{ cfg.kiosk_lockout_minutes or '5' }}" style="width:6rem">
     </label>

@@ -8,6 +8,14 @@
   <span class="muted">— or —</span>
   <label>From <input type="date" name="date_from" value="{{ date_from }}"></label>
   <label>To <input type="date" name="date_to" value="{{ date_to }}"></label>
+  {% if all_locations %}
+  <label>Location
+    <select name="location_id">
+      <option value="">— all —</option>
+      {% for l in all_locations %}<option value="{{ l.id }}" {% if selected_location_id and selected_location_id == l.id %}selected{% endif %}>{{ l.name }}</option>{% endfor %}
+    </select>
+  </label>
+  {% endif %}
   <details class="report-clients">
     <summary>Clients ({% if selected_client_ids %}{{ selected_client_ids|length }}{% else %}all{% endif %})</summary>
     <div class="report-clients-list">
@@ -18,7 +26,7 @@
     </div>
   </details>
   <button type="submit">Show</button>
-  <a class="btn" href="/report.csv?{% if date_from and date_to %}date_from={{ date_from }}&date_to={{ date_to }}{% else %}month={{ month }}{% endif %}{% for cid in selected_client_ids %}&client_id={{ cid }}{% endfor %}">⬇ Export CSV</a>
+  <a class="btn" href="/report.csv?{% if date_from and date_to %}date_from={{ date_from }}&date_to={{ date_to }}{% else %}month={{ month }}{% endif %}{% for cid in selected_client_ids %}&client_id={{ cid }}{% endfor %}{% if selected_location_id %}&location_id={{ selected_location_id }}{% endif %}">⬇ Export CSV</a>
 </form>
 
 {% for c in report %}
@@ -54,6 +62,26 @@
 {% else %}
 <p class="muted">No charge-outs recorded for this month.</p>
 {% endfor %}
+
+{% if report and totals.by_location and totals.by_location|length > 1 %}
+<div class="card report-by-location">
+  <h2>By location</h2>
+  <table class="lines">
+    <thead><tr><th>Location</th><th class="num">Lines</th><th class="num">Cost</th><th class="num">Charge</th><th class="num">Margin</th></tr></thead>
+    <tbody>
+      {% for b in totals.by_location %}
+      <tr>
+        <td>{{ b.name }}</td>
+        <td class="num">{{ b.lines }}</td>
+        <td class="num">{{ b.cost | money(cfg.currency) }}</td>
+        <td class="num">{{ b.charge | money(cfg.currency) }}</td>
+        <td class="num">{{ b.margin | money(cfg.currency) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
 
 {% if report %}
 <div class="grand-total">Billable total: {{ totals.charge | money(cfg.currency) }}</div>

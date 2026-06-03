@@ -10,6 +10,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -105,6 +106,75 @@ class Job(Base):
     client = relationship("Client", back_populates="jobs")
 
 
+class Location(Base):
+    """A physical place where stock is kept — e.g. the office, a truck, or
+    a job-site cage. Stock is counted per-location via StockLevel; Part's
+    `quantity_on_hand` stays as the sum across all locations so older
+    pages / reports keep working unchanged."""
+
+    __tablename__ = "locations"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, unique=True, nullable=False)
+    notes = Column(Text, default="")
+    active = Column(Boolean, nullable=False, default=True)
+    archived = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class StockLevel(Base):
+    """How many of a given Part are kept at a given Location. One row per
+    (part, location) pair."""
+
+    __tablename__ = "stock_levels"
+    __table_args__ = (
+        UniqueConstraint("part_id", "location_id", name="uq_stock_part_loc"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    part_id = Column(Integer, ForeignKey("parts.id"), nullable=False, index=True)
+    location_id = Column(Integer, ForeignKey("locations.id"), nullable=False, index=True)
+    quantity = Column(Integer, nullable=False, default=0)
+
+    part = relationship("Part")
+    location = relationship("Location")
+
+
+class Transfer(Base):
+    """An atomic stock movement between two Locations. Created in one shot;
+    completing it decrements the source StockLevels and increments the
+    destination's. Status stays at 'completed' once posted — voiding a
+    transfer is a follow-up scope."""
+
+    __tablename__ = "transfers"
+
+    id = Column(Integer, primary_key=True)
+    from_location_id = Column(Integer, ForeignKey("locations.id"), nullable=False)
+    to_location_id = Column(Integer, ForeignKey("locations.id"), nullable=False)
+    status = Column(String, nullable=False, default="completed", index=True)
+    created_by = Column(String, default="")
+    notes = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+
+    from_location = relationship("Location", foreign_keys=[from_location_id])
+    to_location = relationship("Location", foreign_keys=[to_location_id])
+    lines = relationship("TransferLine", back_populates="transfer",
+                         cascade="all, delete-orphan", order_by="TransferLine.id")
+
+
+class TransferLine(Base):
+    __tablename__ = "transfer_lines"
+
+    id = Column(Integer, primary_key=True)
+    transfer_id = Column(Integer, ForeignKey("transfers.id"), nullable=False, index=True)
+    part_id = Column(Integer, ForeignKey("parts.id"), nullable=False)
+    quantity = Column(Integer, nullable=False, default=0)
+
+    transfer = relationship("Transfer", back_populates="lines")
+    part = relationship("Part")
+
+
 class Order(Base):
     """A charge-out cart that bundles one or more Transaction lines under a
     single order number. Lifecycle: open → submitted (number assigned) → may
@@ -120,6 +190,9 @@ class Order(Base):
     number = Column(String, unique=True, nullable=True, index=True)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
+    # Source location for every line scanned into this cart. May be changed
+    # mid-cart; api_cart_set re-stamps existing lines so reporting stays clean.
+    location_id = Column(Integer, ForeignKey("locations.id"), nullable=True, index=True)
     # open | submitted | voided | cancelled
     status = Column(String, nullable=False, default="open", index=True)
     created_by = Column(String, default="")            # username that opened it
@@ -132,6 +205,7 @@ class Order(Base):
 
     client = relationship("Client", foreign_keys=[customer_id])
     job = relationship("Job", foreign_keys=[job_id])
+    location = relationship("Location", foreign_keys=[location_id])
 
 
 class Transaction(Base):
@@ -148,6 +222,9 @@ class Transaction(Base):
     # FK to the Order this line belongs to. Nullable for legacy rows that
     # predate the cart redesign.
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=True, index=True)
+    # Source location for the stock that fed this line — billed FROM here and
+    # restored TO here on void. Nullable for legacy rows from before v1.15.
+    location_id = Column(Integer, ForeignKey("locations.id"), nullable=True, index=True)
     quantity = Column(Integer, nullable=False, default=1)
     # Snapshots taken at charge-out time so later price edits never rewrite history.
     unit_cost_at_time = Column(Numeric(10, 2), nullable=False, default=0)   # our cost
@@ -166,6 +243,7 @@ class Transaction(Base):
     client = relationship("Client", foreign_keys=[customer_id])
     job = relationship("Job", foreign_keys=[job_id])
     order = relationship("Order")
+    location = relationship("Location", foreign_keys=[location_id])
 
     @property
     def total_charge(self):

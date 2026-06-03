@@ -5,6 +5,14 @@
 
 <form method="get" class="filter">
   <label>Month <input type="month" name="month" value="{{ month }}"></label>
+  {% if filter_locations %}
+  <label>Location
+    <select name="location_id">
+      <option value="">— all —</option>
+      {% for l in filter_locations %}<option value="{{ l.id }}" {% if selected_location_id|string == l.id|string %}selected{% endif %}>{{ l.name }}</option>{% endfor %}
+    </select>
+  </label>
+  {% endif %}
   <button type="submit">Filter</button>
   <a href="/transactions">Clear</a>
   {% if markers %}<a class="btn ghost" href="/map{% if month %}?month={{ month }}{% endif %}">Full-page map →</a>{% endif %}
@@ -57,7 +65,7 @@
 
 <table class="lines">
   <thead>
-    <tr><th>When</th><th>Order</th><th>Part</th><th>Client</th><th>Job</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Charge</th><th>By</th><th>Loc</th><th></th></tr>
+    <tr><th>When</th><th>Order</th><th>Part</th><th>From</th><th>Client</th><th>Job</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Charge</th><th>By</th><th>Map</th><th></th></tr>
   </thead>
   <tbody>
     {% for t in txns %}
@@ -65,6 +73,7 @@
       <td>{{ t.created_at | local_dt(cfg.timezone) }}</td>
       <td>{% if t.order and t.order.number %}<code>{{ t.order.number }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>
       <td>{{ t.part.name }}</td>
+      <td>{% if t.location %}<span class="tag muted">{{ t.location.name }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
       <td>{{ t.client.name if t.client else '' }}</td>
       <td>{{ t.job.name if t.job else '' }}{% if t.job and t.job.reference %} <small>({{ t.job.reference }})</small>{% endif %}</td>
       <td class="num">{{ t.quantity }}</td>
@@ -85,7 +94,7 @@
       </td>
     </tr>
     {% else %}
-    <tr class="empty"><td colspan="11">No transactions.</td></tr>
+    <tr class="empty"><td colspan="12">No transactions.</td></tr>
     {% endfor %}
   </tbody>
 </table>

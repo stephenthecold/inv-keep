@@ -62,6 +62,10 @@ _ADDED_COLUMNS = {
         "lng": "REAL",
         "geo_accuracy_m": "REAL",
         "order_id": "INTEGER",
+        "location_id": "INTEGER",
+    },
+    "orders": {
+        "location_id": "INTEGER",
     },
 }
 
@@ -83,6 +87,67 @@ def ensure_columns():
                 if col not in existing:
                     conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
         _relax_transactions_customer_id(conn)
+
+
+def seed_locations_and_stock():
+    """v1.15: bootstrap the new locations / stock_levels tables.
+
+    - If `locations` is empty, create a single row called "Main".
+    - For each Part with no StockLevel row, insert one for Main equal to the
+      part's existing `quantity_on_hand` (so totals stay consistent).
+    - Auto-cancel any open carts left over from the pre-1.15 schema (their
+      lines have no `location_id`); restore the lines' stock to Main.
+
+    Idempotent — safe to call on every startup.
+    """
+    from .models import Location, Order, Part, StockLevel, Transaction
+    from datetime import datetime
+
+    db = SessionLocal()
+    try:
+        main = db.query(Location).order_by(Location.id).first()
+        if main is None:
+            main = Location(name="Main", notes="Default location (auto-created).",
+                            active=True, archived=False)
+            db.add(main)
+            db.flush()
+
+        # Seed stock_levels for any part missing one. Use a single query to find
+        # parts that don't already have a row in stock_levels.
+        existing_part_ids = {pid for (pid,) in db.query(StockLevel.part_id).distinct()}
+        for part in db.query(Part).all():
+            if part.id in existing_part_ids:
+                continue
+            db.add(StockLevel(part_id=part.id, location_id=main.id,
+                              quantity=part.quantity_on_hand or 0))
+
+        # Auto-cancel any pre-existing open carts so they don't strand stock.
+        # Their lines were decremented from the legacy single-counter without
+        # a location stamp — restore to Main.
+        open_carts = db.query(Order).filter(Order.status == "open").all()
+        for cart in open_carts:
+            lines = (db.query(Transaction)
+                     .filter(Transaction.order_id == cart.id,
+                             Transaction.voided == False)  # noqa: E712
+                     .all())
+            for ln in lines:
+                if ln.part is not None:
+                    ln.part.quantity_on_hand += ln.quantity
+                    # Mirror into stock_levels at Main if a row exists.
+                    sl = (db.query(StockLevel)
+                          .filter(StockLevel.part_id == ln.part_id,
+                                  StockLevel.location_id == main.id)
+                          .first())
+                    if sl is not None:
+                        sl.quantity += ln.quantity
+                ln.voided = True
+            cart.status = "cancelled"
+            cart.voided_by = "system"
+            cart.voided_at = datetime.utcnow()
+            cart.voided_reason = "Auto-cancelled on upgrade to multi-location stock."
+        db.commit()
+    finally:
+        db.close()
 
 
 def _relax_transactions_customer_id(conn):
