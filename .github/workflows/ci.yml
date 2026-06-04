@@ -157,12 +157,14 @@ jobs:
           from app.main import app
           from app.database import SessionLocal
           from app import settings_store as store
+          from app.models import KioskPin
           db = SessionLocal()
           store.set(db, 'auth_mode', 'oidc')
           store.set(db, 'oidc_discovery_url', 'https://x/.well-known/openid-configuration')
           store.set(db, 'oidc_client_id', 'x')
           store.set(db, 'kiosk_enabled', '1')
-          store.set(db, 'kiosk_pin', '1234')
+          # v1.22: PINs live in the kiosk_pins table, not a single global setting.
+          db.add(KioskPin(label='CI', pin='1234', kiosk_username='kiosk', active=True))
           db.commit(); db.close()
           from fastapi.testclient import TestClient
           c = TestClient(app, base_url='https://testserver')
@@ -195,7 +197,19 @@ jobs:
           # Disabling kiosk_enabled invalidates the live session
           db = SessionLocal(); store.set(db, 'kiosk_enabled', '0'); db.commit(); db.close()
           assert c.get('/', follow_redirects=False).status_code in (302, 303, 401)
-          print('kiosk PIN flow OK')
+          # v1.22: removing a default perm from a built-in role sticks
+          # across re-seeding (the customized flag short-circuits backfill).
+          from app.models import Role
+          from app import rbac
+          db = SessionLocal()
+          k = db.query(Role).filter(Role.name == 'Kiosk').first()
+          k.permissions, k.customized = 'view,checkout', True
+          db.commit()
+          rbac.seed_roles(db)  # would have re-added view_catalog pre-1.22
+          k = db.query(Role).filter(Role.name == 'Kiosk').first()
+          assert 'view_catalog' not in k.permissions, 'customized Kiosk perms must NOT be backfilled'
+          db.close()
+          print('kiosk PIN flow + customized perm persistence OK')
           "
       - name: Admin impersonation (feature smoke)
         env:

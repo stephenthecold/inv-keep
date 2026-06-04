@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Scan or search to charge out</h1>
+<h1 class="scan-title">Scan or search to charge out</h1>
 
 {% if not clients %}
 <div class="notice">
@@ -8,30 +8,27 @@
 </div>
 {% endif %}
 
-<div class="field search-wrap">
-  <label>Scan a barcode or start typing a part name</label>
-  <input type="text" id="scan" autocomplete="off" placeholder="Scan, or type to search…" autofocus>
-  <div id="suggest" class="suggest" hidden></div>
-  <small>Scanning a known item adds it to the current order. Set the client/job once and keep scanning; submit when done.</small>
-  <div class="scan-actions">
-    <button type="button" id="start-walkin" class="ghost">+ Start walk-in / one-time order</button>
-  </div>
-</div>
-
-<!-- Cart card. Rendered client-side from /api/cart on load + after each scan. -->
-<section id="cart" class="cart-card" hidden>
-  <header class="cart-head">
-    <div>
-      <h2 style="margin:0">Current order</h2>
-      <small class="muted" id="cart-status">Order # will be assigned on submit</small>
-    </div>
-    <div class="cart-actions">
-      <button type="button" class="ghost" onclick="openModal('add-custom')">+ Custom item</button>
-      <button type="button" id="cart-cancel" class="ghost">Cancel</button>
-      <button type="button" id="cart-submit">Submit Order</button>
-    </div>
-  </header>
-
+<!-- v1.23: COMPACT TARGETS HEADER ------------------------------------------
+     Three pills summarise the destination (location · client · job). Tap
+     anywhere on the summary bar to expand the pickers; collapses again
+     after a client is chosen so the scan input + cart fill the screen.
+     <details> handles open/close natively, no JS toggle needed. -->
+<details id="cart-targets-card" class="cart-targets-card" {% if not default_location_id %}open{% endif %}>
+  <summary class="cart-targets-summary">
+    <span class="ct-pill" data-pill="location" title="Source location">
+      <span class="ct-icon" aria-hidden="true">📍</span>
+      <span class="ct-text"><em>pick a location</em></span>
+    </span>
+    <span class="ct-pill" data-pill="client" title="Client">
+      <span class="ct-icon" aria-hidden="true">👤</span>
+      <span class="ct-text"><em>pick a client</em></span>
+    </span>
+    <span class="ct-pill" data-pill="job" title="Job (optional)">
+      <span class="ct-icon" aria-hidden="true">🛠️</span>
+      <span class="ct-text"><em>no job</em></span>
+    </span>
+    <span class="ct-edit" aria-hidden="true">Change</span>
+  </summary>
   <div class="grid-form cart-targets">
     <label>From location
       <select id="cart-location" data-default="{{ default_location_id }}">
@@ -51,6 +48,9 @@
         {% for j in jobs %}<option value="{{ j.id }}" data-client="{{ j.client_id }}">{{ j.name }}{% if j.reference %} — {{ j.reference }}{% endif %}</option>{% endfor %}
       </select>
     </label>
+    <div class="wide cart-targets-walkin">
+      <button type="button" id="start-walkin" class="ghost">+ Walk-in / one-time customer</button>
+    </div>
     <label class="wide" id="cart-walkin-row" hidden>Walk-in customer name
       <span class="walkin-row">
         <input type="text" id="cart-walkin" placeholder="e.g. Cash sale · John Doe drop-in" maxlength="200">
@@ -59,17 +59,40 @@
       </span>
     </label>
   </div>
+</details>
 
-  <div class="table-scroll">
-  <table class="lines cart-lines">
-    <thead>
-      <tr><th></th><th>Part</th><th class="col-barcode">Barcode</th><th class="num">Qty</th><th class="num col-unit">Unit</th><th class="num">Charge</th><th></th></tr>
-    </thead>
-    <tbody id="cart-body"></tbody>
-    <tfoot>
-      <tr><td colspan="5">Subtotal</td><td class="num" id="cart-subtotal">{{ cfg.currency }}0.00</td><td></td></tr>
-    </tfoot>
-  </table>
+<!-- SCAN INPUT — moved below the targets so the destination is set first.
+     Keyboard-wedge scanners still get autofocus, and the input is the
+     visual anchor of the page. -->
+<div class="field search-wrap scan-field">
+  <input type="text" id="scan" autocomplete="off" placeholder="Scan a barcode or type to search…" autofocus>
+  <div id="suggest" class="suggest" hidden></div>
+  <small class="muted">Scanning a known item adds it to the current order. The pickers above apply to every scan until cleared.</small>
+</div>
+
+<!-- CART CARD — tiles, not a table, so it stops needing horizontal scroll
+     on phones. Submit/Cancel live in a footer bar that sticks to the bottom
+     of the viewport on phones so the operator can punch Submit without
+     thumbing back to the top of a long cart. -->
+<section id="cart" class="cart-card" hidden>
+  <header class="cart-head">
+    <div class="cart-head-meta">
+      <h2 class="cart-title">Current order</h2>
+      <small class="muted" id="cart-status">Order # will be assigned on submit</small>
+    </div>
+    <div class="cart-actions cart-actions-top">
+      <button type="button" class="ghost" onclick="openModal('add-custom')">+ Custom item</button>
+    </div>
+  </header>
+
+  <div id="cart-tiles" class="cart-tiles" role="list" aria-label="Cart lines"></div>
+
+  <div class="cart-footer">
+    <div class="cart-subtotal">Subtotal <strong id="cart-subtotal">{{ cfg.currency }}0.00</strong></div>
+    <div class="cart-actions cart-actions-bottom">
+      <button type="button" class="ghost" id="cart-cancel">Cancel</button>
+      <button type="button" id="cart-submit">Submit Order</button>
+    </div>
   </div>
 </section>
 

@@ -67,6 +67,11 @@ _ADDED_COLUMNS = {
     "orders": {
         "location_id": "INTEGER",
     },
+    "roles": {
+        # v1.22: once True, rbac.seed_roles() leaves the role's perm list
+        # alone on startup so admins can remove default perms.
+        "customized": "BOOLEAN DEFAULT 0",
+    },
 }
 
 

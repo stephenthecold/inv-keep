@@ -3,6 +3,81 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.23.0] — 2026-06-04
+- **Scan page redesigned.** The "wall of dropdowns + wide table" feel
+  is gone. Three changes:
+  - **Compact targets header.** Source location, client, and job
+    collapse into a one-line pill summary (📍 Main · 👤 Acme · 🛠️ Job 42).
+    Tap the row to expand the pickers; the card auto-collapses once a
+    client and location are set, so the scan input + cart get the full
+    screen. The summary opens automatically on first load if no
+    location is pinned (so a fresh kiosk session lands in "edit"
+    mode).
+  - **Tile-based cart lines.** The cart-lines table is replaced by
+    card-tiles — one per line, with icon, name + barcode + unit
+    price, qty stepper, charge total, and a remove ✕. No more
+    horizontal scroll on phones, and the qty input + remove button
+    are big enough to thumb without zooming.
+  - **Sticky bottom action bar.** Cancel + Submit move out of the
+    cart header into a footer bar that pins to the bottom of the
+    viewport on phones. Submit is always one thumb-reach away no
+    matter how long the cart is.
+  No data-model changes; `/api/cart` payload is unchanged. The XSS
+  hardening from v1.10.1 still applies — every user-controlled string
+  (part name, barcode, walk-in name) is rendered via
+  `createElement` + `textContent`.
+
+## [1.22.1] — 2026-06-04
+- **Explicit archive / restore / delete on clients**, mirroring the
+  item lifecycle added in v1.21. New routes:
+  - `POST /clients/<id>/archive` — reversible, hides the client from the
+    default `/clients` list and the scan/order pickers without touching
+    history.
+  - `POST /clients/<id>/restore` — flips the bit back.
+  - `POST /clients/<id>/delete` — permanent. Refused when any
+    `Order.customer_id`, `Transaction.customer_id`, or `Job.client_id`
+    row still references the client; the error message tells the user
+    to archive instead so historical orders never lose the client name.
+  The client edit card on `/clients` now renders a Save · Archive · Delete
+  row (Archive flips to Restore once archived), confirm-prompted on
+  Delete, matching the items modal pattern.
+- **Standardized button sizing across the site.** Every actionable
+  button now resolves to one of three classes that share identical
+  padding, font-size, weight, border-radius, and min-height — so a row
+  of mixed-purpose buttons (Save + Archive + Delete) lines up flush.
+  - default `<button>` / `.btn` — primary, filled accent
+  - `.ghost` — secondary, outlined neutral, transparent fill
+  - `.danger` — destructive, filled red
+  `.btn.small` is preserved for inline table-row actions. The previous
+  drift (e.g. `.add-btn` padding ≠ `<button>` padding ≠ `.btn` padding)
+  caused the head-action button to sit a pixel taller than its
+  neighbours; that's gone. Inline `style="padding:…"` overrides on
+  buttons are now exclusively for layout, never sizing.
+
+## [1.22.0] — 2026-06-04
+- **Built-in role permissions now stay edited.** Removing a default
+  perm from a built-in role (e.g. dropping `view_catalog` from Kiosk
+  under `/users#roles`) used to be undone on the next container
+  restart — `rbac.seed_roles()` would re-add every default perm that
+  wasn't there. Roles now carry a `customized` flag that the role-save
+  handler sets on first edit; once set, the seeder leaves the stored
+  perm list strictly alone. Untouched built-in roles still receive
+  newly-shipped default perms on upgrade.
+- **Multiple kiosk PINs for multi-location POS.** The single global
+  `kiosk_pin` setting is replaced by a `kiosk_pins` table — one row
+  per station, each with its own label, PIN, default source location,
+  and audit username. The `/welcome` PIN entry accepts any active PIN;
+  the matching row's defaults are applied to the session, so a
+  Warehouse PIN starts the cart on the warehouse location and a Front
+  Desk PIN gets the front-desk location. Per-station audit usernames
+  also mean each kiosk's last-24h `/transactions` view stays scoped to
+  its own charge-outs instead of seeing every other kiosk's traffic.
+  The legacy single PIN is migrated into a row labelled "Default" on
+  first start.
+- Per-IP lockout after 5 bad attempts is unchanged. PIN comparison
+  walks every active row in constant time so a timing leak can't
+  reveal which slot a candidate PIN matches.
+
 ## [1.21.0] — 2026-06-04
 - **Label barcode is now centered.** The Code128 SVG was forced to
   `width: 100%` which left-anchored the encoder's fixed-mm output, so

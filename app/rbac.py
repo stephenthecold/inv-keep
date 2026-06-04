@@ -50,12 +50,15 @@ def seed_roles(db):
         row = db.query(Role).filter(Role.name == name).first()
         if row is None:
             db.add(Role(name=name, permissions=",".join(info["perms"]),
-                        is_admin=info["admin"], builtin=True))
+                        is_admin=info["admin"], builtin=True, customized=False))
             continue
         # Backfill: a previously-seeded built-in role may have an older perm
         # set. Add any default perm it's missing, but never remove what an
-        # admin has manually toggled on.
-        if row.builtin:
+        # admin has manually toggled on. Once the admin has saved the role
+        # through the UI (customized=True) we leave it strictly alone, so
+        # removing a default perm (e.g. dropping `view_catalog` from Kiosk)
+        # actually sticks across restarts.
+        if row.builtin and not bool(getattr(row, "customized", False)):
             existing = {p.strip() for p in (row.permissions or "").split(",") if p.strip()}
             missing = [p for p in info["perms"] if p not in existing]
             if missing:

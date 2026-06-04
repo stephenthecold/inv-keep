@@ -284,11 +284,20 @@ if (scan && cart) {
   const clientSel = document.getElementById("cart-client");
   const jobSel = document.getElementById("cart-job");
   const locationSel = document.getElementById("cart-location");
-  const body = document.getElementById("cart-body");
+  // v1.23: cart lines are tiles in #cart-tiles, not <tr> rows in #cart-body.
+  const tiles = document.getElementById("cart-tiles");
   const subtotalEl = document.getElementById("cart-subtotal");
   const statusEl = document.getElementById("cart-status");
   const submitBtn = document.getElementById("cart-submit");
   const cancelBtn = document.getElementById("cart-cancel");
+  // Compact-pill targets header (<details> wrapper around the three selects)
+  const targetsCard = document.getElementById("cart-targets-card");
+  const pillLocation = targetsCard && targetsCard.querySelector('[data-pill="location"] .ct-text');
+  const pillClient   = targetsCard && targetsCard.querySelector('[data-pill="client"] .ct-text');
+  const pillJob      = targetsCard && targetsCard.querySelector('[data-pill="job"] .ct-text');
+  const pillLocationEl = targetsCard && targetsCard.querySelector('[data-pill="location"]');
+  const pillClientEl   = targetsCard && targetsCard.querySelector('[data-pill="client"]');
+  const pillJobEl      = targetsCard && targetsCard.querySelector('[data-pill="job"]');
 
   // Keep keyboard-wedge scanners working: any stray click on the page
   // refocuses the scan input unless the user is interacting with a
@@ -311,11 +320,121 @@ if (scan && cart) {
     if (cur && cur.value && cur.dataset.client !== String(clientId)) jobSel.value = "";
   }
 
+  // Update the three pill summaries from the current select values. Called
+  // after every cart render and from select-change listeners so the
+  // collapsed header reflects what's been picked at all times.
+  function updatePills() {
+    function syncPill(sel, pillEl, pillTextEl, fallback) {
+      if (!pillEl || !pillTextEl) return;
+      const opt = sel && sel.selectedOptions && sel.selectedOptions[0];
+      const label = opt && opt.value ? opt.textContent.trim() : "";
+      pillEl.classList.toggle("is-set", !!label);
+      pillTextEl.textContent = "";
+      if (label) {
+        pillTextEl.appendChild(document.createTextNode(label));
+      } else {
+        const em = document.createElement("em");
+        em.textContent = fallback;
+        pillTextEl.appendChild(em);
+      }
+    }
+    syncPill(locationSel, pillLocationEl, pillLocation, "pick a location");
+    syncPill(clientSel,   pillClientEl,   pillClient,   "pick a client");
+    syncPill(jobSel,      pillJobEl,      pillJob,      "no job");
+  }
+  if (clientSel) clientSel.addEventListener("change", updatePills);
+  if (jobSel)    jobSel.addEventListener("change", updatePills);
+  if (locationSel) locationSel.addEventListener("change", updatePills);
+
+  // Build one tile per cart line. textContent is used for every
+  // user-controlled string (part name, barcode); image src is
+  // server-controlled (/uploads/items/N.ext). Mirrors the v1.10.1 XSS
+  // hardening from the old <tr> renderer.
+  function buildTile(ln) {
+    const tile = document.createElement("div");
+    tile.className = "cart-tile";
+    tile.role = "listitem";
+
+    // Icon / thumbnail
+    const iconCell = document.createElement("div");
+    iconCell.className = "tile-icon";
+    if (ln.image) {
+      const img = document.createElement("img");
+      img.src = ln.image;
+      img.alt = "";
+      iconCell.appendChild(img);
+    } else if (ln.icon) {
+      iconCell.innerHTML = iconHTML(ln.icon);
+    }
+    tile.appendChild(iconCell);
+
+    // Name + barcode + unit price (meta)
+    const nameWrap = document.createElement("div");
+    nameWrap.className = "tile-name-wrap";
+    const name = document.createElement("div");
+    name.className = "tile-name";
+    name.textContent = ln.part;
+    nameWrap.appendChild(name);
+    const meta = document.createElement("div");
+    meta.className = "tile-meta";
+    if (ln.barcode) {
+      const code = document.createElement("code");
+      code.textContent = ln.barcode;
+      meta.appendChild(code);
+    }
+    if (ln.unit_price != null) {
+      const dot = document.createElement("span");
+      dot.textContent = (ln.barcode ? " · " : "") + money(ln.unit_price) + " ea";
+      meta.appendChild(dot);
+    }
+    nameWrap.appendChild(meta);
+    tile.appendChild(nameWrap);
+
+    // Qty stepper (or fixed value for unique-serial items)
+    const qty = document.createElement("div");
+    qty.className = "tile-qty";
+    if (ln.type === "unique") {
+      const sp = document.createElement("span");
+      sp.className = "tile-qty-fixed";
+      sp.textContent = "× " + ln.quantity;
+      qty.appendChild(sp);
+    } else {
+      const inp = document.createElement("input");
+      inp.type = "number";
+      inp.min = "1";
+      inp.value = ln.quantity;
+      inp.dataset.line = ln.id;
+      inp.className = "line-qty";
+      inp.setAttribute("aria-label", "Quantity for " + ln.part);
+      qty.appendChild(inp);
+    }
+    tile.appendChild(qty);
+
+    // Charge total for this line
+    const charge = document.createElement("div");
+    charge.className = "tile-charge";
+    charge.textContent = money(ln.charge);
+    tile.appendChild(charge);
+
+    // Remove button
+    const rm = document.createElement("button");
+    rm.type = "button";
+    rm.className = "ghost line-remove tile-remove";
+    rm.dataset.line = ln.id;
+    rm.title = "Remove";
+    rm.setAttribute("aria-label", "Remove " + ln.part);
+    rm.textContent = "✕";
+    tile.appendChild(rm);
+
+    return tile;
+  }
+
   function render(c) {
     if (!c || !c.open) {
       cart.hidden = true;
-      body.innerHTML = "";
+      tiles.innerHTML = "";
       subtotalEl.textContent = money(0);
+      updatePills();
       return;
     }
     cart.hidden = false;
@@ -343,78 +462,27 @@ if (scan && cart) {
       locationSel.value = c.location_id ? String(c.location_id) : (locationSel.dataset.default || "");
     }
 
-    body.innerHTML = "";
+    tiles.innerHTML = "";
     if (!c.lines.length) {
-      const tr = document.createElement("tr");
-      tr.className = "empty";
-      const td = document.createElement("td");
-      td.colSpan = 7;
-      td.textContent = "Cart is empty — scan an item below.";
-      tr.appendChild(td);
-      body.appendChild(tr);
+      const empty = document.createElement("div");
+      empty.className = "cart-tile-empty";
+      empty.textContent = "Cart is empty — scan an item or type to search above.";
+      tiles.appendChild(empty);
     } else {
-      // Build each cell via the DOM so user-controlled fields (part name,
-      // barcode, image path) can't break out as HTML.
-      c.lines.forEach((ln) => {
-        const tr = document.createElement("tr");
-        // icon / image cell — image src is server-controlled (/uploads/items/N.ext)
-        const tdIcon = document.createElement("td");
-        tdIcon.className = "item-icon";
-        if (ln.image) {
-          const img = document.createElement("img");
-          img.className = "item-thumb";
-          img.src = ln.image;
-          img.alt = "";
-          tdIcon.appendChild(img);
-        } else if (ln.icon) {
-          // iconHTML returns sanitized SVG / escaped emoji from a known set.
-          tdIcon.innerHTML = iconHTML(ln.icon);
-        }
-        tr.appendChild(tdIcon);
-        // part name + barcode (textContent — these are the XSS vectors)
-        const tdName = document.createElement("td");
-        tdName.textContent = ln.part;
-        tr.appendChild(tdName);
-        const tdBc = document.createElement("td");
-        tdBc.className = "col-barcode";
-        const code = document.createElement("code");
-        code.textContent = ln.barcode;
-        tdBc.appendChild(code);
-        tr.appendChild(tdBc);
-        // qty
-        const tdQty = document.createElement("td");
-        tdQty.className = "num";
-        if (ln.type === "unique") {
-          const sp = document.createElement("span");
-          sp.textContent = ln.quantity;
-          tdQty.appendChild(sp);
-        } else {
-          const inp = document.createElement("input");
-          inp.type = "number";
-          inp.min = "1";
-          inp.value = ln.quantity;
-          inp.dataset.line = ln.id;
-          inp.className = "line-qty";
-          inp.style.width = "5rem";
-          tdQty.appendChild(inp);
-        }
-        tr.appendChild(tdQty);
-        // money cells — numeric, safe
-        const tdUnit = document.createElement("td"); tdUnit.className = "num col-unit"; tdUnit.textContent = money(ln.unit_price); tr.appendChild(tdUnit);
-        const tdCh = document.createElement("td"); tdCh.className = "num"; tdCh.textContent = money(ln.charge); tr.appendChild(tdCh);
-        const tdAct = document.createElement("td");
-        const btn = document.createElement("button");
-        btn.className = "ghost line-remove";
-        btn.dataset.line = ln.id;
-        btn.title = "Remove";
-        btn.textContent = "✕";
-        tdAct.appendChild(btn);
-        tr.appendChild(tdAct);
-        body.appendChild(tr);
-      });
+      c.lines.forEach((ln) => tiles.appendChild(buildTile(ln)));
     }
     subtotalEl.textContent = money(c.subtotal);
-    submitBtn.disabled = !(c.lines.length && c.client_id);
+    submitBtn.disabled = !(c.lines.length && (c.client_id || c.client_walkin));
+
+    updatePills();
+
+    // Auto-collapse the targets header once a client is set, so the
+    // expanded picker doesn't keep eating screen real estate after the
+    // operator has confirmed the destination. They can re-expand any
+    // time by tapping the pill row.
+    if (targetsCard && targetsCard.open && (c.client_id || c.client_walkin) && c.location_id) {
+      targetsCard.open = false;
+    }
   }
 
   async function refresh() {
@@ -551,8 +619,8 @@ if (scan && cart) {
   jobSel.addEventListener("change", pushTarget);
   if (locationSel) locationSel.addEventListener("change", pushTarget);
 
-  // Qty edits + remove on cart lines.
-  body.addEventListener("change", async (e) => {
+  // Qty edits + remove on cart lines (delegated on the tile container).
+  tiles.addEventListener("change", async (e) => {
     if (!e.target.classList.contains("line-qty")) return;
     const id = e.target.dataset.line;
     const newQty = Math.max(1, parseInt(e.target.value || "1", 10) || 1);
@@ -569,7 +637,7 @@ if (scan && cart) {
       refresh();
     }
   });
-  body.addEventListener("click", async (e) => {
+  tiles.addEventListener("click", async (e) => {
     if (!e.target.classList.contains("line-remove")) return;
     const id = e.target.dataset.line;
     const res = await fetch("/api/cart/line/" + id + "/remove", {

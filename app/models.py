@@ -266,6 +266,12 @@ class Role(Base):
     permissions = Column(Text, default="")   # comma-separated permission keys
     is_admin = Column(Boolean, nullable=False, default=False)  # grants all permissions
     builtin = Column(Boolean, nullable=False, default=False)
+    # Set to True the first time an admin saves the role through /users#roles.
+    # While False, rbac.seed_roles() backfills any newly-shipped default perms
+    # on startup; once True, the stored perm list is honoured verbatim so
+    # admins can REMOVE a default perm (e.g. drop `view_catalog` from Kiosk)
+    # without it being restored on the next container restart.
+    customized = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -282,6 +288,29 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     role = relationship("Role")
+
+
+class KioskPin(Base):
+    """One PIN per kiosk / POS device.
+
+    Replaces the single global `kiosk_pin` setting so a multi-location shop
+    can hand each station its own code, with its own default source location
+    and its own audit username (so /transactions for one kiosk doesn't
+    leak the other kiosks' charge-outs). The legacy single PIN is migrated
+    into a row labelled "Default" on first startup.
+    """
+
+    __tablename__ = "kiosk_pins"
+
+    id = Column(Integer, primary_key=True)
+    label = Column(String, nullable=False, default="")        # "Front desk", "Warehouse", …
+    pin = Column(String, nullable=False, default="")          # 4–12 digits, stored as-is (matches legacy)
+    kiosk_username = Column(String, nullable=False, default="kiosk")
+    location_id = Column(Integer, ForeignKey("locations.id"), nullable=True)
+    active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    location = relationship("Location")
 
 
 class AuditLog(Base):

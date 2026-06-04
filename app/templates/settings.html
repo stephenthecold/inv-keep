@@ -269,34 +269,85 @@
 
 <!-- ---------------- Kiosk PIN ---------------- -->
 {% if user.is_admin %}
-<section class="card settings-tab" id="tab-kiosk" data-tab-pane="kiosk" data-tab-title="Kiosk PIN">
+<section class="card settings-tab" id="tab-kiosk" data-tab-pane="kiosk" data-tab-title="Kiosk PINs">
   <h2>Kiosk PIN charge-out</h2>
-  <p class="muted">When enabled, the sign-in screen shows a numeric PIN entry below the Sign-in button. Entering the PIN starts a locked-down "Kiosk" session that can scan and charge out, and view the last 24 hours of kiosk activity — and nothing else.</p>
+  <p class="muted">When enabled, the sign-in screen shows a numeric PIN entry below the Sign-in button. Entering any active PIN starts a locked-down "Kiosk" session for that station — scan and charge out, plus the last 24 hours of <i>that station's</i> activity.</p>
   <div class="notice" style="background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:.65rem .85rem;margin:.5rem 0">
-    <b>Need a kiosk to see more than the defaults?</b>
-    The PIN lockdown is active <i>only while the Kiosk role still has its built-in <code>view</code> + <code>checkout</code> permissions</i>. As soon as you grant the role any extra permission — e.g.&nbsp;<code>view_audit</code>, <code>manage_items</code>, <code>view_catalog</code> — the lockdown lifts and standard role permissions take over. Edit perms under <a href="/users#roles">Users &amp; Roles → Kiosk</a>.
+    <b>One PIN per POS.</b> Each kiosk PIN can default to its own source location and carry its own audit username, so multiple front-desk stations don't see each other's recent charge-outs.<br>
+    <b>Need a kiosk to see more than the defaults?</b> The PIN lockdown is active <i>only while the Kiosk role still has its built-in permissions</i>. Grant the role any extra permission — e.g.&nbsp;<code>view_audit</code>, <code>manage_items</code> — and standard role permissions take over for every kiosk session. Edit perms under <a href="/users#roles">Users &amp; Roles → Kiosk</a>.
   </div>
-  <form method="post" action="/settings/kiosk" class="grid-form" autocomplete="off">
+
+  <h3 style="margin-top:1rem">Master switch</h3>
+  <form method="post" action="/settings/kiosk/global" class="grid-form" autocomplete="off">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label class="check">Enable kiosk PIN on /welcome <input type="checkbox" name="kiosk_enabled" {% if cfg.kiosk_enabled == '1' %}checked{% endif %}></label>
-    <label>PIN (4–12 digits)
-      <input name="kiosk_pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="new-password" placeholder="{% if cfg.kiosk_pin %}•••••• (unchanged){% else %}not set{% endif %}">
-      <small class="muted">Leave blank to keep the current PIN.</small>
-    </label>
-    <label>Kiosk username (recorded on orders)
-      <input name="kiosk_username" value="{{ cfg.kiosk_username or 'kiosk' }}" maxlength="64">
-    </label>
-    <label>Default source location for kiosk scans (optional)
-      <select name="kiosk_location_id">
-        <option value="">— first active location —</option>
-        {% for l in kiosk_locations %}<option value="{{ l.id }}" {% if cfg.kiosk_location_id|string == l.id|string %}selected{% endif %}>{{ l.name }}</option>{% endfor %}
-      </select>
-      <small class="muted">A kiosk PIN session starts with this location pre-selected on the cart. Operator can still change it.</small>
-    </label>
-    <label>Lockout (minutes after 5 bad attempts)
+    <label>Lockout (minutes after 5 bad attempts from one IP)
       <input name="kiosk_lockout_minutes" type="number" min="1" max="1440" value="{{ cfg.kiosk_lockout_minutes or '5' }}" style="width:6rem">
     </label>
-    <button type="submit">Save kiosk settings</button>
+    <button type="submit">Save</button>
+  </form>
+
+  <h3 style="margin-top:1.5rem">PINs</h3>
+  {% if not kiosk_pins %}
+  <p class="muted"><i>No PINs configured yet. Add one below — you'll need at least one active PIN before the kiosk switch above lets sessions start.</i></p>
+  {% else %}
+  <table class="table" style="margin-bottom:.75rem">
+    <thead><tr><th>Label</th><th>PIN</th><th>Username</th><th>Default location</th><th>Active</th><th></th></tr></thead>
+    <tbody>
+    {% for p in kiosk_pins %}
+    <tr>
+      <td>
+        <form id="kp-{{ p.id }}" method="post" action="/settings/kiosk/{{ p.id }}/save" autocomplete="off"></form>
+        <input form="kp-{{ p.id }}" type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <input form="kp-{{ p.id }}" name="label" value="{{ p.label }}" maxlength="64" required style="width:11rem">
+      </td>
+      <td>
+        <input form="kp-{{ p.id }}" name="pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="new-password" placeholder="•••••• (unchanged)" style="width:10rem">
+        <small class="muted" style="display:block">Blank = keep</small>
+      </td>
+      <td>
+        <input form="kp-{{ p.id }}" name="kiosk_username" value="{{ p.kiosk_username }}" maxlength="64" style="width:9rem">
+      </td>
+      <td>
+        <select form="kp-{{ p.id }}" name="location_id">
+          <option value="">— first active location —</option>
+          {% for l in kiosk_locations %}<option value="{{ l.id }}" {% if p.location_id == l.id %}selected{% endif %}>{{ l.name }}</option>{% endfor %}
+        </select>
+      </td>
+      <td style="text-align:center">
+        <input form="kp-{{ p.id }}" type="checkbox" name="active" {% if p.active %}checked{% endif %}>
+      </td>
+      <td style="white-space:nowrap">
+        <button form="kp-{{ p.id }}" type="submit">Save</button>
+        <button form="kp-{{ p.id }}" type="submit" formaction="/settings/kiosk/{{ p.id }}/delete" formnovalidate class="danger"
+                onclick="return confirm('Delete this kiosk PIN? Active sessions using it stay alive until they sign out.')">Delete</button>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <h3 style="margin-top:1rem">Add a kiosk PIN</h3>
+  <form method="post" action="/settings/kiosk/add" class="grid-form" autocomplete="off">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label>Label (shown in the audit log)
+      <input name="label" value="" maxlength="64" placeholder="e.g. Front desk" required>
+    </label>
+    <label>PIN (4–12 digits)
+      <input name="pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="new-password" required>
+    </label>
+    <label>Username recorded on orders
+      <input name="kiosk_username" value="kiosk" maxlength="64">
+      <small class="muted">Give each station its own username (e.g. <code>kiosk-frontdesk</code>) so each PIN's /transactions view stays scoped to its own charge-outs.</small>
+    </label>
+    <label>Default source location for this kiosk's scans
+      <select name="location_id">
+        <option value="">— first active location —</option>
+        {% for l in kiosk_locations %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <button type="submit">Add PIN</button>
   </form>
 </section>
 {% endif %}

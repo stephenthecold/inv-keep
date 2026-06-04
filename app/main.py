@@ -38,7 +38,7 @@ if (not settings.session_secret
     )
 from .database import Base, SessionLocal, engine, ensure_columns, get_db, seed_locations_and_stock
 from .models import (
-    AuditLog, Category, Client, Job, Location, Order, Part, Role,
+    AuditLog, Category, Client, Job, KioskPin, Location, Order, Part, Role,
     StockLevel, Transaction, Transfer, TransferLine, User,
 )
 from .version import __version__
@@ -53,6 +53,26 @@ seed_locations_and_stock()
 _seed_db = SessionLocal()
 try:
     rbac.seed_roles(_seed_db)
+    # v1.22: migrate the legacy single global kiosk PIN into the kiosk_pins
+    # table on first start. Idempotent — only seeds when the table is empty
+    # AND the legacy setting still holds a PIN. We leave the legacy setting
+    # populated so a downgrade still works; the new code paths read the
+    # table.
+    _legacy_pin = (store.get(_seed_db, "kiosk_pin") or "").strip()
+    if _legacy_pin and _seed_db.query(KioskPin).count() == 0:
+        _legacy_loc = (store.get(_seed_db, "kiosk_location_id") or "").strip()
+        try:
+            _legacy_loc_id = int(_legacy_loc) if _legacy_loc else None
+        except ValueError:
+            _legacy_loc_id = None
+        _seed_db.add(KioskPin(
+            label="Default",
+            pin=_legacy_pin,
+            kiosk_username=(store.get(_seed_db, "kiosk_username") or "kiosk").strip() or "kiosk",
+            location_id=_legacy_loc_id,
+            active=True,
+        ))
+        _seed_db.commit()
 finally:
     _seed_db.close()
 
@@ -605,7 +625,10 @@ def welcome(request: Request, db: Session = Depends(get_db)):
     title = html.escape(store.get(db, "app_title") or "Inv-Keep")
     accent = html.escape(store.get(db, "brand_accent") or "#2f81f7")
     emoji = html.escape(store.get(db, "brand_emoji") or "📦")
-    kiosk_enabled = store.get_bool(db, "kiosk_enabled") and bool(store.get(db, "kiosk_pin"))
+    kiosk_enabled = (
+        store.get_bool(db, "kiosk_enabled")
+        and db.query(KioskPin).filter(KioskPin.active == True).count() > 0  # noqa: E712
+    )
     tok = html.escape(csrf.issue(request), quote=True)
     err = html.escape(request.query_params.get("err", ""))
     kiosk_block = ""
@@ -703,6 +726,7 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
 async def logout(request: Request):
     request.session.pop("user", None)
     request.session.pop("kiosk", None)
+    request.session.pop("kiosk_pin_id", None)
     request.session.pop("kiosk_started_at", None)
     request.session.pop("impersonate_role", None)
     return RedirectResponse("/welcome", status_code=303)
@@ -723,15 +747,16 @@ async def kiosk_login(
     pin: str = Form(""),
     db: Session = Depends(get_db),
 ):
-    """Validate the configured kiosk PIN and grant a locked-down Kiosk
-    session. CSRF-protected via the global middleware (the /welcome page
-    issues the token). Throttled per-IP after _KIOSK_PIN_MAX_FAILS bad
-    attempts."""
+    """Validate the submitted PIN against every active KioskPin row and
+    grant a locked-down Kiosk session for the matching station.
+    CSRF-protected via the global middleware (the /welcome page issues
+    the token). Throttled per-IP after _KIOSK_PIN_MAX_FAILS bad attempts.
+    """
     import time as _time
     if not store.get_bool(db, "kiosk_enabled"):
         return RedirectResponse("/welcome", status_code=303)
-    expected = store.get(db, "kiosk_pin") or ""
-    if not expected:
+    pins = db.query(KioskPin).filter(KioskPin.active == True).all()  # noqa: E712
+    if not pins:
         return RedirectResponse("/welcome?err=Kiosk+is+enabled+but+no+PIN+is+set.", status_code=303)
     ip = _client_ip(request)
     now = _time.time()
@@ -741,7 +766,16 @@ async def kiosk_login(
         return RedirectResponse(f"/welcome?err=Too+many+attempts.+Try+again+in+{wait}s.", status_code=303)
     submitted = (pin or "").strip()
     import hmac as _hmac
-    if not submitted or not _hmac.compare_digest(submitted, expected.strip()):
+    # Constant-time compare against every active PIN so a per-comparison
+    # timing leak can't reveal which slot the entered PIN matches.
+    matched = None
+    if submitted:
+        for row in pins:
+            if _hmac.compare_digest(submitted, (row.pin or "").strip()):
+                matched = row
+                # Don't break early — keep comparing so total work is the
+                # same regardless of which PIN matched.
+    if matched is None:
         fails += 1
         cooldown = 0
         if fails >= _KIOSK_PIN_MAX_FAILS:
@@ -755,9 +789,13 @@ async def kiosk_login(
     request.session.pop("user", None)
     request.session.pop("impersonate_role", None)
     request.session["kiosk"] = True
+    request.session["kiosk_pin_id"] = matched.id
     request.session["kiosk_started_at"] = datetime.utcnow().isoformat()
-    audit.record(db, {"username": store.get(db, "kiosk_username") or "kiosk"},
-                 "kiosk.login", "kiosk", None, f"PIN session opened from {ip}")
+    audit_user = (matched.kiosk_username or "").strip() or (store.get(db, "kiosk_username") or "kiosk")
+    label = (matched.label or "").strip() or f"PIN #{matched.id}"
+    audit.record(db, {"username": audit_user},
+                 "kiosk.login", "kiosk", matched.id,
+                 f"PIN session opened from {ip} ({label})")
     db.commit()
     return RedirectResponse("/", status_code=303)
 
@@ -824,11 +862,12 @@ def scan_page(request: Request, db: Session = Depends(get_db)):
                     selectinload(Transaction.job),
                 )
                 .order_by(Transaction.created_at.desc()).limit(15).all())
-    # Kiosk sessions optionally start with a pinned default location.
+    # Kiosk sessions optionally start with a pinned default location — per
+    # KioskPin row, so each station can default to its own warehouse.
     user = current_user(request)
     default_loc = ""
     if user.get("is_kiosk"):
-        default_loc = store.get(db, "kiosk_location_id") or ""
+        default_loc = user.get("kiosk_location_id") or store.get(db, "kiosk_location_id") or ""
     return templates.TemplateResponse(
         "scan.html",
         ctx(request, db, clients=clients, jobs=jobs, recent=recent,
@@ -2370,6 +2409,65 @@ def clients_edit(
     return redirect("/clients", "Client saved.")
 
 
+@app.post("/clients/{client_id}/archive")
+def clients_archive(client_id: int, request: Request, db: Session = Depends(get_db)):
+    """Hide a client from the default list + scan/order pickers. Reversible;
+    history (orders, transactions, jobs) is untouched."""
+    c = db.get(Client, client_id)
+    if not c:
+        return redirect("/clients", "Client not found.", ok=False)
+    c.archived = True
+    audit.record(db, current_user(request), "client.archive", "client", c.id,
+                 f"Archived {c.name}")
+    db.commit()
+    return redirect("/clients?archived=1", f"Archived {c.name}.")
+
+
+@app.post("/clients/{client_id}/restore")
+def clients_restore(client_id: int, request: Request, db: Session = Depends(get_db)):
+    c = db.get(Client, client_id)
+    if not c:
+        return redirect("/clients", "Client not found.", ok=False)
+    c.archived = False
+    audit.record(db, current_user(request), "client.restore", "client", c.id,
+                 f"Restored {c.name}")
+    db.commit()
+    return redirect("/clients", f"Restored {c.name}.")
+
+
+@app.post("/clients/{client_id}/delete")
+def clients_delete(client_id: int, request: Request, db: Session = Depends(get_db)):
+    """Permanent deletion. Refused when the client has any history (orders,
+    transactions) or any attached jobs — archive is the right path for those.
+    Used to roll back a freshly-created client that was a typo / duplicate."""
+    c = db.get(Client, client_id)
+    if not c:
+        return redirect("/clients", "Client not found.", ok=False)
+    order_n = db.query(Order).filter(Order.customer_id == c.id).count()
+    txn_n = db.query(Transaction).filter(Transaction.customer_id == c.id).count()
+    job_n = db.query(Job).filter(Job.client_id == c.id).count()
+    if order_n or txn_n or job_n:
+        bits = []
+        if order_n:
+            bits.append(f"{order_n} order(s)")
+        if txn_n:
+            bits.append(f"{txn_n} sale line(s)")
+        if job_n:
+            bits.append(f"{job_n} job(s)")
+        return redirect(
+            "/clients",
+            f"Can't delete {c.name}: it has " + " + ".join(bits) +
+            ". Archive it instead so history stays intact.",
+            ok=False,
+        )
+    name = c.name
+    db.delete(c)
+    audit.record(db, current_user(request), "client.delete", "client", client_id,
+                 f"Deleted {name}")
+    db.commit()
+    return redirect("/clients", f"Deleted {name}.")
+
+
 # ============================================================ jobs
 @app.get("/jobs", response_class=HTMLResponse)
 def jobs_page(request: Request, db: Session = Depends(get_db)):
@@ -2472,9 +2570,11 @@ def transactions_page(request: Request, db: Session = Depends(get_db)):
     location_id_q = request.query_params.get("location_id", "")
     selected_loc = None
     if user.get("is_kiosk"):
-        # Kiosk sessions only see the past 24h of kiosk-submitted charge-outs.
-        # The month + location query strings are ignored.
-        kiosk_username = store.get(db, "kiosk_username") or "kiosk"
+        # Kiosk sessions only see the past 24h of THIS kiosk's charge-outs,
+        # keyed off the per-PIN audit username so multi-station shops don't
+        # leak each other's history. Falls back to the global username for
+        # legacy single-PIN deployments.
+        kiosk_username = user.get("username") or store.get(db, "kiosk_username") or "kiosk"
         cutoff = datetime.utcnow() - timedelta(hours=24)
         q = q.filter(
             Transaction.created_at >= cutoff,
@@ -2622,6 +2722,10 @@ def roles_save(role_id: int, request: Request, permissions: List[str] = Form([])
     role = db.get(Role, role_id)
     if role and not role.is_admin:  # Admin always keeps all permissions
         role.permissions = ",".join(p for p in permissions if p in rbac.ALL_PERMS)
+        # Mark the role customized so rbac.seed_roles() stops re-adding default
+        # perms on the next startup. Without this, un-ticking a default Kiosk
+        # perm (e.g. view_catalog) would be undone on container restart.
+        role.customized = True
         audit.record(db, current_user(request), "role.edit", "role", role.id, f"Edited role {role.name}")
         db.commit()
     return redirect("/users", "Role saved.")
@@ -2751,6 +2855,9 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
     kiosk_locs = (db.query(Location)
                   .filter(Location.active == True, Location.archived == False)  # noqa: E712
                   .order_by(Location.name).all())
+    kiosk_pins = (db.query(KioskPin)
+                  .order_by(KioskPin.active.desc(), KioskPin.label, KioskPin.id)
+                  .all())
     return templates.TemplateResponse(
         "settings.html",
         ctx(request, db, providers=emailer.PROVIDERS, this_month=datetime.utcnow().strftime("%Y-%m"),
@@ -2758,7 +2865,8 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
             currencies=CURRENCIES, label_sizes=labels.LABEL_SIZES,
             timezones=TIMEZONES,
             roles=db.query(Role).order_by(Role.name).all(),
-            kiosk_locations=kiosk_locs),
+            kiosk_locations=kiosk_locs,
+            kiosk_pins=kiosk_pins),
     )
 
 
@@ -3258,57 +3366,163 @@ def settings_auth(
     return redirect("/settings", note)
 
 
-@app.post("/settings/kiosk")
-def settings_kiosk(
+def _validate_pin_digits(raw: str):
+    """Return the cleaned PIN string or raise ValueError for the redirect."""
+    pin = (raw or "").strip()
+    if not pin.isdigit() or len(pin) < 4 or len(pin) > 12:
+        raise ValueError("Kiosk PIN must be 4–12 digits.")
+    return pin
+
+
+def _validate_pin_location(db, raw: str):
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        lid = int(raw)
+    except ValueError:
+        return None
+    loc = db.get(Location, lid)
+    if not loc or loc.archived or not loc.active:
+        raise ValueError("Pick an active location for this kiosk.")
+    return lid
+
+
+@app.post("/settings/kiosk/global")
+def settings_kiosk_global(
     request: Request,
     kiosk_enabled: str = Form(""),
-    kiosk_pin: str = Form(""),
-    kiosk_username: str = Form("kiosk"),
     kiosk_lockout_minutes: str = Form("5"),
-    kiosk_location_id: str = Form(""),
     db: Session = Depends(get_db),
 ):
-    """Admin-only kiosk PIN settings. Enabling without a PIN is rejected so
-    the welcome page never shows a form that nothing can answer."""
+    """Admin-only: master switch + per-IP lockout. Per-PIN settings live on
+    the KioskPin rows and are managed by /settings/kiosk/add|save|delete."""
     user = current_user(request)
     if not user.get("is_admin"):
         return JSONResponse({"detail": "Admin only"}, status_code=403)
     enabled = "1" if kiosk_enabled == "on" else "0"
-    pin = (kiosk_pin or "").strip()
-    if pin:
-        if not pin.isdigit() or len(pin) < 4 or len(pin) > 12:
-            return redirect("/settings", "Kiosk PIN must be 4–12 digits.", ok=False)
-        store.set(db, "kiosk_pin", pin)
-    if enabled == "1" and not (pin or store.get(db, "kiosk_pin")):
-        return redirect("/settings", "Set a PIN before enabling kiosk mode.", ok=False)
+    if enabled == "1" and db.query(KioskPin).filter(KioskPin.active == True).count() == 0:  # noqa: E712
+        return redirect("/settings", "Add at least one PIN before enabling kiosk mode.", ok=False)
     store.set(db, "kiosk_enabled", enabled)
-    uname = (kiosk_username or "kiosk").strip() or "kiosk"
-    store.set(db, "kiosk_username", uname)
     try:
         mins = max(1, min(1440, int(kiosk_lockout_minutes or "5")))
     except ValueError:
         mins = 5
     store.set(db, "kiosk_lockout_minutes", str(mins))
-    # Default kiosk source location: validate it's a real, active location.
-    raw_loc = (kiosk_location_id or "").strip()
-    if raw_loc:
-        try:
-            lid = int(raw_loc)
-        except ValueError:
-            lid = None
-        if lid is None:
-            store.set(db, "kiosk_location_id", "")
-        else:
-            loc = db.get(Location, lid)
-            if not loc or loc.archived or not loc.active:
-                return redirect("/settings", "Pick an active location for the kiosk default.", ok=False)
-            store.set(db, "kiosk_location_id", str(lid))
-    else:
-        store.set(db, "kiosk_location_id", "")
     audit.record(db, user, "settings.kiosk", "settings", None,
                  f"Kiosk mode {'enabled' if enabled == '1' else 'disabled'}")
     db.commit()
     return redirect("/settings", "Kiosk settings saved.")
+
+
+@app.post("/settings/kiosk/add")
+def settings_kiosk_add(
+    request: Request,
+    label: str = Form(""),
+    pin: str = Form(""),
+    kiosk_username: str = Form("kiosk"),
+    location_id: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Create a new KioskPin. Refuses duplicate PINs across active rows
+    (otherwise login is ambiguous)."""
+    user = current_user(request)
+    if not user.get("is_admin"):
+        return JSONResponse({"detail": "Admin only"}, status_code=403)
+    try:
+        pin_digits = _validate_pin_digits(pin)
+    except ValueError as e:
+        return redirect("/settings", str(e), ok=False)
+    # Reject duplicates against active rows.
+    dup = (db.query(KioskPin)
+             .filter(KioskPin.active == True, KioskPin.pin == pin_digits)  # noqa: E712
+             .first())
+    if dup is not None:
+        return redirect("/settings", "Another active kiosk already uses that PIN.", ok=False)
+    try:
+        loc_id = _validate_pin_location(db, location_id)
+    except ValueError as e:
+        return redirect("/settings", str(e), ok=False)
+    row = KioskPin(
+        label=(label or "").strip() or f"Kiosk {db.query(KioskPin).count() + 1}",
+        pin=pin_digits,
+        kiosk_username=(kiosk_username or "kiosk").strip() or "kiosk",
+        location_id=loc_id,
+        active=True,
+    )
+    db.add(row)
+    db.flush()
+    audit.record(db, user, "kiosk_pin.create", "kiosk_pin", row.id,
+                 f"Created kiosk PIN '{row.label}'")
+    db.commit()
+    return redirect("/settings", "Kiosk PIN added.")
+
+
+@app.post("/settings/kiosk/{pin_id}/save")
+def settings_kiosk_save(
+    pin_id: int,
+    request: Request,
+    label: str = Form(""),
+    pin: str = Form(""),
+    kiosk_username: str = Form("kiosk"),
+    location_id: str = Form(""),
+    active: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Edit an existing KioskPin. Blank `pin` keeps the current code; any
+    other value must pass the 4–12 digit check and not collide with another
+    active row."""
+    user = current_user(request)
+    if not user.get("is_admin"):
+        return JSONResponse({"detail": "Admin only"}, status_code=403)
+    row = db.get(KioskPin, pin_id)
+    if row is None:
+        return redirect("/settings", "Kiosk PIN not found.", ok=False)
+    raw_pin = (pin or "").strip()
+    if raw_pin:
+        try:
+            pin_digits = _validate_pin_digits(raw_pin)
+        except ValueError as e:
+            return redirect("/settings", str(e), ok=False)
+        dup = (db.query(KioskPin)
+                 .filter(KioskPin.active == True,  # noqa: E712
+                         KioskPin.pin == pin_digits,
+                         KioskPin.id != row.id)
+                 .first())
+        if dup is not None:
+            return redirect("/settings", "Another active kiosk already uses that PIN.", ok=False)
+        row.pin = pin_digits
+    try:
+        row.location_id = _validate_pin_location(db, location_id)
+    except ValueError as e:
+        return redirect("/settings", str(e), ok=False)
+    row.label = (label or "").strip() or row.label or f"Kiosk #{row.id}"
+    row.kiosk_username = (kiosk_username or "kiosk").strip() or "kiosk"
+    row.active = active == "on"
+    audit.record(db, user, "kiosk_pin.edit", "kiosk_pin", row.id,
+                 f"Edited kiosk PIN '{row.label}'")
+    db.commit()
+    return redirect("/settings", "Kiosk PIN saved.")
+
+
+@app.post("/settings/kiosk/{pin_id}/delete")
+def settings_kiosk_delete(
+    pin_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = current_user(request)
+    if not user.get("is_admin"):
+        return JSONResponse({"detail": "Admin only"}, status_code=403)
+    row = db.get(KioskPin, pin_id)
+    if row is None:
+        return redirect("/settings", "Kiosk PIN not found.", ok=False)
+    label = row.label or f"#{row.id}"
+    db.delete(row)
+    audit.record(db, user, "kiosk_pin.delete", "kiosk_pin", pin_id,
+                 f"Deleted kiosk PIN '{label}'")
+    db.commit()
+    return redirect("/settings", "Kiosk PIN deleted.")
 
 
 @app.post("/settings/email")
