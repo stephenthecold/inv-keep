@@ -156,6 +156,12 @@ tfoot td { font-weight: 700; }
 .grid-form label { display: flex; flex-direction: column; font-size: .85rem; color: var(--muted); gap: .25rem; }
 .inline { display: inline; }
 .filter { display: flex; gap: .75rem; align-items: center; margin: 1rem 0; flex-wrap: wrap; }
+/* File inputs render the native "Choose File" button + filename, which has
+   a wide intrinsic size that won't shrink in a flex row — on phones it blew
+   past the card edge and got clipped by the page's overflow-x:hidden (the
+   Branding logo/favicon + Backup restore pickers). Let them shrink. */
+input[type=file] { max-width: 100%; min-width: 0; }
+.filter input[type=file], .grid-form input[type=file] { flex: 1 1 12rem; }
 .report-filter .report-clients { position: relative; }
 .report-filter .report-clients > summary { cursor: pointer; padding: .35rem .6rem; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); list-style: none; }
 .report-filter .report-clients > summary::-webkit-details-marker { display: none; }
@@ -163,6 +169,9 @@ tfoot td { font-weight: 700; }
 .report-filter .report-clients-list .check { display: flex; gap: .5rem; align-items: center; padding: .25rem 0; white-space: nowrap; }
 
 .notice { background: var(--panel); border-left: 3px solid var(--warn); padding: .75rem 1rem; border-radius: 6px; margin: 1rem 0; }
+/* Destructive notice (e.g. the Restore-from-backup warning) — red rail +
+   tint so it reads as dangerous rather than a routine amber note. */
+.notice.bad { border-left-color: var(--bad); background: rgba(229, 83, 75, .08); }
 .muted { color: var(--muted); }
 
 .toast { position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%); padding: .8rem 1.4rem; border-radius: 10px; font-weight: 600; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 50; }
@@ -189,7 +198,12 @@ button.danger, .btn.danger { background: var(--bad); border-color: var(--bad); c
 section.card h2 { margin-top: 0; }
 .grid-form label.wide { flex: 1 1 100%; }
 .grid-form label.check { flex-direction: row; align-items: center; gap: .4rem; }
-.grid-form textarea, .grid-form input, .grid-form select { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: .5rem; }
+.grid-form textarea, .grid-form input, .grid-form select { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: .5rem; max-width: 100%; }
+/* Let labels (the flex items) and their inputs shrink below intrinsic width
+   on narrow screens so long values / placeholders (e.g. the OIDC discovery
+   URL on the Authentication tab) wrap inside the card instead of overflowing
+   and being clipped by overflow-x:hidden. */
+.grid-form label, .subgroup label { min-width: 0; }
 .subgroup { width: 100%; display: flex; flex-wrap: wrap; gap: .75rem; padding: .75rem; margin: .5rem 0; border: 1px dashed var(--line); border-radius: 8px; }
 .subgroup label { display: flex; flex-direction: column; font-size: .85rem; color: var(--muted); gap: .25rem; }
 details.card.inactive summary { opacity: .55; }
@@ -623,6 +637,14 @@ body.nav-open .nav-toggle .hamburger-bar:nth-child(3) { transform: translateY(-7
 .item-thumb { width: 34px; height: 34px; object-fit: cover; border-radius: 6px; display: block; margin: 0 auto; background: var(--panel-2); }
 .item-name { font-weight: 600; }
 .item-desc { font-size: .8rem; max-width: 22rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Per-location stock breakdown under the On-hand count. One tidy row per
+   location (name left, qty right-aligned) instead of wrapping pills, which
+   stacked into messy blobs in the narrow column on phones. */
+.loc-breakdown { display: flex; flex-direction: column; align-items: flex-start; gap: .15rem; margin-top: .3rem; font-weight: normal; }
+.loc-chip { display: flex; align-items: baseline; gap: .5rem; max-width: 13rem; font-size: .72rem; line-height: 1.3; padding: .08rem .4rem; border-radius: 5px; background: var(--panel-2); border: 1px solid var(--line); }
+.loc-chip-name { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loc-chip-qty { margin-left: auto; color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 
 /* item row actions (Edit + Restock) — stable layout */
 .actions-col { white-space: nowrap; }
