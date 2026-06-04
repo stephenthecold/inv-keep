@@ -565,6 +565,9 @@ body.nav-open .nav-toggle .hamburger-bar:nth-child(3) { transform: translateY(-7
   .items-table th, .items-table td { padding: .65rem .55rem; }
   .head-actions { flex-wrap: wrap; gap: .35rem; }
   .head-actions .btn, .head-actions .add-btn { flex: 0 1 auto; }
+  /* Sit the bulk bar below the sticky breadcrumb (top: 3.6rem + its height)
+     so the two don't overlap when both pin on a long scroll. */
+  .bulk-bar { top: 6.4rem; }
   /* Stocktake on a phone: bigger qty inputs, action bar wraps and the
      Save button spans the full width so it can't be missed thumbing
      up the page. */
@@ -645,6 +648,23 @@ body.nav-open .nav-toggle .hamburger-bar:nth-child(3) { transform: translateY(-7
 .loc-chip { display: flex; align-items: baseline; gap: .5rem; max-width: 13rem; font-size: .72rem; line-height: 1.3; padding: .08rem .4rem; border-radius: 5px; background: var(--panel-2); border: 1px solid var(--line); }
 .loc-chip-name { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .loc-chip-qty { margin-left: auto; color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Bulk-select column + action bar on the items table. The bar is sticky so
+   it stays reachable while ticking rows down a long list; it only appears
+   (hidden attr removed by JS) once at least one row is selected. */
+.bulk-col { width: 2.4rem; text-align: center; }
+.bulk-check, .bulk-all { width: 1.1rem; height: 1.1rem; cursor: pointer; }
+.bulk-bar { position: sticky; top: .5rem; z-index: 6; display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; background: var(--panel); border: 1px solid var(--accent); border-radius: 10px; padding: .55rem .75rem; margin: .75rem 0; box-shadow: 0 6px 16px rgba(0,0,0,.3); }
+.bulk-bar .bulk-count { margin-right: .25rem; }
+.bulk-move-table { width: 100%; margin: .25rem 0 0; }
+.bulk-move-table input { text-align: right; }
+
+/* Users & roles: each role is an expandable card listing its members and,
+   nested one level deeper, its permission editor. */
+.role-group > summary { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.role-group .role-usercount { margin-left: auto; font-size: .85rem; font-weight: normal; }
+.role-perms { margin-top: .75rem; border-top: 1px solid var(--line); padding-top: .6rem; }
+.role-perms > summary { cursor: pointer; color: var(--muted); font-size: .9rem; font-weight: 600; }
 
 /* item row actions (Edit + Restock) — stable layout */
 .actions-col { white-space: nowrap; }

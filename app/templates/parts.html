@@ -133,19 +133,29 @@
     {% if view == 'detail' and sub_cats %}
     <h2 class="section-h2">Items directly here <span class="muted small">({{ parts | length }})</span></h2>
     {% endif %}
+    {% if can('manage_items') %}
+    <div class="bulk-bar" id="bulk-bar" hidden>
+      <span class="bulk-count"><b id="bulk-n">0</b> selected</span>
+      <button type="button" class="btn small" onclick="openBulk('category')">Move to category…</button>
+      {% if locations %}<button type="button" class="btn small" onclick="openBulk('stock')">Set stock count…</button>{% endif %}
+      {% if locations | length > 1 %}<button type="button" class="btn small" onclick="openBulk('move')">Move stock…</button>{% endif %}
+      <button type="button" class="btn small ghost" id="bulk-clear">Clear</button>
+    </div>
+    {% endif %}
     <div class="table-scroll">
     <table class="lines items-table">
       <thead>
-        <tr><th></th><th>Name</th><th>Barcode</th>{% if view == 'all' %}<th>Category</th>{% endif %}<th class="num">On hand</th>{% if can('see_cost') %}<th class="num">Our cost</th>{% endif %}<th class="num">Client price</th><th class="actions-col">Actions</th></tr>
+        <tr>{% if can('manage_items') %}<th class="bulk-col"><input type="checkbox" class="bulk-all" aria-label="Select all items"></th>{% endif %}<th></th><th>Name</th><th>Barcode</th>{% if view == 'all' %}<th>Category</th>{% endif %}<th class="num">On hand</th>{% if can('see_cost') %}<th class="num">Our cost</th>{% endif %}<th class="num">Client price</th><th class="actions-col">Actions</th></tr>
       </thead>
       <tbody>
         {% set ns = namespace(last_cat=-1) %}
         {% for p in parts %}
         {% if view == 'all' and p.category_id != ns.last_cat %}
-        <tr class="cat-group"><td colspan="8"><a href="/parts{{ qs(cat=(p.category_id if p.category_id is not none else 'none')) }}">{% if p.category_id %}{{ cat_names.get(p.category_id, '—') }}{% else %}Uncategorized{% endif %}</a></td></tr>
+        <tr class="cat-group"><td colspan="10"><a href="/parts{{ qs(cat=(p.category_id if p.category_id is not none else 'none')) }}">{% if p.category_id %}{{ cat_names.get(p.category_id, '—') }}{% else %}Uncategorized{% endif %}</a></td></tr>
         {% set ns.last_cat = p.category_id %}
         {% endif %}
         <tr {% if not p.active %}class="voided"{% endif %}>
+          {% if can('manage_items') %}<td class="bulk-col"><input type="checkbox" class="bulk-check" data-id="{{ p.id }}" data-name="{{ p.name }}" data-stock='{{ part_stock_full.get(p.id, []) | tojson }}' aria-label="Select {{ p.name }}"></td>{% endif %}
           <td class="item-icon">{% if p.image %}<img class="item-thumb" src="{{ p.image }}" alt="">{% else %}{{ icon_html(p.icon) | safe }}{% endif %}</td>
           <td>
             <div class="item-name">{{ p.name }}{% if not p.active %} <span class="tag muted">inactive</span>{% endif %}</div>
@@ -388,6 +398,80 @@
   </menu>
 </dialog>
 
+{% if can('manage_items') %}
+{# ===== Bulk-action modals (driven by the .bulk-bar / openBulk JS) ===== #}
+<!-- Bulk: move selected items to a category -->
+<dialog id="bulk-category" class="modal">
+  <h2>Move <span class="bulk-modal-n"></span> to a category</h2>
+  <form method="post" action="/parts/bulk/category" class="grid-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="next" class="bulk-next">
+    <div class="bulk-ids"></div>
+    <label class="wide">Category <select name="category_id">{{ category_options() }}</select></label>
+    <menu class="modal-actions">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit">Move items</button>
+    </menu>
+  </form>
+</dialog>
+
+{% if locations %}
+<!-- Bulk: set an absolute stock count at one location for every selected item -->
+<dialog id="bulk-stock" class="modal">
+  <h2>Set stock count for <span class="bulk-modal-n"></span></h2>
+  <form method="post" action="/parts/bulk/stock-set" class="grid-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="next" class="bulk-next">
+    <div class="bulk-ids"></div>
+    <label>Location
+      <select name="location_id" required>
+        {% for l in locations %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>New on-hand count <input name="quantity" type="number" min="0" value="0" required style="width:7rem"></label>
+    <menu class="modal-actions">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit">Set count</button>
+    </menu>
+  </form>
+  <small>Sets the absolute on-hand at the chosen location for every selected item, recording each change in the audit log (skips items already at that count).</small>
+</dialog>
+{% endif %}
+
+{% if locations | length > 1 %}
+<!-- Bulk: move stock between locations, per-item quantities -->
+<dialog id="bulk-move" class="modal">
+  <h2>Move stock for <span class="bulk-modal-n"></span></h2>
+  <form method="post" action="/parts/bulk/move" class="grid-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="next" class="bulk-next">
+    <div class="bulk-ids"></div>
+    <label>From
+      <select name="from_location_id" id="bm-from" required>
+        {% for l in locations %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>To
+      <select name="to_location_id" id="bm-to" required>
+        {% for l in locations %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <div class="wide table-scroll">
+      <table class="lines bulk-move-table">
+        <thead><tr><th>Item</th><th class="num">At source</th><th class="num">Move qty</th></tr></thead>
+        <tbody id="bm-body"></tbody>
+      </table>
+    </div>
+    <menu class="modal-actions">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit">Move stock</button>
+    </menu>
+  </form>
+  <small>Each item moves the quantity you enter, capped at what's on hand at the source. Change <b>From</b> to refill the suggested amounts.</small>
+</dialog>
+{% endif %}
+{% endif %}
+
 {% if prefill %}<script>document.addEventListener('DOMContentLoaded', function(){ openModal('add-part'); });</script>{% endif %}
 <script>
 (function(){
@@ -508,4 +592,112 @@ function openCatRename(id, name, desc, parentId){
   });
 })();
 </script>
+
+{% if can('manage_items') %}
+<script>
+// Bulk item actions. Tick rows in the items table; a bar surfaces with
+// "Move to category", "Set stock count", and "Move stock". Each opens a
+// modal seeded with the current selection's ids (+ the return URL so the
+// POST handler bounces back to this exact view) and submits to a
+// /parts/bulk/* endpoint. The move modal additionally renders one qty
+// input per selected item, prefilled from that item's on-hand at the
+// chosen source location (read from the row's data-stock JSON).
+(function(){
+  var checks = Array.prototype.slice.call(document.querySelectorAll('.bulk-check'));
+  if (!checks.length) return;
+  var bar = document.getElementById('bulk-bar');
+  var nEl = document.getElementById('bulk-n');
+  var allBox = document.querySelector('.bulk-all');
+  var here = location.pathname + location.search;
+
+  function selected(){ return checks.filter(function(c){ return c.checked; }); }
+  function refresh(){
+    var s = selected();
+    if (nEl) nEl.textContent = s.length;
+    if (bar) bar.hidden = s.length === 0;
+    if (allBox) allBox.checked = s.length > 0 && s.length === checks.length;
+  }
+  checks.forEach(function(c){ c.addEventListener('change', refresh); });
+  if (allBox) allBox.addEventListener('change', function(){
+    checks.forEach(function(c){ c.checked = allBox.checked; });
+    refresh();
+  });
+  var clearBtn = document.getElementById('bulk-clear');
+  if (clearBtn) clearBtn.addEventListener('click', function(){
+    checks.forEach(function(c){ c.checked = false; });
+    refresh();
+  });
+
+  function stockAt(c, locId){
+    var arr = [];
+    try { arr = JSON.parse(c.dataset.stock || '[]'); } catch (e) {}
+    for (var i = 0; i < arr.length; i++){
+      if (String(arr[i].loc_id) === String(locId)) return arr[i].qty;
+    }
+    return 0;
+  }
+
+  function buildMove(dlg, s){
+    var from = dlg.querySelector('#bm-from');
+    var to = dlg.querySelector('#bm-to');
+    var body = dlg.querySelector('#bm-body');
+    // Default To to something other than From so the common case submits clean.
+    if (from && to && from.value === to.value){
+      for (var i = 0; i < to.options.length; i++){
+        if (to.options[i].value !== from.value){ to.value = to.options[i].value; break; }
+      }
+    }
+    function render(){
+      var locId = from ? from.value : '';
+      body.innerHTML = '';
+      s.forEach(function(c){
+        var avail = stockAt(c, locId);
+        var tr = document.createElement('tr');
+        var tdName = document.createElement('td');
+        tdName.textContent = c.dataset.name || ('#' + c.dataset.id);
+        tr.appendChild(tdName);
+        var tdAv = document.createElement('td');
+        tdAv.className = 'num'; tdAv.textContent = avail;
+        tr.appendChild(tdAv);
+        var tdQ = document.createElement('td');
+        tdQ.className = 'num';
+        var inp = document.createElement('input');
+        inp.type = 'number'; inp.min = '0'; inp.max = String(avail);
+        inp.value = String(avail); inp.name = 'qty_' + c.dataset.id;
+        inp.style.width = '5.5rem';
+        if (!avail) inp.disabled = true;
+        tdQ.appendChild(inp); tr.appendChild(tdQ);
+        body.appendChild(tr);
+      });
+    }
+    if (from && !from._bulkBound){ from.addEventListener('change', render); from._bulkBound = true; }
+    render();
+  }
+
+  window.openBulk = function(kind){
+    var s = selected();
+    if (!s.length) return;
+    var dlg = document.getElementById('bulk-' + kind);
+    if (!dlg) return;
+    dlg.querySelectorAll('.bulk-next').forEach(function(i){ i.value = here; });
+    dlg.querySelectorAll('.bulk-modal-n').forEach(function(e){
+      e.textContent = s.length + ' item' + (s.length === 1 ? '' : 's');
+    });
+    var idBox = dlg.querySelector('.bulk-ids');
+    if (idBox){
+      idBox.innerHTML = '';
+      s.forEach(function(c){
+        var h = document.createElement('input');
+        h.type = 'hidden'; h.name = 'ids'; h.value = c.dataset.id;
+        idBox.appendChild(h);
+      });
+    }
+    if (kind === 'move') buildMove(dlg, s);
+    dlg.showModal();
+  };
+
+  refresh();
+})();
+</script>
+{% endif %}
 {% endblock %}

@@ -92,7 +92,8 @@ CI assertions too** — that's how every CI failure since v1.17 has played out.
 | A new column that exposes our cost / margin to the UI | Gate the render with `{% if can('see_cost') %}`. Default Kiosk does NOT have `see_cost`, so a shared front-desk device shows client price only. Mirror this on the matching Add/Edit input — when hidden it should still POST as `<input type="hidden" name="unit_cost" value="0">` so the form-body shape doesn't change. v1.21. |
 | A new path that kiosks should reach by default | Add it to `_KIOSK_ALLOWED_PREFIXES` or `_KIOSK_ALLOWED_EXACT` in `app/main.py`. The allowlist is the **floor** that applies while the Kiosk role still has only its built-in perms (`{view, view_catalog, checkout}`); adding any extra perm to the Kiosk role under /users#roles lifts the lockdown and RBAC alone governs. Conservative default: leave it OUT of the allowlist so admins opt in by editing the role. v1.20.1 / v1.21. |
 | A new section to `/settings` | Wrap in `<section class="card settings-tab" id="tab-<slug>" data-tab-pane="<slug>" data-tab-title="<title>">…</section>` and add a matching `{{ item("<slug>", "<label>", "<emoji>") }}` line to `_settings_nav.html`. The tab-switching JS at the bottom of `settings.html` flips visibility per `data-tab-pane`; localStorage remembers the last tab across POST→redirect, so form handlers can keep redirecting to `/settings` (no `?tab=` needed). v1.20.0. |
-| A new section to `/users` | Add an anchor `<h2 id="<slug>">` and reuse the same sidebar partial. The inline script at the bottom of `users.html` watches `location.hash` to keep the matching sidebar entry highlighted (currently `users` ↔ `roles`). v1.20.0. |
+| A bulk action on selected items | Add a `/parts/bulk/<thing>` POST (manage_items, since it's under `/parts`), a modal in `parts.html` whose `.bulk-ids` div + `.bulk-next` input the `openBulk()` JS fills from the ticked `.bulk-check` rows, and a button in the `.bulk-bar`. Route back via `_bulk_return(form)` so the operator lands on the same `?cat=` view. v1.24.0. |
+| A new role-scoped thing on `/users` | The page is one nested view (v1.24.0): each role is a `<details class="role-group">` listing its users (grouped in `users_page` via `role_users` / `no_role_users`) with the permission editor in a nested `<details class="role-perms">`. The shared user row is the `user_row()` macro — reuse it. One "Users & roles" sidebar entry now, no `#roles` anchor. |
 | A new place that lists items / parts the operator can pick | If the source is `/api/search`, the suggestion row already dims + strikes through zero-stock items via the `.oos` class. Match it elsewhere: check `qty <= 0` and apply class `oos` + a `<span class="tag oos-tag">Out of stock</span>` badge. Do NOT auto-archive items at zero stock — archive is a deliberate admin action. v1.21. |
 | A new test against the items table in CI | Hit `/parts?cat=all`, not `/parts` — v1.18 turned the root URL into a category browser (cards, not item rows). The flat table only lives under `?cat=all`. The stock-modal regression test learned this the hard way in PR #6. |
 
@@ -155,11 +156,15 @@ rollup so the audit page shows the count as a single event.
 
 ### `/settings` and `/users` share a sidebar shell (v1.20+)
 
-`_settings_nav.html` is included by both pages. Tabs are client-side:
-sections render with `display: none` and only the one matching the
-URL hash / localStorage value is shown. POST handlers can keep
-redirecting to plain `/settings` — the JS reads `localStorage['inv-keep:last-settings-tab']`
-to restore where the user was. Add a section: see the table above.
+`_settings_nav.html` is included by both pages. On `/settings` tabs are
+client-side: sections render with `display: none` and only the one
+matching the URL hash / localStorage value is shown. POST handlers can
+keep redirecting to plain `/settings` — the JS reads
+`localStorage['inv-keep:last-settings-tab']` to restore where the user
+was. Add a section: see the table above. `/users` is a single combined
+"Users & roles" page (v1.24.0) — roles are expandable cards with their
+users nested inside; the sidebar has one Access entry for it (no more
+separate Users / Roles tabs or `#roles` anchor).
 
 ### Kiosk permissions (v1.20.1 + v1.21)
 

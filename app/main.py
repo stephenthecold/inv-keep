@@ -2180,6 +2180,165 @@ def parts_move_stock(
     return redirect("/parts", f"Moved {quantity} × {part.name}: {src.name} → {dst.name}.")
 
 
+# --------------------------------------------------------------- bulk item ops
+# The /parts items table lets an operator tick several rows and apply one
+# change to all of them: re-home to a category, set an absolute stock count
+# at a location, or move stock between locations (per-item quantities). Each
+# action funnels through the same audit + stock_levels plumbing as the
+# single-item paths so history stays uniform. All three require manage_items
+# (POST /parts/* in rbac.required_perm).
+def _parse_int_list(values):
+    out = []
+    for v in values or []:
+        try:
+            out.append(int(v))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _bulk_return(form):
+    """Return the operator to the items view they acted from (e.g.
+    /parts?cat=all) rather than dumping them at the root browser. Only
+    same-app /parts targets are honoured."""
+    nxt = (form.get("next") or "").strip()
+    return nxt if nxt.startswith("/parts") else "/parts"
+
+
+@app.post("/parts/bulk/category")
+async def parts_bulk_category(request: Request, db: Session = Depends(get_db)):
+    form = await request.form()
+    back = _bulk_return(form)
+    ids = _parse_int_list(form.getlist("ids"))
+    if not ids:
+        return redirect(back, "No items selected.", ok=False)
+    raw_cat = (form.get("category_id") or "").strip()
+    cat = None
+    if raw_cat:
+        try:
+            cat = db.get(Category, int(raw_cat))
+        except ValueError:
+            cat = None
+        if not cat:
+            return redirect(back, "Pick a valid category.", ok=False)
+    parts = db.query(Part).filter(Part.id.in_(ids)).all()
+    for p in parts:
+        p.category_id = cat.id if cat else None
+    label = cat.name if cat else "Uncategorized"
+    audit.record(db, current_user(request), "part.bulk_category", "part", None,
+                 f"Re-homed {len(parts)} item(s) → {label}")
+    db.commit()
+    return redirect(back, f"Moved {len(parts)} item(s) to {label}.")
+
+
+@app.post("/parts/bulk/stock-set")
+async def parts_bulk_stock_set(request: Request, db: Session = Depends(get_db)):
+    form = await request.form()
+    back = _bulk_return(form)
+    ids = _parse_int_list(form.getlist("ids"))
+    if not ids:
+        return redirect(back, "No items selected.", ok=False)
+    try:
+        location_id = int(form.get("location_id") or "")
+    except ValueError:
+        return redirect(back, "Pick a location.", ok=False)
+    try:
+        quantity = int(form.get("quantity") or "")
+    except ValueError:
+        return redirect(back, "Enter a count.", ok=False)
+    if quantity < 0:
+        return redirect(back, "Count cannot be negative.", ok=False)
+    loc = db.get(Location, location_id)
+    if not loc or loc.archived or not loc.active:
+        return redirect(back, "Pick an active location.", ok=False)
+    user = current_user(request)
+    parts = db.query(Part).filter(Part.id.in_(ids)).all()
+    n = 0
+    for p in parts:
+        sl = orders.ensure_stock_row(db, p.id, loc.id)
+        prior = sl.quantity
+        if prior == quantity:
+            continue
+        delta = quantity - prior
+        sl.quantity = quantity
+        p.quantity_on_hand += delta
+        if delta > 0 and p.low_stock_alerted:
+            p.low_stock_alerted = False
+        audit.record(db, user, "part.stock_set", "part", p.id,
+                     f"{loc.name}: {prior} → {quantity} (Δ {delta:+d}) — bulk")
+        n += 1
+    db.commit()
+    return redirect(back, f"Set {n} item(s) to {quantity} at {loc.name}.")
+
+
+@app.post("/parts/bulk/move")
+async def parts_bulk_move(request: Request, db: Session = Depends(get_db)):
+    form = await request.form()
+    back = _bulk_return(form)
+    ids = _parse_int_list(form.getlist("ids"))
+    if not ids:
+        return redirect(back, "No items selected.", ok=False)
+    try:
+        from_id = int(form.get("from_location_id") or "")
+        to_id = int(form.get("to_location_id") or "")
+    except ValueError:
+        return redirect(back, "Pick both locations.", ok=False)
+    if from_id == to_id:
+        return redirect(back, "Source and destination must differ.", ok=False)
+    src = db.get(Location, from_id)
+    dst = db.get(Location, to_id)
+    if (not src or not dst or src.archived or dst.archived
+            or not src.active or not dst.active):
+        return redirect(back, "Both locations must be active.", ok=False)
+    user = current_user(request)
+    parts = {p.id: p for p in db.query(Part).filter(Part.id.in_(ids)).all()}
+    # Build the move list from the per-item qty_<id> fields, clamping each to
+    # what's actually on hand at the source so we never drive a row negative.
+    moves = []
+    skipped = 0
+    for pid in ids:
+        p = parts.get(pid)
+        if not p:
+            continue
+        raw = (form.get(f"qty_{pid}") or "").strip()
+        if not raw:
+            continue
+        try:
+            q = int(raw)
+        except ValueError:
+            continue
+        if q <= 0:
+            continue
+        src_sl = orders.ensure_stock_row(db, p.id, src.id)
+        if src_sl.quantity <= 0:
+            skipped += 1
+            continue
+        moves.append((p, min(q, src_sl.quantity), src_sl))
+    if not moves:
+        return redirect(back, "Nothing to move — set a quantity on at least one in-stock item.", ok=False)
+    transfer = Transfer(
+        from_location_id=src.id, to_location_id=dst.id, status="completed",
+        created_by=user.get("username", ""), notes="Bulk move from items list",
+        completed_at=datetime.utcnow(),
+    )
+    db.add(transfer)
+    db.flush()
+    moved_units = 0
+    for p, q, src_sl in moves:
+        dst_sl = orders.ensure_stock_row(db, p.id, dst.id)
+        src_sl.quantity -= q
+        dst_sl.quantity += q
+        db.add(TransferLine(transfer_id=transfer.id, part_id=p.id, quantity=q))
+        moved_units += q
+    audit.record(db, user, "transfer.complete", "transfer", transfer.id,
+                 f"{src.name} → {dst.name}: {len(moves)} item(s), {moved_units} unit(s) (bulk)")
+    db.commit()
+    msg = f"Moved {len(moves)} item(s) ({moved_units} unit(s)): {src.name} → {dst.name}."
+    if skipped:
+        msg += f" {skipped} skipped (no stock at {src.name})."
+    return redirect(back, msg)
+
+
 def _label_ctx(request, db, parts, sheet):
     size_key = request.query_params.get("size") or store.get(db, "label_size") or "sheet"
     preset = labels.size_preset(size_key)
@@ -2687,8 +2846,20 @@ def audit_page(request: Request, db: Session = Depends(get_db)):
 def users_page(request: Request, db: Session = Depends(get_db)):
     users = db.query(User).order_by(User.username).all()
     roles = db.query(Role).order_by(Role.is_admin.desc(), Role.name).all()
+    # Group users under their role so the page can nest them. Anyone whose
+    # role_id doesn't resolve (None, or a stale/deleted role) lands in the
+    # "No role" bucket the template renders last.
+    role_users = {r.id: [] for r in roles}
+    no_role_users = []
+    for u in users:
+        if u.role_id in role_users:
+            role_users[u.role_id].append(u)
+        else:
+            no_role_users.append(u)
     return templates.TemplateResponse(
-        "users.html", ctx(request, db, users=users, roles=roles, permissions=rbac.PERMISSIONS)
+        "users.html", ctx(request, db, users=users, roles=roles,
+                          role_users=role_users, no_role_users=no_role_users,
+                          permissions=rbac.PERMISSIONS),
     )
 
 

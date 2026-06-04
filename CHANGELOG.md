@@ -3,6 +3,24 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.24.0] — 2026-06-04
+- **Bulk-edit items straight from the list.** Tick rows in the items
+  table (any category view or All items) and a bulk bar appears with
+  three actions: re-home the selection to a different category, set an
+  absolute on-hand count at a location across all of them, or move
+  stock between locations with a per-item quantity. The move panel
+  pre-fills each item's quantity from its on-hand at the chosen source
+  and caps it there, then writes a single Transfer with one line per
+  moved item so history reads the same as the per-item and multi-line
+  transfer flows. All three require `manage_items`.
+- **Users & roles is now one nested view.** The separate Users table
+  and Roles/Groups list are merged into a single page: each role is an
+  expandable card listing its members — reassign role, toggle active,
+  lock against group mapping inline — with the role's permission editor
+  tucked one level deeper, plus a "No role" bucket for anyone
+  unassigned. The settings sidebar's two Access entries collapse into a
+  single "Users & roles" link.
+
 ## [1.23.6] — 2026-06-04
 - **Per-location stock breakdown on the items table was a pile of
   wrapping pills.** Under the On-hand count, each location's count
