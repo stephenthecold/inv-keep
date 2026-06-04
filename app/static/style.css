@@ -49,9 +49,28 @@ nav a:hover { color: var(--text); }
 .logout { color: var(--accent) !important; }
 
 /* nav dropdown (Records) */
-.navdrop { position: relative; display: inline-flex; }
-.navdrop-btn { background: none; border: none; color: var(--muted); cursor: pointer; font: inherit; padding: 0; display: inline-flex; align-items: center; gap: .25rem; }
-.navdrop-btn:hover { color: var(--text); }
+.navdrop { position: relative; display: inline-flex; align-items: center; }
+/* Nav-drop button is a `<button>` for accessibility + JS hook, but visually
+   it's a nav link — so we explicitly strip the v1.22.1 button-standard
+   sizing (min-height, padding, weight, font-size) and inherit the surrounding
+   nav text styling instead. Without this the dropdown buttons render at
+   2.4rem tall and the plain `<a>Scan</a>` link sitting next to them looks
+   short + orphaned. */
+.navdrop-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  min-height: 0;
+  border-radius: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: .25rem;
+  white-space: nowrap;
+}
+.navdrop-btn:hover { color: var(--text); filter: none; background: none; }
 .navdrop .caret { font-size: .7rem; }
 .navdrop-menu { left: 0; right: auto; }
 
