@@ -3,6 +3,23 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.23.5] — 2026-06-04
+- **Kiosk hamburger menu lost most of its links** after the v1.20.1
+  perm-floor fix landed without a matching template update. Both the
+  desktop nav and the mobile drawer in `base.html` wrapped every
+  section link in `{% if not user.is_kiosk %}`, so a kiosk session
+  with the correct floor perms (`view`, `view_catalog`, `checkout`)
+  only ever saw Scan + Recent (24h) — even though the middleware
+  allowlist already permits `/parts`, `/categories`, `/clients`,
+  `/jobs`, `/report`, `/map`. Replaced the blanket gate with
+  per-link `can(...)` checks, matching the pattern already used for
+  `manage_locations` / `view_audit`. Default kiosk now sees Scan,
+  Items, Categories, Clients, Jobs, History, Report, Map; granting
+  extra perms to the Kiosk role under `/users#roles` lights up the
+  matching links automatically. Empty dropdown shells are also
+  hidden so a role without `view_catalog` doesn't get a stray
+  caret-only button.
+
 ## [1.23.1] — 2026-06-04
 - **Header nav: "Scan" no longer looks orphaned next to the dropdown
   buttons.** v1.22.1's button-sizing standard gave every `<button>` a
