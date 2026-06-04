@@ -8,42 +8,93 @@
 <div class="settings-main">
 <div class="page-head settings-page-head">
   <h1>Users &amp; roles</h1>
+  <button class="add-btn" onclick="openModal('add-role')">+ Add role</button>
 </div>
-<p class="muted">People who sign in via OIDC (OpenID Connect) appear here on first login.
-Assign a role, or tick <b>Lock</b> to keep their role from being overwritten by group mapping.
-Configure group→role mapping under <a href="/settings#auth">Settings → Authentication</a>.</p>
+<p class="muted">People who sign in via OIDC (OpenID Connect) appear here on first login,
+grouped under their role. Change someone's role with the <b>Role</b> dropdown, tick
+<b>Lock</b> to keep group mapping from overwriting it, or expand <b>Permissions</b> on a
+role to edit what it can do. Configure group→role mapping under
+<a href="/settings#auth">Settings → Authentication</a>.</p>
 
-<h2 id="users">Users</h2>
+{# One row per user. Shared by every role group and the "No role" bucket so the
+   per-user save form (role reassign + active + lock) stays identical. #}
+{% macro user_row(u) %}
+<tr {% if not u.active %}class="voided"{% endif %}>
+  <td><form id="u-{{ u.id }}" method="post" action="/users/{{ u.id }}/save"><input type="hidden" name="_csrf" value="{{ csrf_token }}"></form>{{ u.username }}</td>
+  <td>{{ u.email }}</td>
+  <td>{{ u.source }}</td>
+  <td>
+    <select form="u-{{ u.id }}" name="role_id">
+      <option value="">— none —</option>
+      {% for r in roles %}<option value="{{ r.id }}" {% if u.role_id == r.id %}selected{% endif %}>{{ r.name }}</option>{% endfor %}
+    </select>
+  </td>
+  <td><input form="u-{{ u.id }}" type="checkbox" name="active" {% if u.active %}checked{% endif %}></td>
+  <td><input form="u-{{ u.id }}" type="checkbox" name="locked" {% if u.locked %}checked{% endif %}></td>
+  <td><button form="u-{{ u.id }}" type="submit">Save</button></td>
+</tr>
+{% endmacro %}
+
+{% macro user_table(members, empty_msg) %}
 <div class="table-scroll">
 <table class="lines">
-  <thead><tr><th>User</th><th>Email</th><th>Source</th><th>Role</th><th>Active</th><th>Lock role</th><th></th></tr></thead>
+  <thead><tr><th>User</th><th>Email</th><th>Source</th><th>Role</th><th>Active</th><th>Lock</th><th></th></tr></thead>
   <tbody>
-    {% for u in users %}
-    <tr {% if not u.active %}class="voided"{% endif %}>
-      <td><form id="u-{{ u.id }}" method="post" action="/users/{{ u.id }}/save"><input type="hidden" name="_csrf" value="{{ csrf_token }}"></form>{{ u.username }}</td>
-      <td>{{ u.email }}</td>
-      <td>{{ u.source }}</td>
-      <td>
-        <select form="u-{{ u.id }}" name="role_id">
-          <option value="">— none —</option>
-          {% for r in roles %}<option value="{{ r.id }}" {% if u.role_id == r.id %}selected{% endif %}>{{ r.name }}</option>{% endfor %}
-        </select>
-      </td>
-      <td><input form="u-{{ u.id }}" type="checkbox" name="active" {% if u.active %}checked{% endif %}></td>
-      <td><input form="u-{{ u.id }}" type="checkbox" name="locked" {% if u.locked %}checked{% endif %}></td>
-      <td><button form="u-{{ u.id }}" type="submit">Save</button></td>
-    </tr>
-    {% else %}
-    <tr class="empty"><td colspan="7">No users yet — they're created automatically on first IdP login. (In “no login” mode everyone is the local admin.)</td></tr>
-    {% endfor %}
+    {% for u in members %}{{ user_row(u) }}
+    {% else %}<tr class="empty"><td colspan="7" class="muted">{{ empty_msg }}</td></tr>{% endfor %}
   </tbody>
 </table>
 </div>
+{% endmacro %}
 
-<div class="page-head" id="roles" style="margin-top:2rem;scroll-margin-top:1rem">
-  <h2 style="border:none">Roles / Groups</h2>
-  <button class="add-btn" onclick="openModal('add-role')">+ Add role</button>
-</div>
+{% for r in roles %}
+{% set members = role_users.get(r.id, []) %}
+<details class="card role-group" {% if loop.first or members %}open{% endif %}>
+  <summary>
+    <strong>{{ r.name }}</strong>
+    {% if r.is_admin %}<span class="tag good-tag">all permissions</span>{% endif %}
+    {% if r.builtin %}<span class="tag muted">built-in</span>{% endif %}
+    <span class="muted role-usercount">{{ members | length }} user{% if members | length != 1 %}s{% endif %}</span>
+  </summary>
+
+  {{ user_table(members, "No users in this role yet.") }}
+
+  <details class="role-perms">
+    <summary>Permissions</summary>
+    {% if r.is_admin %}
+    <p class="muted">The Admin role always has every permission and can't be edited.</p>
+    {% else %}
+    <form method="post" action="/users/roles/{{ r.id }}/save" class="grid-form">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      {% set rperms = (r.permissions or '').split(',') %}
+      {% for key, label in permissions %}
+      <label class="check wide">{{ label }} <input type="checkbox" name="permissions" value="{{ key }}" {% if key in rperms %}checked{% endif %}></label>
+      {% endfor %}
+      <button type="submit">Save permissions</button>
+      {% if not r.builtin %}
+      <button type="submit" formaction="/users/roles/{{ r.id }}/delete" class="danger" formnovalidate
+        onclick="return confirm('Delete this role? Its users move to Viewer.')">Delete role</button>
+      {% endif %}
+    </form>
+    {% endif %}
+  </details>
+</details>
+{% endfor %}
+
+{% if no_role_users %}
+<details class="card role-group" open>
+  <summary>
+    <strong>No role</strong>
+    <span class="muted role-usercount">{{ no_role_users | length }} user{% if no_role_users | length != 1 %}s{% endif %}</span>
+  </summary>
+  <p class="muted">These users have no role assigned and can't sign in until you give them one.</p>
+  {{ user_table(no_role_users, "") }}
+</details>
+{% endif %}
+
+{% if not users %}
+<p class="muted">No users yet — they're created automatically on first IdP login. (In “no login” mode everyone is the local admin.)</p>
+{% endif %}
 
 <dialog id="add-role" class="modal">
   <h2>Add role</h2>
@@ -61,48 +112,6 @@ Configure group→role mapping under <a href="/settings#auth">Settings → Authe
   </form>
 </dialog>
 
-{% for r in roles %}
-<details class="card">
-  <summary><strong>{{ r.name }}</strong>
-    {% if r.is_admin %}<span class="tag good-tag">all permissions</span>{% endif %}
-    {% if r.builtin %}<span class="tag muted">built-in</span>{% endif %}
-  </summary>
-  {% if r.is_admin %}
-  <p class="muted">The Admin role always has every permission and can't be edited.</p>
-  {% else %}
-  <form method="post" action="/users/roles/{{ r.id }}/save" class="grid-form">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    {% set rperms = (r.permissions or '').split(',') %}
-    {% for key, label in permissions %}
-    <label class="check wide">{{ label }} <input type="checkbox" name="permissions" value="{{ key }}" {% if key in rperms %}checked{% endif %}></label>
-    {% endfor %}
-    <button type="submit">Save permissions</button>
-    {% if not r.builtin %}
-    <button type="submit" formaction="/users/roles/{{ r.id }}/delete" class="danger" formnovalidate
-      onclick="return confirm('Delete this role? Its users move to Viewer.')">Delete role</button>
-    {% endif %}
-  </form>
-  {% endif %}
-</details>
-{% endfor %}
 </div>{# /.settings-main #}
 </div>{# /.settings-shell #}
-
-<script>
-// Highlight "Roles / Groups" in the sidebar when scrolled to or linked
-// via #roles, so the active sidebar entry tracks where you're working.
-(function(){
-  function syncActive(){
-    var on = location.hash === '#roles';
-    document.querySelectorAll('.settings-nav-item').forEach(function(a){
-      a.classList.remove('is-active');
-    });
-    var slug = on ? 'roles' : 'users';
-    var match = document.querySelector('.settings-nav-item[data-tab="' + slug + '"]');
-    if (match) match.classList.add('is-active');
-  }
-  syncActive();
-  window.addEventListener('hashchange', syncActive);
-})();
-</script>
 {% endblock %}

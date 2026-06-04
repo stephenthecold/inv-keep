@@ -30,11 +30,8 @@
 
     <div class="settings-nav-group">
       <div class="settings-nav-heading">Access</div>
-      <a href="/users" data-tab="users" class="settings-nav-item {% if active == 'users' %}is-active{% endif %}">
-        <span class="settings-nav-icon" aria-hidden="true">👥</span><span>Users</span>
-      </a>
-      <a href="/users#roles" data-tab="roles" class="settings-nav-item {% if active == 'roles' %}is-active{% endif %}">
-        <span class="settings-nav-icon" aria-hidden="true">🛡️</span><span>Roles / Groups</span>
+      <a href="/users" data-tab="users" class="settings-nav-item {% if active == 'users' or active == 'roles' %}is-active{% endif %}">
+        <span class="settings-nav-icon" aria-hidden="true">👥</span><span>Users &amp; roles</span>
       </a>
       {{ item("auth",  "Authentication", "🔐") }}
       {{ item("kiosk", "Kiosk PINs",     "📟") }}

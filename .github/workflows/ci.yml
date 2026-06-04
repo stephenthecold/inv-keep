@@ -328,7 +328,7 @@ jobs:
           from fastapi.testclient import TestClient
           from app.main import app
           from app.database import SessionLocal
-          from app.models import Part, Location, StockLevel, Transfer, AuditLog
+          from app.models import Part, Location, StockLevel, Transfer, AuditLog, Category
           c = TestClient(app)
           r = c.get('/'); tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', r.text).group(1)
           c.post('/parts/add', data={'_csrf': tok, 'name': 'Widget', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2', 'quantity_on_hand': '10'})
@@ -384,6 +384,46 @@ jobs:
           # Header now uses Inventory dropdown
           assert 'id=\"inventory-menu\"' in page and 'id=\"items-menu\"' not in page
           print('per-item stock modal + header reorg OK')
+          # --- Bulk item actions: re-home to category, set count, move stock ---
+          c.post('/categories/add', data={'_csrf': tok, 'name': 'BulkCat'})
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'BulkA', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2', 'quantity_on_hand': '0'})
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'BulkB', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2', 'quantity_on_hand': '0'})
+          db = SessionLocal()
+          cat_id = db.query(Category).filter(Category.name == 'BulkCat').first().id
+          a_id = db.query(Part).filter(Part.name == 'BulkA').first().id
+          b_id = db.query(Part).filter(Part.name == 'BulkB').first().id
+          db.close()
+          ids = [str(a_id), str(b_id)]
+          # Re-home both items to BulkCat in one shot
+          r = c.post('/parts/bulk/category', data={'_csrf': tok, 'ids': ids, 'category_id': str(cat_id)}, follow_redirects=False)
+          assert r.status_code == 303
+          db = SessionLocal()
+          assert db.get(Part, a_id).category_id == cat_id and db.get(Part, b_id).category_id == cat_id
+          db.close()
+          # Bulk-set the absolute count at Main to 12 for both
+          r = c.post('/parts/bulk/stock-set', data={'_csrf': tok, 'ids': ids, 'location_id': str(main_id), 'quantity': '12'}, follow_redirects=False)
+          assert r.status_code == 303
+          db = SessionLocal()
+          lv = {sl.part_id: sl.quantity for sl in db.query(StockLevel).filter(StockLevel.location_id == main_id, StockLevel.part_id.in_([a_id, b_id])).all()}
+          assert lv[a_id] == 12 and lv[b_id] == 12, lv
+          assert db.get(Part, a_id).quantity_on_hand == 12
+          db.close()
+          # Bulk move Main -> Truck: 5 of A, 99 of B (clamped to the 12 on hand),
+          # written as a single Transfer with one line per moved item
+          r = c.post('/parts/bulk/move', data={'_csrf': tok, 'ids': ids, 'from_location_id': str(main_id), 'to_location_id': str(truck_id), 'qty_' + str(a_id): '5', 'qty_' + str(b_id): '99'}, follow_redirects=False)
+          assert r.status_code == 303
+          db = SessionLocal()
+          lvm = {sl.part_id: sl.quantity for sl in db.query(StockLevel).filter(StockLevel.location_id == main_id, StockLevel.part_id.in_([a_id, b_id])).all()}
+          lvt = {sl.part_id: sl.quantity for sl in db.query(StockLevel).filter(StockLevel.location_id == truck_id, StockLevel.part_id.in_([a_id, b_id])).all()}
+          assert lvm[a_id] == 7 and lvt[a_id] == 5, (lvm, lvt)
+          assert lvm[b_id] == 0 and lvt[b_id] == 12, (lvm, lvt)
+          t = db.query(Transfer).order_by(Transfer.id.desc()).first()
+          assert len(t.lines) == 2, len(t.lines)
+          db.close()
+          # Same source/dest bulk move rejected
+          r = c.post('/parts/bulk/move', data={'_csrf': tok, 'ids': [str(a_id)], 'from_location_id': str(main_id), 'to_location_id': str(main_id), 'qty_' + str(a_id): '1'}, follow_redirects=False)
+          assert r.status_code == 303 and 'differ' in unquote(r.headers['location']).lower()
+          print('bulk item actions OK')
           "
       - name: Check JavaScript syntax
         run: node --check app/static/app.js
