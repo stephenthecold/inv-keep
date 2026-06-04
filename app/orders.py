@@ -9,7 +9,8 @@ from datetime import datetime
 
 from sqlalchemy import func
 
-from .models import Location, Order, StockLevel, Transaction
+from . import audit
+from .models import Location, Order, StockLevel, Transaction, Transfer, TransferLine
 
 
 _NUM_RE = re.compile(r"^ORD-(\d{6})-(\d+)$")
@@ -92,6 +93,53 @@ def ensure_stock_row(db, part_id: int, location_id: int) -> StockLevel:
         db.add(row)
         db.flush()
     return row
+
+
+def set_stock_level(db, user, part, loc, quantity, note=""):
+    """Set the absolute on-hand for `part` at `loc`, adjusting the part's
+    aggregate quantity_on_hand by the delta so it stays equal to the sum of
+    stock_levels, and recording one `part.stock_set` audit row. Returns the
+    delta. Caller validates inputs and commits. Shared by the per-item
+    stocktake and the bulk set-count action."""
+    sl = ensure_stock_row(db, part.id, loc.id)
+    prior = sl.quantity
+    delta = quantity - prior
+    sl.quantity = quantity
+    part.quantity_on_hand += delta
+    if delta > 0 and part.low_stock_alerted:
+        part.low_stock_alerted = False
+    suffix = f" — {note}" if note else ""
+    audit.record(db, user, "part.stock_set", "part", part.id,
+                 f"{loc.name}: {prior} → {quantity} (Δ {delta:+d}){suffix}")
+    return delta
+
+
+def complete_transfer(db, user, src, dst, lines, notes="", summary=None):
+    """Write one completed Transfer moving `lines` — a list of
+    `(part_id, qty)` — from `src` to `dst`: create the Transfer, decrement
+    source / increment dest stock rows, add a TransferLine per part, and
+    record one `transfer.complete` audit row. Caller validates stock
+    sufficiency and commits. Returns the Transfer. Shared by /transfers/new,
+    the per-item move, and the bulk move so transfer history stays uniform."""
+    transfer = Transfer(
+        from_location_id=src.id,
+        to_location_id=dst.id,
+        status="completed",
+        created_by=user.get("username", "") if isinstance(user, dict) else (user or ""),
+        notes=(notes or "").strip(),
+        completed_at=datetime.utcnow(),
+    )
+    db.add(transfer)
+    db.flush()
+    for pid, qty in lines:
+        src_sl = ensure_stock_row(db, pid, src.id)
+        dst_sl = ensure_stock_row(db, pid, dst.id)
+        src_sl.quantity -= qty
+        dst_sl.quantity += qty
+        db.add(TransferLine(transfer_id=transfer.id, part_id=pid, quantity=qty))
+    audit.record(db, user, "transfer.complete", "transfer", transfer.id,
+                 summary or f"{src.name} → {dst.name}: {len(lines)} line(s)")
+    return transfer
 
 
 def default_location_id(db) -> int | None:

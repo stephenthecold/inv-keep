@@ -1777,24 +1777,7 @@ async def transfer_create(
                         ok=False)
 
     # Apply atomically. Source decrement + dest increment + Transfer row, one commit.
-    transfer = Transfer(
-        from_location_id=src.id,
-        to_location_id=dst.id,
-        status="completed",
-        created_by=user.get("username", ""),
-        notes=notes.strip(),
-        completed_at=datetime.utcnow(),
-    )
-    db.add(transfer)
-    db.flush()
-    for pid, q in pairs:
-        src_sl = orders.ensure_stock_row(db, pid, src.id)
-        dst_sl = orders.ensure_stock_row(db, pid, dst.id)
-        src_sl.quantity -= q
-        dst_sl.quantity += q
-        db.add(TransferLine(transfer_id=transfer.id, part_id=pid, quantity=q))
-    audit.record(db, user, "transfer.complete", "transfer", transfer.id,
-                 f"{src.name} → {dst.name}: {len(pairs)} line(s)")
+    transfer = orders.complete_transfer(db, user, src, dst, pairs, notes)
     db.commit()
     return redirect(f"/transfers/{transfer.id}", f"Transfer #{transfer.id} completed.")
 
@@ -2115,16 +2098,7 @@ def parts_set_stock(
     loc = db.get(Location, location_id)
     if not loc or loc.archived or not loc.active:
         return redirect("/parts", "Pick an active location.", ok=False)
-    sl = orders.ensure_stock_row(db, part.id, loc.id)
-    prior = sl.quantity
-    delta = quantity - prior
-    sl.quantity = quantity
-    part.quantity_on_hand += delta
-    if delta > 0 and part.low_stock_alerted:
-        part.low_stock_alerted = False
-    note = f" — {reason.strip()}" if reason.strip() else ""
-    audit.record(db, current_user(request), "part.stock_set", "part", part.id,
-                 f"{loc.name}: {prior} → {quantity} (Δ {delta:+d}){note}")
+    orders.set_stock_level(db, current_user(request), part, loc, quantity, reason.strip())
     db.commit()
     return redirect("/parts", f"Set {part.name} at {loc.name} to {quantity}.")
 
@@ -2160,22 +2134,8 @@ def parts_move_stock(
         return redirect("/parts",
                         f"{src.name} only has {src_sl.quantity} of {part.name}.",
                         ok=False)
-    dst_sl = orders.ensure_stock_row(db, part.id, dst.id)
-    transfer = Transfer(
-        from_location_id=src.id,
-        to_location_id=dst.id,
-        status="completed",
-        created_by=user.get("username", ""),
-        notes=notes.strip(),
-        completed_at=datetime.utcnow(),
-    )
-    db.add(transfer)
-    db.flush()
-    src_sl.quantity -= quantity
-    dst_sl.quantity += quantity
-    db.add(TransferLine(transfer_id=transfer.id, part_id=part.id, quantity=quantity))
-    audit.record(db, user, "transfer.complete", "transfer", transfer.id,
-                 f"{src.name} → {dst.name}: {quantity} × {part.name}")
+    orders.complete_transfer(db, user, src, dst, [(part.id, quantity)], notes,
+                             summary=f"{src.name} → {dst.name}: {quantity} × {part.name}")
     db.commit()
     return redirect("/parts", f"Moved {quantity} × {part.name}: {src.name} → {dst.name}.")
 
@@ -2205,6 +2165,20 @@ def _bulk_return(form):
     return nxt if nxt.startswith("/parts") else "/parts"
 
 
+def _form_int(form, key):
+    """Parse one form field as an int, or None if missing / non-numeric."""
+    try:
+        return int(form.get(key) or "")
+    except (TypeError, ValueError):
+        return None
+
+
+def _active_location(db, loc_id):
+    """A live (active, non-archived) Location by id, or None."""
+    loc = db.get(Location, loc_id) if loc_id is not None else None
+    return loc if (loc and loc.active and not loc.archived) else None
+
+
 @app.post("/parts/bulk/category")
 async def parts_bulk_category(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
@@ -2213,14 +2187,9 @@ async def parts_bulk_category(request: Request, db: Session = Depends(get_db)):
     if not ids:
         return redirect(back, "No items selected.", ok=False)
     raw_cat = (form.get("category_id") or "").strip()
-    cat = None
-    if raw_cat:
-        try:
-            cat = db.get(Category, int(raw_cat))
-        except ValueError:
-            cat = None
-        if not cat:
-            return redirect(back, "Pick a valid category.", ok=False)
+    cat = db.get(Category, int(raw_cat)) if raw_cat.isdigit() else None
+    if raw_cat and not cat:
+        return redirect(back, "Pick a valid category.", ok=False)
     parts = db.query(Part).filter(Part.id.in_(ids)).all()
     for p in parts:
         p.category_id = cat.id if cat else None
@@ -2238,37 +2207,23 @@ async def parts_bulk_stock_set(request: Request, db: Session = Depends(get_db)):
     ids = _parse_int_list(form.getlist("ids"))
     if not ids:
         return redirect(back, "No items selected.", ok=False)
-    try:
-        location_id = int(form.get("location_id") or "")
-    except ValueError:
+    location_id = _form_int(form, "location_id")
+    quantity = _form_int(form, "quantity")
+    if location_id is None:
         return redirect(back, "Pick a location.", ok=False)
-    try:
-        quantity = int(form.get("quantity") or "")
-    except ValueError:
+    if quantity is None:
         return redirect(back, "Enter a count.", ok=False)
     if quantity < 0:
         return redirect(back, "Count cannot be negative.", ok=False)
-    loc = db.get(Location, location_id)
-    if not loc or loc.archived or not loc.active:
+    loc = _active_location(db, location_id)
+    if not loc:
         return redirect(back, "Pick an active location.", ok=False)
     user = current_user(request)
     parts = db.query(Part).filter(Part.id.in_(ids)).all()
-    n = 0
     for p in parts:
-        sl = orders.ensure_stock_row(db, p.id, loc.id)
-        prior = sl.quantity
-        if prior == quantity:
-            continue
-        delta = quantity - prior
-        sl.quantity = quantity
-        p.quantity_on_hand += delta
-        if delta > 0 and p.low_stock_alerted:
-            p.low_stock_alerted = False
-        audit.record(db, user, "part.stock_set", "part", p.id,
-                     f"{loc.name}: {prior} → {quantity} (Δ {delta:+d}) — bulk")
-        n += 1
+        orders.set_stock_level(db, user, p, loc, quantity, "bulk")
     db.commit()
-    return redirect(back, f"Set {n} item(s) to {quantity} at {loc.name}.")
+    return redirect(back, f"Set {len(parts)} item(s) to {quantity} at {loc.name}.")
 
 
 @app.post("/parts/bulk/move")
@@ -2278,60 +2233,40 @@ async def parts_bulk_move(request: Request, db: Session = Depends(get_db)):
     ids = _parse_int_list(form.getlist("ids"))
     if not ids:
         return redirect(back, "No items selected.", ok=False)
-    try:
-        from_id = int(form.get("from_location_id") or "")
-        to_id = int(form.get("to_location_id") or "")
-    except ValueError:
+    from_id = _form_int(form, "from_location_id")
+    to_id = _form_int(form, "to_location_id")
+    if from_id is None or to_id is None:
         return redirect(back, "Pick both locations.", ok=False)
     if from_id == to_id:
         return redirect(back, "Source and destination must differ.", ok=False)
-    src = db.get(Location, from_id)
-    dst = db.get(Location, to_id)
-    if (not src or not dst or src.archived or dst.archived
-            or not src.active or not dst.active):
+    src = _active_location(db, from_id)
+    dst = _active_location(db, to_id)
+    if not src or not dst:
         return redirect(back, "Both locations must be active.", ok=False)
     user = current_user(request)
     parts = {p.id: p for p in db.query(Part).filter(Part.id.in_(ids)).all()}
     # Build the move list from the per-item qty_<id> fields, clamping each to
     # what's actually on hand at the source so we never drive a row negative.
-    moves = []
+    moves = []          # [(part_id, qty), ...]
     skipped = 0
+    moved_units = 0
     for pid in ids:
         p = parts.get(pid)
-        if not p:
+        q = _form_int(form, f"qty_{pid}")
+        if not p or not q or q <= 0:
             continue
-        raw = (form.get(f"qty_{pid}") or "").strip()
-        if not raw:
-            continue
-        try:
-            q = int(raw)
-        except ValueError:
-            continue
-        if q <= 0:
-            continue
-        src_sl = orders.ensure_stock_row(db, p.id, src.id)
-        if src_sl.quantity <= 0:
+        avail = orders.ensure_stock_row(db, p.id, src.id).quantity
+        if avail <= 0:
             skipped += 1
             continue
-        moves.append((p, min(q, src_sl.quantity), src_sl))
+        q = min(q, avail)
+        moves.append((p.id, q))
+        moved_units += q
     if not moves:
         return redirect(back, "Nothing to move — set a quantity on at least one in-stock item.", ok=False)
-    transfer = Transfer(
-        from_location_id=src.id, to_location_id=dst.id, status="completed",
-        created_by=user.get("username", ""), notes="Bulk move from items list",
-        completed_at=datetime.utcnow(),
-    )
-    db.add(transfer)
-    db.flush()
-    moved_units = 0
-    for p, q, src_sl in moves:
-        dst_sl = orders.ensure_stock_row(db, p.id, dst.id)
-        src_sl.quantity -= q
-        dst_sl.quantity += q
-        db.add(TransferLine(transfer_id=transfer.id, part_id=p.id, quantity=q))
-        moved_units += q
-    audit.record(db, user, "transfer.complete", "transfer", transfer.id,
-                 f"{src.name} → {dst.name}: {len(moves)} item(s), {moved_units} unit(s) (bulk)")
+    orders.complete_transfer(
+        db, user, src, dst, moves, notes="Bulk move from items list",
+        summary=f"{src.name} → {dst.name}: {len(moves)} item(s), {moved_units} unit(s) (bulk)")
     db.commit()
     msg = f"Moved {len(moves)} item(s) ({moved_units} unit(s)): {src.name} → {dst.name}."
     if skipped:
