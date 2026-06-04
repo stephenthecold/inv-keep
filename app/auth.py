@@ -36,12 +36,29 @@ def build_oidc(db):
     return oauth
 
 
-def _kiosk_user(db):
+def _kiosk_user(db, pin_id=None):
     """Synthetic auth dict for a PIN-authenticated kiosk session. Loads
     the live perm set from the Kiosk role in the DB so admin edits in
     /users#roles → Kiosk actually take effect; falls back to the
-    minimum {view, checkout} floor if the role row is somehow missing."""
+    minimum {view, checkout} floor if the role row is somehow missing.
+
+    When ``pin_id`` is the id of an active KioskPin row, the row's
+    per-station username + default location override the globals so each
+    POS sees its own slice of /transactions and starts the cart on the
+    right location.
+    """
+    from .models import KioskPin  # local import to keep auth import-light
     username = store.get(db, "kiosk_username") or "kiosk"
+    location_id = ""
+    pin_label = ""
+    if pin_id:
+        row = db.get(KioskPin, pin_id)
+        if row is not None and row.active:
+            username = (row.kiosk_username or "").strip() or username
+            location_id = str(row.location_id) if row.location_id else ""
+            pin_label = row.label or ""
+    if not location_id:
+        location_id = store.get(db, "kiosk_location_id") or ""
     role = rbac._role_by_name(db, "Kiosk")
     perms = rbac.perms_for_role(role) if role else {"view", "checkout"}
     return {
@@ -51,6 +68,9 @@ def _kiosk_user(db):
         "perms": perms,
         "is_admin": False,
         "is_kiosk": True,
+        "kiosk_pin_id": pin_id or None,
+        "kiosk_pin_label": pin_label,
+        "kiosk_location_id": location_id,
     }
 
 
@@ -92,7 +112,7 @@ def resolve_user(request, db):
         if not username:
             # Real proxy auth missed — but a kiosk PIN session may still be live.
             if request.session.get("kiosk") and store.get_bool(db, "kiosk_enabled"):
-                return _kiosk_user(db)
+                return _kiosk_user(db, request.session.get("kiosk_pin_id"))
             return None
         email = request.headers.get(email_header, "")
         raw_groups = request.headers.get(groups_header, "")
@@ -103,7 +123,7 @@ def resolve_user(request, db):
         sess = request.session.get("user")
         if not sess:
             if request.session.get("kiosk") and store.get_bool(db, "kiosk_enabled"):
-                return _kiosk_user(db)
+                return _kiosk_user(db, request.session.get("kiosk_pin_id"))
             return None
         return _maybe_impersonate(
             request, db,

@@ -3,6 +3,30 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.22.0] — 2026-06-04
+- **Built-in role permissions now stay edited.** Removing a default
+  perm from a built-in role (e.g. dropping `view_catalog` from Kiosk
+  under `/users#roles`) used to be undone on the next container
+  restart — `rbac.seed_roles()` would re-add every default perm that
+  wasn't there. Roles now carry a `customized` flag that the role-save
+  handler sets on first edit; once set, the seeder leaves the stored
+  perm list strictly alone. Untouched built-in roles still receive
+  newly-shipped default perms on upgrade.
+- **Multiple kiosk PINs for multi-location POS.** The single global
+  `kiosk_pin` setting is replaced by a `kiosk_pins` table — one row
+  per station, each with its own label, PIN, default source location,
+  and audit username. The `/welcome` PIN entry accepts any active PIN;
+  the matching row's defaults are applied to the session, so a
+  Warehouse PIN starts the cart on the warehouse location and a Front
+  Desk PIN gets the front-desk location. Per-station audit usernames
+  also mean each kiosk's last-24h `/transactions` view stays scoped to
+  its own charge-outs instead of seeing every other kiosk's traffic.
+  The legacy single PIN is migrated into a row labelled "Default" on
+  first start.
+- Per-IP lockout after 5 bad attempts is unchanged. PIN comparison
+  walks every active row in constant time so a timing leak can't
+  reveal which slot a candidate PIN matches.
+
 ## [1.21.0] — 2026-06-04
 - **Label barcode is now centered.** The Code128 SVG was forced to
   `width: 100%` which left-anchored the encoder's fixed-mm output, so
