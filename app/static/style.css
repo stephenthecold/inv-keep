@@ -68,7 +68,6 @@ nav a:hover { color: var(--text); }
 .account-menu .logout-form { margin: 0; }
 .account-menu .logout-form button { width: 100%; text-align: left; background: none; border: 0; font: inherit; cursor: pointer; }
 main { max-width: 1000px; margin: 0 auto; padding: 1.5rem 1.25rem 4rem; }
-button, .btn, .add-btn { white-space: nowrap; }
 h1 { margin-top: 0; }
 h2 { border-bottom: 1px solid var(--line); padding-bottom: .3rem; margin-top: 2rem; }
 small { color: var(--muted); display: block; margin-top: .25rem; }
@@ -78,7 +77,7 @@ code { background: var(--panel-2); padding: .1rem .35rem; border-radius: 4px; }
 .field label { display: block; font-weight: 600; margin-bottom: .3rem; }
 input, select, button {
   font-size: 1rem;
-  padding: .55rem .7rem;
+  padding: .55rem .9rem;
   border-radius: 8px;
   border: 1px solid var(--line);
   background: var(--panel-2);
@@ -93,9 +92,35 @@ input, select, button {
 .scan-bar { display: flex; gap: 1rem; align-items: flex-end; }
 .scan-bar .grow { flex: 1; }
 .scan-bar .qty input { width: 6rem; }
-button { background: var(--accent); border-color: var(--accent); color: #fff; cursor: pointer; }
-button:hover { filter: brightness(1.1); }
-.btn { background: var(--accent); color: #fff; padding: .55rem .8rem; border-radius: 8px; text-decoration: none; }
+
+/* --- BUTTON SYSTEM ---------------------------------------------------------
+   Three variants share identical sizing so any mix (Save + Cancel + Delete)
+   lines up flush in the same row. Use .small for compact contexts (inline
+   table actions). Reset native input padding to match.
+   - default <button> / .btn        -> primary, filled accent
+   - .ghost                         -> secondary, outlined neutral
+   - .danger                        -> destructive, filled red
+*/
+button, .btn, .add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .4rem;
+  padding: .55rem .9rem;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.2;
+  min-height: 2.4rem;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+}
+button:hover, .btn:hover, .add-btn:hover { filter: brightness(1.1); }
+button:disabled, .btn:disabled, .add-btn:disabled { opacity: .5; cursor: not-allowed; filter: none; }
 
 table.lines { width: 100%; border-collapse: collapse; margin-top: .75rem; }
 table.lines th, table.lines td { padding: .5rem .6rem; border-bottom: 1px solid var(--line); text-align: left; }
@@ -139,7 +164,7 @@ tfoot td { font-weight: 700; }
 /* tags & buttons */
 .tag { display: inline-block; background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: .05rem .55rem; font-size: .8rem; margin: 0 .15rem; }
 .good-tag { border-color: var(--good); color: var(--good); }
-button.danger { background: var(--bad); border-color: var(--bad); }
+button.danger, .btn.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
 
 /* settings / forms */
 section.card h2 { margin-top: 0; }
@@ -156,11 +181,17 @@ details.card.inactive summary { opacity: .55; }
 /* page header with top-right add button */
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .page-head h1 { margin: 0; }
-.head-actions { display: flex; gap: .5rem; align-items: center; }
-.add-btn { background: var(--accent); color: #fff; border: 1px solid var(--accent); border-radius: 8px; padding: .6rem 1rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
-.add-btn:hover { filter: brightness(1.1); }
-.add-btn:disabled { opacity: .5; cursor: not-allowed; }
-button.ghost, .btn.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); }
+.head-actions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+/* Inline button row inside a card (e.g. Save + Archive + Delete on /clients).
+   Slightly looser gap than .head-actions so destructive sits visually apart. */
+.row-actions, .modal-actions { display: flex; gap: .5rem; flex-wrap: wrap; margin: .75rem 0 0; padding: 0; }
+.modal-actions { justify-content: flex-end; margin-top: 1rem; }
+button.ghost, .btn.ghost {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--text);
+}
+button.ghost:hover, .btn.ghost:hover { filter: none; background: var(--panel-2); }
 
 /* modal dialog */
 dialog.modal { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 1.25rem 1.5rem; max-width: 680px; width: 92%; }
@@ -257,7 +288,7 @@ dialog.modal h2 { margin-top: 0; }
 .manage-bar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; padding: .55rem .75rem; margin: 0 0 1rem; background: var(--panel-2); border: 1px dashed var(--line); border-radius: 8px; }
 .manage-bar .muted { margin-right: auto; font-size: .85rem; }
 .btn.is-active { background: var(--good); border-color: var(--good); color: #fff; }
-.btn.small { padding: .3rem .6rem; font-size: .85rem; }
+.btn.small, button.small { padding: .3rem .65rem; font-size: .85rem; min-height: 1.9rem; }
 
 /* Category grid: tap-friendly cards. auto-fit makes the grid relax into
    one wide column on narrow phones and grow up to 3-4 columns on wide

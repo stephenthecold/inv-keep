@@ -29,7 +29,7 @@
 </dialog>
 
 {% for c in clients %}
-<details class="card {% if not c.active %}inactive{% endif %}">
+<details class="card {% if not c.active %}inactive{% endif %}{% if c.archived %} archived{% endif %}">
   <summary>
     <strong>{{ c.name }}</strong>
     {% if c.reference %}<span class="tag">{{ c.reference }}</span>{% endif %}
@@ -37,6 +37,7 @@
     {% if c.phone %}· {{ c.phone }}{% endif %}
     <span class="tag muted">{{ c.jobs|length }} job{{ '' if c.jobs|length == 1 else 's' }}</span>
     {% if not c.active %}<span class="tag muted">inactive</span>{% endif %}
+    {% if c.archived %}<span class="tag muted">archived</span>{% endif %}
   </summary>
   <form method="post" action="/clients/{{ c.id }}/edit" class="grid-form">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -49,7 +50,16 @@
     <label class="wide">Address <textarea name="address" rows="2">{{ c.address }}</textarea></label>
     <label class="wide">Notes <textarea name="notes" rows="2">{{ c.notes }}</textarea></label>
     <label class="check">Active <input type="checkbox" name="active" {% if c.active %}checked{% endif %}></label>
-    <button type="submit">Save</button>
+    <menu class="row-actions">
+      <button type="submit">Save</button>
+      {% if c.archived %}
+      <button type="submit" class="ghost" formaction="/clients/{{ c.id }}/restore" formnovalidate>Restore</button>
+      {% else %}
+      <button type="submit" class="ghost" formaction="/clients/{{ c.id }}/archive" formnovalidate>Archive</button>
+      {% endif %}
+      <button type="submit" class="danger" formaction="/clients/{{ c.id }}/delete" formnovalidate
+        onclick="return confirm('Delete {{ c.name|e }} permanently? Refused if any orders, sale lines, or jobs reference this client — archive instead in that case.')">Delete</button>
+    </menu>
   </form>
   {% if c.jobs %}
   <div class="subgroup">

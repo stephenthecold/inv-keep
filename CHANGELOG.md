@@ -3,6 +3,33 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.22.1] — 2026-06-04
+- **Explicit archive / restore / delete on clients**, mirroring the
+  item lifecycle added in v1.21. New routes:
+  - `POST /clients/<id>/archive` — reversible, hides the client from the
+    default `/clients` list and the scan/order pickers without touching
+    history.
+  - `POST /clients/<id>/restore` — flips the bit back.
+  - `POST /clients/<id>/delete` — permanent. Refused when any
+    `Order.customer_id`, `Transaction.customer_id`, or `Job.client_id`
+    row still references the client; the error message tells the user
+    to archive instead so historical orders never lose the client name.
+  The client edit card on `/clients` now renders a Save · Archive · Delete
+  row (Archive flips to Restore once archived), confirm-prompted on
+  Delete, matching the items modal pattern.
+- **Standardized button sizing across the site.** Every actionable
+  button now resolves to one of three classes that share identical
+  padding, font-size, weight, border-radius, and min-height — so a row
+  of mixed-purpose buttons (Save + Archive + Delete) lines up flush.
+  - default `<button>` / `.btn` — primary, filled accent
+  - `.ghost` — secondary, outlined neutral, transparent fill
+  - `.danger` — destructive, filled red
+  `.btn.small` is preserved for inline table-row actions. The previous
+  drift (e.g. `.add-btn` padding ≠ `<button>` padding ≠ `.btn` padding)
+  caused the head-action button to sit a pixel taller than its
+  neighbours; that's gone. Inline `style="padding:…"` overrides on
+  buttons are now exclusively for layout, never sizing.
+
 ## [1.22.0] — 2026-06-04
 - **Built-in role permissions now stay edited.** Removing a default
   perm from a built-in role (e.g. dropping `view_catalog` from Kiosk

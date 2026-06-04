@@ -2409,6 +2409,65 @@ def clients_edit(
     return redirect("/clients", "Client saved.")
 
 
+@app.post("/clients/{client_id}/archive")
+def clients_archive(client_id: int, request: Request, db: Session = Depends(get_db)):
+    """Hide a client from the default list + scan/order pickers. Reversible;
+    history (orders, transactions, jobs) is untouched."""
+    c = db.get(Client, client_id)
+    if not c:
+        return redirect("/clients", "Client not found.", ok=False)
+    c.archived = True
+    audit.record(db, current_user(request), "client.archive", "client", c.id,
+                 f"Archived {c.name}")
+    db.commit()
+    return redirect("/clients?archived=1", f"Archived {c.name}.")
+
+
+@app.post("/clients/{client_id}/restore")
+def clients_restore(client_id: int, request: Request, db: Session = Depends(get_db)):
+    c = db.get(Client, client_id)
+    if not c:
+        return redirect("/clients", "Client not found.", ok=False)
+    c.archived = False
+    audit.record(db, current_user(request), "client.restore", "client", c.id,
+                 f"Restored {c.name}")
+    db.commit()
+    return redirect("/clients", f"Restored {c.name}.")
+
+
+@app.post("/clients/{client_id}/delete")
+def clients_delete(client_id: int, request: Request, db: Session = Depends(get_db)):
+    """Permanent deletion. Refused when the client has any history (orders,
+    transactions) or any attached jobs — archive is the right path for those.
+    Used to roll back a freshly-created client that was a typo / duplicate."""
+    c = db.get(Client, client_id)
+    if not c:
+        return redirect("/clients", "Client not found.", ok=False)
+    order_n = db.query(Order).filter(Order.customer_id == c.id).count()
+    txn_n = db.query(Transaction).filter(Transaction.customer_id == c.id).count()
+    job_n = db.query(Job).filter(Job.client_id == c.id).count()
+    if order_n or txn_n or job_n:
+        bits = []
+        if order_n:
+            bits.append(f"{order_n} order(s)")
+        if txn_n:
+            bits.append(f"{txn_n} sale line(s)")
+        if job_n:
+            bits.append(f"{job_n} job(s)")
+        return redirect(
+            "/clients",
+            f"Can't delete {c.name}: it has " + " + ".join(bits) +
+            ". Archive it instead so history stays intact.",
+            ok=False,
+        )
+    name = c.name
+    db.delete(c)
+    audit.record(db, current_user(request), "client.delete", "client", client_id,
+                 f"Deleted {name}")
+    db.commit()
+    return redirect("/clients", f"Deleted {name}.")
+
+
 # ============================================================ jobs
 @app.get("/jobs", response_class=HTMLResponse)
 def jobs_page(request: Request, db: Session = Depends(get_db)):
