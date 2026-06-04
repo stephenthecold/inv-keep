@@ -3,6 +3,18 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.23.1] — 2026-06-04
+- **Header nav: "Scan" no longer looks orphaned next to the dropdown
+  buttons.** v1.22.1's button-sizing standard gave every `<button>` a
+  `min-height: 2.4rem`, which leaked onto `.navdrop-btn` (Inventory ▾
+  / Clients ▾ / Records ▾) — they're buttons for keyboard/JS reasons
+  but visually have always been nav links. The taller dropdowns then
+  misaligned with the plain `<a>Scan</a>` link sitting next to them,
+  making "Scan" look short and detached and wasting horizontal space.
+  Reset `min-height`, padding, border-radius, and font weight on
+  `.navdrop-btn` so it matches the surrounding nav-link styling
+  again.
+
 ## [1.23.0] — 2026-06-04
 - **Scan page redesigned.** The "wall of dropdowns + wide table" feel
   is gone. Three changes:
