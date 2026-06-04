@@ -3,6 +3,30 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.23.0] — 2026-06-04
+- **Scan page redesigned.** The "wall of dropdowns + wide table" feel
+  is gone. Three changes:
+  - **Compact targets header.** Source location, client, and job
+    collapse into a one-line pill summary (📍 Main · 👤 Acme · 🛠️ Job 42).
+    Tap the row to expand the pickers; the card auto-collapses once a
+    client and location are set, so the scan input + cart get the full
+    screen. The summary opens automatically on first load if no
+    location is pinned (so a fresh kiosk session lands in "edit"
+    mode).
+  - **Tile-based cart lines.** The cart-lines table is replaced by
+    card-tiles — one per line, with icon, name + barcode + unit
+    price, qty stepper, charge total, and a remove ✕. No more
+    horizontal scroll on phones, and the qty input + remove button
+    are big enough to thumb without zooming.
+  - **Sticky bottom action bar.** Cancel + Submit move out of the
+    cart header into a footer bar that pins to the bottom of the
+    viewport on phones. Submit is always one thumb-reach away no
+    matter how long the cart is.
+  No data-model changes; `/api/cart` payload is unchanged. The XSS
+  hardening from v1.10.1 still applies — every user-controlled string
+  (part name, barcode, walk-in name) is rendered via
+  `createElement` + `textContent`.
+
 ## [1.22.1] — 2026-06-04
 - **Explicit archive / restore / delete on clients**, mirroring the
   item lifecycle added in v1.21. New routes:
