@@ -54,8 +54,8 @@
         <button type="button" class="navdrop-btn" data-menu="#records-menu" aria-haspopup="true" aria-expanded="false">Records <span class="caret">▾</span></button>
         <div class="account-menu navdrop-menu" id="records-menu" data-menu-pop hidden>
           {% if can('view') %}<a href="/transactions">History</a>{% endif %}
-          {% if can('view_catalog') %}<a href="/report">Report</a>{% endif %}
-          {% if can('view_catalog') %}<a href="/map">Map</a>{% endif %}
+          {% if can('view_catalog') and not kiosk_locked %}<a href="/report">Report</a>{% endif %}
+          {% if can('view_catalog') and not kiosk_locked %}<a href="/map">Map</a>{% endif %}
           {% if can('view_audit') %}<a href="/audit">Audit</a>{% endif %}
         </div>
       </div>
@@ -116,8 +116,8 @@
     {% if can('view') or can('view_catalog') or can('view_audit') %}
     <span class="muted nav-mobile-section">Records</span>
     {% if can('view') %}<a href="/transactions">History</a>{% endif %}
-    {% if can('view_catalog') %}<a href="/report">Report</a>{% endif %}
-    {% if can('view_catalog') %}<a href="/map">Map</a>{% endif %}
+    {% if can('view_catalog') and not kiosk_locked %}<a href="/report">Report</a>{% endif %}
+    {% if can('view_catalog') and not kiosk_locked %}<a href="/map">Map</a>{% endif %}
     {% if can('view_audit') %}<a href="/audit">Audit</a>{% endif %}
     {% endif %}
     <div class="nav-mobile-sep" role="separator"></div>

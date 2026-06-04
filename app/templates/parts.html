@@ -158,8 +158,8 @@
             {% if p.quantity_on_hand <= 0 %}<span class="tag oos-tag" title="Out of stock — restock or archive">Out of stock</span>{% endif %}
             {% set chips = part_stock.get(p.id, []) %}
             {% if chips %}
-            <div class="muted" style="font-size:.75rem;font-weight:normal;margin-top:.15rem;text-align:left">
-              {% for loc, qty in chips %}<span class="tag muted" title="{{ loc.name }}">{{ loc.name }}: {{ qty }}</span>{% if not loop.last %} {% endif %}{% endfor %}
+            <div class="loc-breakdown">
+              {% for loc, qty in chips %}<span class="loc-chip" title="{{ loc.name }}: {{ qty }}"><span class="loc-chip-name">{{ loc.name }}</span><span class="loc-chip-qty">{{ qty }}</span></span>{% endfor %}
             </div>
             {% endif %}
           </td>

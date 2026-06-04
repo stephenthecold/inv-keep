@@ -417,6 +417,13 @@ def ctx(request: Request, db: Session, **kwargs):
     }
     u = base["user"]
     base["can"] = lambda p: bool(u.get("is_admin")) or p in u.get("perms", set())
+    # True for a kiosk session still under the hardcoded path-allowlist
+    # lockdown. The nav uses this to hide links the lockdown would 403 on
+    # (Report / Map are view_catalog pages but deliberately NOT in the
+    # kiosk floor) so kiosks don't get dead-end menu entries. Once an admin
+    # grants the Kiosk role extra perms the lockdown lifts and the links
+    # return.
+    base["kiosk_locked"] = bool(u.get("is_kiosk")) and _kiosk_lockdown_active(u.get("perms"))
     base["msg"] = request.query_params.get("msg", "")
     base["ok"] = request.query_params.get("ok", "1") != "0"
     # Roles for the admin impersonation dropdown in the header user menu.

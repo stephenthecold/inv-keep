@@ -3,6 +3,34 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.23.6] — 2026-06-04
+- **Per-location stock breakdown on the items table was a pile of
+  wrapping pills.** Under the On-hand count, each location's count
+  rendered as a rounded `.tag` pill; in the narrow column on a phone
+  they wrapped and stacked into messy blobs with clipped names. Now
+  it's a tidy one-row-per-location list — location name on the left
+  (ellipsised if long), count right-aligned in tabular figures — so a
+  multi-location item reads cleanly.
+- **Kiosk menu showed Report and Map, but tapping either dead-ended in
+  a 403.** v1.23.5 gated those nav links by `view_catalog`, which the
+  kiosk role has — but `/report` and `/map` sit *outside* the kiosk
+  lockdown floor on purpose, so the links went nowhere. They're now
+  hidden whenever the kiosk lockdown is active (new `kiosk_locked`
+  template flag); granting the Kiosk role any extra perm lifts the
+  lockdown and the links return. The default kiosk menu is now exactly
+  what it can reach: Scan, Items, Categories, Clients, Jobs, History.
+- **File pickers overflowed the card on phones.** The native "Choose
+  File" control has a wide intrinsic size that wouldn't shrink in a
+  flex row, so the Branding logo/favicon and Backup → Restore pickers
+  pushed past the card edge and were clipped by the page's
+  `overflow-x: hidden`. They now shrink to fit. Long form fields (e.g.
+  the OIDC discovery URL on the Authentication tab) likewise wrap
+  inside the card instead of being cut off.
+- **Restore-from-backup warning now looks destructive.** Its
+  `.notice.bad` styling was never defined, so the "replaces every row"
+  warning showed in routine amber; it now gets a red rail and tint to
+  match the severity of the action.
+
 ## [1.23.5] — 2026-06-04
 - **Kiosk hamburger menu lost most of its links** after the v1.20.1
   perm-floor fix landed without a matching template update. Both the
