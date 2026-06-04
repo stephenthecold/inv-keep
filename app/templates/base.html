@@ -29,16 +29,18 @@
     </button>
     <nav>
       {% if can('checkout') %}<a href="/">Scan</a>{% endif %}
-      {% if not user.is_kiosk %}
+      {% if can('view_catalog') or can('manage_locations') %}
       <div class="navdrop">
         <button type="button" class="navdrop-btn" data-menu="#inventory-menu" aria-haspopup="true" aria-expanded="false">Inventory <span class="caret">▾</span></button>
         <div class="account-menu navdrop-menu" id="inventory-menu" data-menu-pop hidden>
-          <a href="/parts">Items</a>
-          <a href="/categories">Categories</a>
+          {% if can('view_catalog') %}<a href="/parts">Items</a>{% endif %}
+          {% if can('view_catalog') %}<a href="/categories">Categories</a>{% endif %}
           {% if can('manage_locations') %}<a href="/locations">Locations</a>{% endif %}
           {% if can('manage_locations') %}<a href="/transfers">Transfers</a>{% endif %}
         </div>
       </div>
+      {% endif %}
+      {% if can('view_catalog') %}
       <div class="navdrop">
         <button type="button" class="navdrop-btn" data-menu="#clients-menu" aria-haspopup="true" aria-expanded="false">Clients <span class="caret">▾</span></button>
         <div class="account-menu navdrop-menu" id="clients-menu" data-menu-pop hidden>
@@ -46,17 +48,17 @@
           <a href="/jobs">Jobs</a>
         </div>
       </div>
+      {% endif %}
+      {% if can('view') or can('view_catalog') or can('view_audit') %}
       <div class="navdrop">
         <button type="button" class="navdrop-btn" data-menu="#records-menu" aria-haspopup="true" aria-expanded="false">Records <span class="caret">▾</span></button>
         <div class="account-menu navdrop-menu" id="records-menu" data-menu-pop hidden>
-          <a href="/transactions">History</a>
-          <a href="/report">Report</a>
-          <a href="/map">Map</a>
+          {% if can('view') %}<a href="/transactions">History</a>{% endif %}
+          {% if can('view_catalog') %}<a href="/report">Report</a>{% endif %}
+          {% if can('view_catalog') %}<a href="/map">Map</a>{% endif %}
           {% if can('view_audit') %}<a href="/audit">Audit</a>{% endif %}
         </div>
       </div>
-      {% else %}
-      <a href="/transactions">Recent (24h)</a>
       {% endif %}
     </nav>
     <div class="global-search">
@@ -99,22 +101,24 @@
   <div class="nav-backdrop" aria-hidden="true"></div>
   <aside class="nav-mobile" id="nav-mobile" aria-label="Mobile navigation">
     {% if can('checkout') %}<a href="/">Scan</a>{% endif %}
-    {% if not user.is_kiosk %}
+    {% if can('view_catalog') or can('manage_locations') %}
     <span class="muted nav-mobile-section">Inventory</span>
-    <a href="/parts">Items</a>
-    <a href="/categories">Categories</a>
+    {% if can('view_catalog') %}<a href="/parts">Items</a>{% endif %}
+    {% if can('view_catalog') %}<a href="/categories">Categories</a>{% endif %}
     {% if can('manage_locations') %}<a href="/locations">Locations</a>{% endif %}
     {% if can('manage_locations') %}<a href="/transfers">Transfers</a>{% endif %}
+    {% endif %}
+    {% if can('view_catalog') %}
     <span class="muted nav-mobile-section">Clients</span>
     <a href="/clients">Clients</a>
     <a href="/jobs">Jobs</a>
+    {% endif %}
+    {% if can('view') or can('view_catalog') or can('view_audit') %}
     <span class="muted nav-mobile-section">Records</span>
-    <a href="/transactions">History</a>
-    <a href="/report">Report</a>
-    <a href="/map">Map</a>
+    {% if can('view') %}<a href="/transactions">History</a>{% endif %}
+    {% if can('view_catalog') %}<a href="/report">Report</a>{% endif %}
+    {% if can('view_catalog') %}<a href="/map">Map</a>{% endif %}
     {% if can('view_audit') %}<a href="/audit">Audit</a>{% endif %}
-    {% else %}
-    <a href="/transactions">Recent (24h)</a>
     {% endif %}
     <div class="nav-mobile-sep" role="separator"></div>
     <span class="muted nav-mobile-user">Signed in as {{ user.username or 'user' }}{% if user.role %} · {{ user.role }}{% endif %}</span>
