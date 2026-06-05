@@ -58,6 +58,48 @@ jobs:
           assert j['order']['lines'] == 1, j
           print('cart smoke ok ->', j['order']['number'])
           "
+      - name: Inline job-on-checkout (feature smoke)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_jobnew.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import re
+          from fastapi.testclient import TestClient
+          from app.main import app
+          from app.database import SessionLocal
+          from app.models import Job, Order, Transaction
+          c = TestClient(app)
+          r = c.get('/'); tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', r.text).group(1)
+          h = {'X-CSRF-Token': tok}
+          c.post('/clients/add', data={'_csrf': tok, 'name': 'JobCo'})
+          c.post('/parts/add',   data={'_csrf': tok, 'name': 'JobCable', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2', 'quantity_on_hand': '10'})
+          bc = c.get('/api/search?q=JobCable').json()['results'][0]['barcode']
+          # Scan an item, set the client, then create a job mid-cart.
+          assert c.post('/api/cart/scan', json={'barcode': bc, 'quantity': 1}, headers=h).json()['ok']
+          # No client yet -> refused.
+          r = c.post('/api/cart/job/new', json={'name': 'Too early'}, headers=h)
+          assert r.json() == {'ok': False, 'error': 'no_client'}, r.json()
+          assert c.post('/api/cart/set', json={'client_id': 1, 'job_id': None}, headers=h).json()['ok']
+          # Empty name refused.
+          assert c.post('/api/cart/job/new', json={'name': '   '}, headers=h).json()['error'] == 'name_required'
+          # Create the job and confirm it attaches to the cart + open lines.
+          r = c.post('/api/cart/job/new', json={'name': 'Kitchen remodel'}, headers=h)
+          j = r.json()
+          assert j['ok'] is True and j['job']['name'] == 'Kitchen remodel', j
+          assert j['cart']['job_id'] == j['job']['id'], j
+          db = SessionLocal()
+          job = db.query(Job).filter(Job.name == 'Kitchen remodel').first()
+          assert job and job.client_id == 1
+          cart = db.query(Order).filter(Order.status == 'open').first()
+          assert cart.job_id == job.id
+          assert all(t.job_id == job.id for t in db.query(Transaction).filter(Transaction.order_id == cart.id).all())
+          db.close()
+          # CSRF still enforced on the new route.
+          assert c.post('/api/cart/job/new', json={'name': 'x'}).status_code == 403
+          print('inline job-on-checkout OK ->', job.id)
+          "
       - name: NaN geo rejected (security regression test)
         env:
           DATABASE_URL: "sqlite:///./data/ci2.db"

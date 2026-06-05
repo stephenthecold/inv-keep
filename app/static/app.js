@@ -742,6 +742,68 @@ if (scan && cart) {
     if (e.key === "Escape") { e.preventDefault(); walkinCancel.click(); }
   });
 
+  // -- inline new-job creation (mid-checkout) --
+  // Creates a Job for the currently-selected client and attaches it to the
+  // cart, so the operator can spin up a job without leaving the scan page.
+  const startNewJob = document.getElementById("start-newjob");
+  const newJobRow    = document.getElementById("cart-newjob-row");
+  const newJobIn     = document.getElementById("cart-newjob");
+  const newJobSave   = document.getElementById("cart-newjob-apply");
+  const newJobCancel = document.getElementById("cart-newjob-cancel");
+
+  function showNewJobRow(on) {
+    if (!newJobRow) return;
+    newJobRow.hidden = !on;
+    if (on) setTimeout(() => newJobIn && newJobIn.focus(), 30);
+  }
+  if (startNewJob) {
+    startNewJob.addEventListener("click", () => {
+      if (!clientSel || !clientSel.value) { toast("Pick a client first", false); return; }
+      showNewJobRow(true);
+    });
+  }
+  if (newJobCancel) {
+    newJobCancel.addEventListener("click", () => { newJobIn.value = ""; showNewJobRow(false); });
+  }
+  async function applyNewJob() {
+    const name = (newJobIn.value || "").trim();
+    if (!name) { newJobIn.focus(); return; }
+    const res = await fetch("/api/cart/job/new", {
+      method: "POST",
+      headers: csrfHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ name }),
+    });
+    const d = await res.json();
+    if (!d.ok) {
+      beep(false);
+      toast(d.error === "no_client" ? "Pick a client first" :
+            d.error === "name_required" ? "Type a job name" :
+            d.error === "name_too_long" ? "Name too long" :
+            "Could not create job", false);
+      return;
+    }
+    // Add the new job as a client-scoped option and let render() select it
+    // off the returned cart.job_id. textContent keeps user strings inert.
+    if (jobSel && d.job) {
+      const opt = document.createElement("option");
+      opt.value = d.job.id;
+      opt.dataset.client = d.job.client_id;
+      opt.textContent = d.job.reference ? (d.job.name + " — " + d.job.reference) : d.job.name;
+      jobSel.appendChild(opt);
+    }
+    beep(true);
+    toast("Job created: " + name, true);
+    showNewJobRow(false);
+    newJobIn.value = "";
+    render(d.cart);
+    scan.focus();
+  }
+  if (newJobSave) newJobSave.addEventListener("click", applyNewJob);
+  if (newJobIn) newJobIn.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); applyNewJob(); }
+    if (e.key === "Escape") { e.preventDefault(); newJobCancel.click(); }
+  });
+
   // -- custom (off-catalog) item form --
   const customForm = document.getElementById("custom-form");
   if (customForm) {

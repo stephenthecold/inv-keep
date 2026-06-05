@@ -8,6 +8,15 @@
 </div>
 {% endif %}
 
+<!-- SCAN INPUT — the visual anchor of the page, kept above the targets so
+     the operator can start scanning/searching immediately. Keyboard-wedge
+     scanners get autofocus here. The destination pickers live below. -->
+<div class="field search-wrap scan-field">
+  <input type="text" id="scan" autocomplete="off" placeholder="Scan a barcode or type to search…" autofocus>
+  <div id="suggest" class="suggest" hidden></div>
+  <small class="muted">Scanning a known item adds it to the current order. The pickers below apply to every scan until cleared.</small>
+</div>
+
 <!-- v1.23: COMPACT TARGETS HEADER ------------------------------------------
      Three pills summarise the destination (location · client · job). Tap
      anywhere on the summary bar to expand the pickers; collapses again
@@ -48,6 +57,18 @@
         {% for j in jobs %}<option value="{{ j.id }}" data-client="{{ j.client_id }}">{{ j.name }}{% if j.reference %} — {{ j.reference }}{% endif %}</option>{% endfor %}
       </select>
     </label>
+    <!-- Inline new-job creation: spins up a Job for the currently-selected
+         client and attaches it to the cart without leaving the scan page. -->
+    <div class="wide cart-targets-newjob">
+      <button type="button" id="start-newjob" class="ghost">+ New job for this client</button>
+    </div>
+    <label class="wide" id="cart-newjob-row" hidden>New job name
+      <span class="walkin-row">
+        <input type="text" id="cart-newjob" placeholder="e.g. Kitchen remodel" maxlength="200">
+        <button type="button" id="cart-newjob-apply">Save</button>
+        <button type="button" id="cart-newjob-cancel" class="ghost">Cancel</button>
+      </span>
+    </label>
     <div class="wide cart-targets-walkin">
       <button type="button" id="start-walkin" class="ghost">+ Walk-in / one-time customer</button>
     </div>
@@ -60,15 +81,6 @@
     </label>
   </div>
 </details>
-
-<!-- SCAN INPUT — moved below the targets so the destination is set first.
-     Keyboard-wedge scanners still get autofocus, and the input is the
-     visual anchor of the page. -->
-<div class="field search-wrap scan-field">
-  <input type="text" id="scan" autocomplete="off" placeholder="Scan a barcode or type to search…" autofocus>
-  <div id="suggest" class="suggest" hidden></div>
-  <small class="muted">Scanning a known item adds it to the current order. The pickers above apply to every scan until cleared.</small>
-</div>
 
 <!-- CART CARD — tiles, not a table, so it stops needing horizontal scroll
      on phones. Submit/Cancel live in a footer bar that sticks to the bottom

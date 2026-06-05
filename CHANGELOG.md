@@ -3,6 +3,25 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.27.0] — 2026-06-05
+- **Scan-page polish for the charge-out flow.**
+  - The search/scan box now sits **above** the location · client · job
+    pickers — it's the first thing the operator reaches, so scanning can
+    start immediately and the destination pickers fall below it. The
+    box is also a touch thinner so it takes less vertical space at the
+    top of the page.
+  - **Create a job mid-checkout.** A new "+ New job for this client"
+    button under the Job picker spins up a job for the currently-selected
+    client and attaches it to the open cart without leaving the scan
+    page — no more bouncing to `/jobs` and back. Backed by
+    `POST /api/cart/job/new`; requires a real (non walk-in) client on the
+    cart first.
+- **Bigger stock-modal dropdowns.** The per-item Stock pop-up's
+  location / from / to selects were tiny, fiddly tap targets. They now
+  render at a comfortable ~44px touch height with more padding, so
+  picking a location during a stock add / move / stocktake is far
+  easier on a touchscreen.
+
 ## [1.26.2] — 2026-06-05
 - **Mobile API surface, round two — match the kiosk's scan-pick-charge
   flow on a phone.** v1.26.0 covered auth + barcode scan + order submit;
