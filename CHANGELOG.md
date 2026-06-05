@@ -3,6 +3,40 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.25.0] — 2026-06-05
+- **Re-tag any item, not just the auto-generated ones.** The 🏷️ print
+  link now shows on every row in `/parts`, including items whose
+  barcode was scanned in off a manufacturer code. The Edit-item modal
+  gained a Barcode field so an item can be re-stickered with a fresh
+  value (uniqueness enforced, dupe attempts bounce with a flash). The
+  /labels sheet got a toggle — "Include manufacturer barcodes" — that
+  drops the `barcode_generated` filter so a re-tag run can print a
+  whole shelf in one pass.
+- **Print an ad-hoc label for any value.** New `/labels/print?value=…`
+  route renders a single label for an arbitrary barcode (with an
+  optional caption) without creating a Part. Lives under the Labels
+  page in a "Print an ad-hoc label" panel. Useful for pre-printing
+  stickers or covering a worn label on something not yet in the
+  catalog. The value goes through a control-character + length guard
+  so a malformed query can't blow up the barcode encoder.
+- **Pack-size items (10-packs of cables, boxes of jacks, …).** Items
+  now have a `pack_size` (default 1) and a `pack_unit_label` (e.g.
+  "cable", "outlet"). Stock and billing stay per-unit so consuming one
+  cable from a 10-pack bills one cable's price — not the whole bag.
+  The items table shows the derived "X packs + remainder of Y" hint
+  under the on-hand count whenever pack_size > 1; pack_size=1 is a
+  plain item with no visible change. Additive migration: existing
+  rows pick up pack_size=1 on first boot so day-one upgrades are
+  invisible.
+- **Settings → Printing preview no longer needs a click to render.**
+  The inline IIFE called `iconHTML()` from `/static/app.js`, which
+  loads at the *end* of `<body>` — after the inline script's tag was
+  parsed. The first paint silently threw on undefined `iconHTML` and
+  the box stayed blank until the user touched a form field (by which
+  point app.js had loaded). The render now runs on `DOMContentLoaded`
+  so app.js is guaranteed available; the preview paints the moment
+  the tab opens.
+
 ## [1.24.0] — 2026-06-04
 - **Bulk-edit items straight from the list.** Tick rows in the items
   table (any category view or All items) and a bulk bar appears with

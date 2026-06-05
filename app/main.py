@@ -1963,6 +1963,8 @@ async def parts_add(
     quantity_on_hand: int = Form(0),
     category_id: str = Form(""),
     low_stock_threshold: str = Form(""),
+    pack_size: int = Form(1),
+    pack_unit_label: str = Form(""),
     image: UploadFile = File(None),
     db: Session = Depends(get_db),
 ):
@@ -1971,14 +1973,22 @@ async def parts_add(
     threshold = int(low_stock_threshold) if low_stock_threshold.strip() else None
     if type == "unique":
         quantity_on_hand = max(quantity_on_hand, 1)
+    pack_size = max(1, int(pack_size or 1))
+    pack_unit = (pack_unit_label or "").strip()[:32]
 
     if barcode:
+        # Mirror the cap on /parts/edit and /labels/print so a stuck scanner
+        # or hand-typed monstrosity can't seed a row that later blows up the
+        # SVG encoder when the labels sheet renders.
+        if len(barcode) > 128 or any(ord(c) < 0x20 for c in barcode):
+            return redirect("/parts", "Barcode is too long or contains control characters.", ok=False)
         if db.query(Part).filter(Part.barcode == barcode).first():
             return redirect("/parts", "That barcode already exists.", ok=False)
         part = Part(
             name=name.strip(), barcode=barcode, type=type, unit_cost=unit_cost, unit_price=unit_price,
             quantity_on_hand=quantity_on_hand, category_id=cat_id, low_stock_threshold=threshold,
             icon=icon.strip(), description=description.strip(),
+            pack_size=pack_size, pack_unit_label=pack_unit,
         )
         db.add(part)
         db.flush()
@@ -1988,6 +1998,7 @@ async def parts_add(
             name=name.strip(), barcode="tmp-" + uuid.uuid4().hex, type=type, unit_cost=unit_cost,
             unit_price=unit_price, quantity_on_hand=quantity_on_hand, category_id=cat_id,
             low_stock_threshold=threshold, icon=icon.strip(), description=description.strip(),
+            pack_size=pack_size, pack_unit_label=pack_unit,
         )
         db.add(part)
         db.flush()
@@ -2023,6 +2034,9 @@ async def parts_edit(
     category_id: str = Form(""),
     low_stock_threshold: str = Form(""),
     active: str = Form(""),
+    barcode: str = Form(""),
+    pack_size: int = Form(1),
+    pack_unit_label: str = Form(""),
     image: UploadFile = File(None),
     remove_image: str = Form(""),
     db: Session = Depends(get_db),
@@ -2037,6 +2051,28 @@ async def parts_edit(
         part.category_id = int(category_id) if category_id else None
         part.low_stock_threshold = int(low_stock_threshold) if low_stock_threshold.strip() else None
         part.active = active == "on"
+        part.pack_size = max(1, int(pack_size or 1))
+        part.pack_unit_label = (pack_unit_label or "").strip()[:32]
+        # Editing the barcode lets you re-tag an item with a fresh value
+        # (e.g. when migrating from a manufacturer code to a system label).
+        # Reject blanks and duplicates so the unique index never trips.
+        new_bc = (barcode or "").strip()
+        # Server-side mirror of the client maxlength + a control-char guard so
+        # an over-the-wire POST can't sneak a giant or NUL-laced barcode into
+        # the encoder (which would otherwise happily render an enormous SVG).
+        if new_bc and (len(new_bc) > 128 or any(ord(c) < 0x20 for c in new_bc)):
+            return redirect("/parts", "Barcode is too long or contains control characters.", ok=False)
+        if new_bc and new_bc != part.barcode:
+            clash = db.query(Part).filter(Part.barcode == new_bc, Part.id != part.id).first()
+            if clash:
+                return redirect("/parts", f"Can't change barcode: {new_bc} is already used by {clash.name}.", ok=False)
+            old_bc = part.barcode
+            part.barcode = new_bc
+            # If the user types in a value, it's no longer a system-generated
+            # one — drop the flag so /labels sheets don't surprise-include it.
+            part.barcode_generated = False
+            audit.record(db, current_user(request), "part.rebarcode", "part", part.id,
+                         f"Barcode {old_bc} → {new_bc}")
         if remove_image == "on":
             part.image = ""
         img_path = await _save_item_image(image, part.id)
@@ -2284,9 +2320,14 @@ def _label_ctx(request, db, parts, sheet):
     module_height = max(8.0, min(ph * 0.42, 60.0)) if ph else 14.0
 
     def _render(p):
+        # Defensive clamp: legacy rows that pre-date the 128-char input cap
+        # could still hold an enormous value; render_svg / render_qr_svg
+        # both scale output by input length, so an unbounded code makes the
+        # labels sheet pay that cost for every viewer.
+        code = (p.barcode or "")[:256]
         if btype == "qr":
-            return labels.render_qr_svg(p.barcode)
-        return labels.render_svg(p.barcode, show_text=show_code, module_height=module_height)
+            return labels.render_qr_svg(code)
+        return labels.render_svg(code, show_text=show_code, module_height=module_height)
 
     rendered = [(p, _render(p)) for p in parts]
     content = {
@@ -2375,13 +2416,60 @@ def parts_delete(part_id: int, request: Request, db: Session = Depends(get_db)):
 
 @app.get("/labels", response_class=HTMLResponse)
 def labels_sheet(request: Request, db: Session = Depends(get_db)):
-    parts = (
-        db.query(Part)
-        .filter(Part.barcode_generated == True, Part.active == True)  # noqa: E712
-        .order_by(Part.name)
-        .all()
+    # ?all=1 includes items whose barcode was scanned in (manufacturer code)
+    # so a re-tag run can print fresh labels for those too. Default stays
+    # the auto-generated set — that's what most users print routinely.
+    include_all = request.query_params.get("all") == "1"
+    q = db.query(Part).filter(Part.active == True, Part.archived == False)  # noqa: E712
+    if not include_all:
+        q = q.filter(Part.barcode_generated == True)  # noqa: E712
+    parts = q.order_by(Part.name).all()
+    return templates.TemplateResponse(
+        "label.html",
+        ctx(request, db, base_path="/labels", include_all=include_all,
+            **_label_ctx(request, db, parts, True)),
     )
-    return templates.TemplateResponse("label.html", ctx(request, db, base_path="/labels", **_label_ctx(request, db, parts, True)))
+
+
+class _AdhocLabel:
+    """Duck-typed Part for /labels/print: enough attrs for label.html to
+    render without a database row. Used to print a sticker for any value
+    you can type or scan — covers re-tagging items whose code lives on
+    the side of the shelf, not in the catalog."""
+
+    def __init__(self, barcode, name=""):
+        self.barcode = barcode
+        self.name = (name or "").strip() or barcode
+        self.description = ""
+        self.icon = ""
+        self.image = ""
+        self.category = None
+        self.unit_price = 0
+
+
+@app.get("/labels/print", response_class=HTMLResponse)
+def labels_print_adhoc(request: Request, db: Session = Depends(get_db)):
+    """Print a label for an arbitrary barcode value, no Part required.
+    Accepts ?value=<barcode>&name=<optional caption>. Useful for re-tagging
+    items whose original label has worn off, or for pre-printing a sticker
+    for inventory that hasn't been entered yet."""
+    raw = (request.query_params.get("value") or "").strip()
+    name = (request.query_params.get("name") or "").strip()
+    # Reject control characters / over-length values so a malformed query
+    # can't blow up the encoder or render a million-pixel SVG.
+    if not raw or len(raw) > 128 or any(ord(c) < 0x20 for c in raw):
+        return templates.TemplateResponse(
+            "label.html",
+            ctx(request, db, base_path="/labels/print", adhoc_invalid=True,
+                **_label_ctx(request, db, [], False)),
+        )
+    parts = [_AdhocLabel(raw, name)]
+    return templates.TemplateResponse(
+        "label.html",
+        ctx(request, db, base_path=f"/labels/print?value={raw}",
+            adhoc_value=raw, adhoc_name=name,
+            **_label_ctx(request, db, parts, False)),
+    )
 
 
 # ============================================================ categories

@@ -95,6 +95,8 @@ CI assertions too** — that's how every CI failure since v1.17 has played out.
 | A bulk action on selected items | Add a `/parts/bulk/<thing>` POST (manage_items, since it's under `/parts`), a modal in `parts.html` whose `.bulk-ids` div + `.bulk-next` input the `openBulk()` JS fills from the ticked `.bulk-check` rows, and a button in the `.bulk-bar`. Route back via `_bulk_return(form)` so the operator lands on the same `?cat=` view. v1.24.0. |
 | A new role-scoped thing on `/users` | The page is one nested view (v1.24.0): each role is a `<details class="role-group">` listing its users (grouped in `users_page` via `role_users` / `no_role_users`) with the permission editor in a nested `<details class="role-perms">`. The shared user row is the `user_row()` macro — reuse it. One "Users & roles" sidebar entry now, no `#roles` anchor. |
 | A new place that lists items / parts the operator can pick | If the source is `/api/search`, the suggestion row already dims + strikes through zero-stock items via the `.oos` class. Match it elsewhere: check `qty <= 0` and apply class `oos` + a `<span class="tag oos-tag">Out of stock</span>` badge. Do NOT auto-archive items at zero stock — archive is a deliberate admin action. v1.21. |
+| A new place that displays item on-hand counts | If `pack_size > 1`, show the derived `qty // pack_size` packs + remainder hint under the count (see parts.html "On hand" cell). Stock + billing stay per-unit — the pack-size is a display convenience, not a separate currency. v1.25. |
+| A new path that prints labels for arbitrary user input | Reuse `/labels/print?value=…&name=…` (ad-hoc, no Part required). Sanitize the value with the same length + control-char guard already in `labels_print_adhoc` before handing to `labels.render_svg` — the Code128 encoder will happily emit a 50k-pixel SVG for a 200-char string. v1.25. |
 | A new test against the items table in CI | Hit `/parts?cat=all`, not `/parts` — v1.18 turned the root URL into a category browser (cards, not item rows). The flat table only lives under `?cat=all`. The stock-modal regression test learned this the hard way in PR #6. |
 
 ## Conventions
@@ -294,6 +296,16 @@ scripts/quickstart.sh  one-line bootstrap (clone + install.sh) for curl-pipe / g
 - The `Part.archived == False` filter inside `/api/search`. Without
   it, archived CUSTOM-… walk-in items keep showing up in the
   cart-bar autocomplete after their order has closed. v1.20.1.
+- The control-char + length guard in `labels_print_adhoc`
+  (`/labels/print`). Letting a 200-char or NUL-laced value reach
+  `labels.render_svg` produces an enormous SVG or a crashed
+  encoder. Re-validating before encode is part of the route, not the
+  encoder. v1.25.
+- The barcode-rebrand path on `/parts/<id>/edit` clears
+  `barcode_generated=False` whenever a value is supplied. The
+  `/labels` sheet trusts that flag to decide what to bulk-print by
+  default — leaving it True after a rebrand silently includes the
+  manually-typed code in every bulk run. v1.25.
 
 ## Where to push back
 

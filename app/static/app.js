@@ -244,6 +244,12 @@ document.addEventListener("click", (e) => {
   document.getElementById("ep-threshold").value = d.threshold || "";
   document.getElementById("ep-category").value = d.category || "";
   document.getElementById("ep-active").checked = d.active === "1";
+  const bcEl = document.getElementById("ep-barcode");
+  if (bcEl) bcEl.value = d.barcode || "";
+  const psEl = document.getElementById("ep-pack-size");
+  if (psEl) psEl.value = d.packSize || "1";
+  const puEl = document.getElementById("ep-pack-unit");
+  if (puEl) puEl.value = d.packUnit || "";
   document.getElementById("ep-meta").textContent =
     "Barcode " + (d.barcode || "") + " · " + (d.type || "") + " · qty changes via Restock";
   setIconField(document.getElementById("edit-part"), d.icon || "");

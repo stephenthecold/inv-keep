@@ -6,13 +6,37 @@ the **browser/OS print dialog**, sized exactly to your label stock with CSS
 and **Brother** thermal printers — without printer-specific drivers in the app.
 
 ## How it works
-- **Items → 🏷️ Print labels** (a sheet of every auto-generated barcode), or the
-  🏷️ icon on a single item.
+- **Items → 🏷️ Print labels** (a sheet of every auto-generated barcode) — flip the
+  **Include manufacturer barcodes** toggle to also print labels for items that
+  were tagged with a scanned-in manufacturer code (handy for a full re-tag run).
+- The 🏷️ icon on any item row prints a single label, regardless of whether the
+  barcode was auto-generated or scanned-in. Use this to retag an item whose
+  sticker has worn off.
+- **Ad-hoc label for any value**: on the Labels page expand *Print an ad-hoc
+  label for any barcode* — type or scan a value (and an optional caption), pick a
+  size, **Print**. No item is created; useful for pre-printing a sticker for
+  inventory that hasn't been entered, or for replacing a worn label on something
+  not (yet) in the catalog. Values over 128 chars or with control characters are
+  rejected.
 - On the label page, pick a **Label size** preset. It sets the page dimensions and
   scales the barcode to fit. Then **Print** and choose your thermal printer.
 - Set a **default** size under **Settings → Printing**.
 - In the print dialog: select the thermal printer, set paper size to match, and
   **turn off** headers/footers and any “fit to page”/scaling.
+
+## Settings → Printing live preview
+The Printing tab shows a live preview of how each label will look with your
+current size + content toggles. The preview paints as soon as the tab opens (the
+v1.25 fix wires it to `DOMContentLoaded` so it doesn't need a click to render)
+and updates immediately as you tick / untick *Icon*, *Name*, *Price*, etc.
+
+## Pack-size items (10-packs of cables, boxes of jacks, …)
+Items can be configured with a **pack size** > 1 — i.e. one SKU represents a
+sealed package of N consumable units. Stock and billing run **per unit**, so a
+10-pack of cables sells one cable at a time at the configured unit price. The
+items table shows the derived "X packs + remainder of Y" hint under the on-hand
+count whenever pack size > 1. Set this on the **Add item** form (Pack size +
+Unit label) or via the **Edit item** dialog.
 
 ## Size presets (six label brands)
 The label-size dropdown is grouped by brand. Pick the one that matches your media.

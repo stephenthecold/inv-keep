@@ -53,6 +53,14 @@ class Part(Base):
     unit_cost = Column(Numeric(10, 2), nullable=False, default=0)   # what the item costs us
     unit_price = Column(Numeric(10, 2), nullable=False, default=0)  # what we charge the client
     quantity_on_hand = Column(Integer, nullable=False, default=0)
+    # Pack / package handling: the SKU's barcode names a sealed pack containing
+    # `pack_size` consumable units, but stock + billing run in single units.
+    # pack_size=1 (the default) is a plain item — every code path stays the same.
+    # pack_size>1 means the item arrives as a pack and is consumed per unit
+    # (e.g. a 10-pack of patch cables — bill one cable, not the whole bag).
+    # The UI shows "X units (Y packs)" derived from quantity_on_hand // pack_size.
+    pack_size = Column(Integer, nullable=False, default=1)
+    pack_unit_label = Column(String, default="")  # singular display name, e.g. "cable"
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     # Per-part override; None falls back to the global default threshold.
     low_stock_threshold = Column(Integer, nullable=True)

@@ -42,6 +42,8 @@ _ADDED_COLUMNS = {
         "icon": "TEXT DEFAULT ''",
         "image": "TEXT DEFAULT ''",
         "archived": "BOOLEAN DEFAULT 0",
+        "pack_size": "INTEGER DEFAULT 1",
+        "pack_unit_label": "TEXT DEFAULT ''",
     },
     "categories": {
         "description": "TEXT DEFAULT ''",

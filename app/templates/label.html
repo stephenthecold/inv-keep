@@ -36,8 +36,13 @@
 {% endif %}
 
 <div class="no-print">
-  <h1>{% if sheet %}Labels{% else %}Label{% endif %}</h1>
-  <form method="get" action="{{ base_path }}" class="filter">
+  <h1>{% if adhoc_value is defined %}Ad-hoc label{% elif sheet %}Labels{% else %}Label{% endif %}</h1>
+  <form method="get" action="{{ base_path.split('?')[0] }}" class="filter">
+    {% if adhoc_value is defined %}
+    <input type="hidden" name="value" value="{{ adhoc_value }}">
+    {% if adhoc_name %}<input type="hidden" name="name" value="{{ adhoc_name }}">{% endif %}
+    {% endif %}
+    {% if include_all is defined and include_all %}<input type="hidden" name="all" value="1">{% endif %}
     <label>Label size
       <select name="size" onchange="this.form.submit()">
         {% for brand, items in size_groups %}
@@ -51,7 +56,30 @@
     </label>
     <button onclick="window.print(); return false;">🖨️ Print</button>
     <a class="btn ghost" href="/parts">Back to items</a>
+    {% if sheet and adhoc_value is not defined %}
+    <a class="btn ghost" href="/labels{% if not include_all %}?all=1{% endif %}{% if size_key %}{% if not include_all %}&{% else %}?{% endif %}size={{ size_key }}{% endif %}">
+      {% if include_all %}Auto-generated only{% else %}Include manufacturer barcodes{% endif %}
+    </a>
+    {% endif %}
   </form>
+
+  {% if adhoc_invalid is defined and adhoc_invalid %}
+  <p class="flash bad">That barcode value isn't printable — leave the control characters out and keep it under 128 chars.</p>
+  {% endif %}
+
+  {% if adhoc_value is not defined %}
+  <details class="filter" style="margin-top:.5rem">
+    <summary>Print an ad-hoc label for any barcode (re-tag / one-off)</summary>
+    <form method="get" action="/labels/print" class="filter" style="margin-top:.5rem">
+      <label>Barcode value <input name="value" required maxlength="128" placeholder="scan or type"></label>
+      <label>Caption <input name="name" maxlength="64" placeholder="optional"></label>
+      {% if size_key %}<input type="hidden" name="size" value="{{ size_key }}">{% endif %}
+      <button type="submit">Preview</button>
+    </form>
+    <small class="muted">No item created — use this when retagging an existing item or pre-printing a sticker.</small>
+  </details>
+  {% endif %}
+
   <p class="muted">
     Showing <b>{{ size_label }}</b> · {{ 'QR code' if barcode_type == 'qr' else 'Code128 barcode' }}.
     The content scales to fill the label. In the print dialog pick your thermal printer, match the
