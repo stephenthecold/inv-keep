@@ -508,6 +508,136 @@ jobs:
           assert c.post('/mobile/auth/token', json={'pin': '9876'}).status_code == 200
           print('mobile API end-to-end OK')
           "
+      - name: Mobile API extended (lookup/search/jobs/locations/custom-lines/receipts)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_mobile2.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import io, re
+          from fastapi.testclient import TestClient
+          from app.main import app
+          from app.database import SessionLocal
+          from app.models import KioskPin, Location, Client, Part, Job, Order, Transaction
+          c = TestClient(app)
+          r = c.get('/'); tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', r.text).group(1)
+          # Seed two clients, three parts, a second location, two techs (different default locations).
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'Cable A', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2.50', 'quantity_on_hand': '10'})
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'Cable B', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '3.00', 'quantity_on_hand': '5'})
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'Widget X', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '4.00', 'quantity_on_hand': '20'})
+          c.post('/clients/add', data={'_csrf': tok, 'name': 'Acme Corp'})
+          c.post('/clients/add', data={'_csrf': tok, 'name': 'Beta Industries'})
+          c.post('/locations/add', data={'_csrf': tok, 'name': 'Van 3'})
+          db = SessionLocal()
+          loc_main = db.query(Location).filter(Location.name == 'Main').first().id
+          loc_van = db.query(Location).filter(Location.name == 'Van 3').first().id
+          acme_id = db.query(Client).filter(Client.name == 'Acme Corp').first().id
+          beta_id = db.query(Client).filter(Client.name == 'Beta Industries').first().id
+          ca = db.query(Part).filter(Part.name == 'Cable A').first(); ca_id, ca_bc = ca.id, ca.barcode
+          cb_id = db.query(Part).filter(Part.name == 'Cable B').first().id
+          db.add(KioskPin(label='Tech 1', pin='1234', kiosk_username='alice', location_id=loc_main, active=True))
+          db.add(KioskPin(label='Tech 2', pin='5678', kiosk_username='bob', location_id=loc_van, active=True))
+          db.commit(); db.close()
+          tok1 = c.post('/mobile/auth/token', json={'pin': '1234'}).json()['token']
+          tok2 = c.post('/mobile/auth/token', json={'pin': '5678'}).json()['token']
+          h1 = {'Authorization': 'Bearer ' + tok1}
+          h2 = {'Authorization': 'Bearer ' + tok2}
+          # /items/lookup: SKU-only hit
+          j = c.get('/mobile/items/lookup?q=' + ca_bc, headers=h1).json()
+          assert j['exact'] is not None and j['exact']['id'] == ca_id and j['candidates'] == [], j
+          # /items/lookup: ambiguous text -> candidates only
+          j = c.get('/mobile/items/lookup?q=Cable', headers=h1).json()
+          assert j['exact'] is None and sorted([x['name'] for x in j['candidates']]) == ['Cable A', 'Cable B'], j
+          # /items/lookup: single text hit -> exact
+          j = c.get('/mobile/items/lookup?q=Widget', headers=h1).json()
+          assert j['exact'] is not None and j['exact']['name'] == 'Widget X', j
+          # /items/by-barcode falls through to case-insensitive
+          assert c.get('/mobile/items/by-barcode/' + ca_bc.lower(), headers=h1).status_code == 200
+          # /items/search pagination
+          j = c.get('/mobile/items/search?q=cab&limit=1&offset=0', headers=h1).json()
+          assert j['total'] == 2 and j['has_more'] is True and len(j['items']) == 1, j
+          j = c.get('/mobile/items/search?q=cab&limit=10&offset=1', headers=h1).json()
+          assert j['has_more'] is False and len(j['items']) == 1, j
+          # Per-tech stock scoping: tech1 at Main sees 10 of Cable A, tech2 at Van sees 0.
+          assert c.get('/mobile/items/search?q=Cable+A', headers=h1).json()['items'][0]['in_stock_at_location'] == 10
+          assert c.get('/mobile/items/search?q=Cable+A', headers=h2).json()['items'][0]['in_stock_at_location'] == 0
+          # /customers/search
+          j = c.get('/mobile/customers/search?q=acme', headers=h1).json()
+          assert j['total'] == 1 and j['customers'][0]['name'] == 'Acme Corp'
+          j = c.get('/mobile/customers/search?limit=1', headers=h1).json()
+          assert j['total'] == 2 and j['has_more'] is True
+          # /customers/{id}/jobs: empty + create + list
+          assert c.get('/mobile/customers/' + str(acme_id) + '/jobs', headers=h1).json() == {'jobs': []}
+          r = c.post('/mobile/customers/' + str(acme_id) + '/jobs', json={'name': 'May service call', 'note': 'Emergency'}, headers=h1)
+          assert r.status_code == 201, r.text
+          job_id = r.json()['id']; assert r.json()['status'] == 'open'
+          assert c.get('/mobile/customers/' + str(acme_id) + '/jobs', headers=h1).json()['jobs'][0]['id'] == job_id
+          # Unknown customer -> 404 on both list and create. Unauth -> 401.
+          assert c.get('/mobile/customers/99999/jobs', headers=h1).status_code == 404
+          assert c.post('/mobile/customers/99999/jobs', json={'name': 'x'}, headers=h1).status_code == 404
+          assert c.post('/mobile/customers/' + str(acme_id) + '/jobs', json={'name': 'x'}).status_code == 401
+          # /locations: tech1 sees Main as default; tech2 sees Van as default.
+          j = c.get('/mobile/locations', headers=h1).json()
+          d = {l['name']: l['is_default'] for l in j['locations']}
+          assert d == {'Main': True, 'Van 3': False}, d
+          d = {l['name']: l['is_default'] for l in c.get('/mobile/locations', headers=h2).json()['locations']}
+          assert d == {'Main': False, 'Van 3': True}, d
+          # /orders with job_id: matching customer ok
+          payload = {'client_action_id': 'ord-job-ok', 'customer_id': acme_id, 'location_id': loc_main, 'job_id': job_id, 'lines': [{'item_id': ca_id, 'qty': 1}]}
+          r = c.post('/mobile/orders', json=payload, headers=h1)
+          assert r.status_code == 201, r.text
+          db = SessionLocal()
+          assert db.get(Order, r.json()['order_id']).job_id == job_id
+          db.close()
+          # /orders with job_id: mismatched customer -> 422
+          mis = {**payload, 'client_action_id': 'ord-job-bad', 'customer_id': beta_id}
+          r = c.post('/mobile/orders', json=mis, headers=h1)
+          assert r.status_code == 422 and r.json()['detail']['error'] == 'job_mismatch', r.json()
+          # /receipts: tiny valid PNG
+          PNG = bytes.fromhex('89504E470D0A1A0A0000000D49484452000000010000000108060000001F15C4890000000D49444154789C636060606000000005000150A0F8DA0000000049454E44AE426082')
+          r = c.post('/mobile/receipts', files={'image': ('r.png', io.BytesIO(PNG), 'image/png')}, headers=h1)
+          assert r.status_code == 201, r.text
+          receipt_id = r.json()['receipt_id']
+          assert receipt_id.startswith('rcpt_') and r.json()['url'].startswith('/uploads/receipts/')
+          # /receipts: non-image rejected
+          assert c.post('/mobile/receipts', files={'image': ('x.gif', io.BytesIO(b'GIF89a'), 'image/gif')}, headers=h1).status_code == 415
+          # /receipts: >5MB rejected
+          big = b'\\x00' * (5 * 1024 * 1024 + 1024)
+          assert c.post('/mobile/receipts', files={'image': ('big.png', io.BytesIO(big), 'image/png')}, headers=h1).status_code == 413
+          # /orders with custom line: round-trip name + price + receipt_id
+          payload = {'client_action_id': 'ord-custom-1', 'customer_id': acme_id, 'location_id': loc_main,
+                     'lines': [{'item_id': ca_id, 'qty': 1},
+                               {'type': 'custom', 'name': 'USB-C cable - Home Depot', 'qty': 2, 'unit_price_cents': 1299, 'receipt_id': receipt_id}]}
+          r = c.post('/mobile/orders', json=payload, headers=h1)
+          assert r.status_code == 201, r.text
+          oid = r.json()['order_id']
+          db = SessionLocal()
+          lines = db.query(Transaction).filter(Transaction.order_id == oid).order_by(Transaction.id).all()
+          assert len(lines) == 2
+          cat_ln, cus_ln = lines
+          assert cat_ln.part.name == 'Cable A'
+          assert cus_ln.part.name == 'USB-C cable - Home Depot' and cus_ln.quantity == 2
+          assert cus_ln.part.archived is True and cus_ln.part.barcode.startswith('CUSTOM-')
+          assert float(cus_ln.unit_price_at_time) == 12.99
+          assert cus_ln.receipt_id == receipt_id
+          db.close()
+          # Custom line missing required fields -> 422
+          bad = {**payload, 'client_action_id': 'oc-bad-1', 'lines': [{'type': 'custom', 'qty': 1, 'unit_price_cents': 100}]}
+          assert c.post('/mobile/orders', json=bad, headers=h1).status_code == 422
+          bad = {**payload, 'client_action_id': 'oc-bad-2', 'lines': [{'type': 'custom', 'name': 'x', 'qty': 1}]}
+          assert c.post('/mobile/orders', json=bad, headers=h1).status_code == 422
+          # Cross-tech receipt rejected (tech1 cannot reference a tech2 receipt)
+          r2 = c.post('/mobile/receipts', files={'image': ('r2.png', io.BytesIO(PNG), 'image/png')}, headers=h2).json()['receipt_id']
+          bad = {**payload, 'client_action_id': 'oc-bad-3',
+                 'lines': [{'type': 'custom', 'name': 'x', 'qty': 1, 'unit_price_cents': 100, 'receipt_id': r2}]}
+          r = c.post('/mobile/orders', json=bad, headers=h1)
+          assert r.status_code == 422 and r.json()['detail']['error'] == 'unknown_receipt', r.json()
+          # CSRF exemption holds for every new route (no token -> 401, not 403/csrf)
+          assert c.post('/mobile/customers/' + str(acme_id) + '/jobs', json={'name': 'x'}).status_code == 401
+          assert c.post('/mobile/receipts', files={'image': ('r.png', io.BytesIO(PNG), 'image/png')}).status_code == 401
+          print('mobile API extended OK')
+          "
       - name: Check JavaScript syntax
         run: node --check app/static/app.js
       - name: Lint shell installer

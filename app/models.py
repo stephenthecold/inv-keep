@@ -249,6 +249,11 @@ class Transaction(Base):
     note = Column(Text, default="")
     voided = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Optional link to a paper-receipt image uploaded via POST /mobile/receipts.
+    # Stored as the opaque receipt_id token (e.g. "rcpt_abc123") rather than a
+    # numeric FK so the device can stamp the line at submit time without
+    # pre-resolving an internal id. Web-UI lines never set this.
+    receipt_id = Column(String, nullable=True, index=True)
     # Optional geolocation captured at charge-out time (audit / proof-of-presence).
     # Null when the browser denies the permission or the request times out.
     lat = Column(Float, nullable=True)
@@ -349,6 +354,29 @@ class MobileSession(Base):
     kiosk_pin_id = Column(Integer, ForeignKey("kiosk_pins.id"), nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     expires_at = Column(DateTime, nullable=False)
+
+    kiosk_pin = relationship("KioskPin")
+
+
+class Receipt(Base):
+    """A paper-receipt image uploaded by a mobile tech, referenced from a
+    custom order line via its opaque ``receipt_id`` token.
+
+    The image lives under ``data/uploads/receipts/<receipt_id>.<ext>`` and
+    is served through the existing ``/uploads`` static mount. ``kiosk_pin_id``
+    pins the receipt to the tech that uploaded it so cross-tech reference
+    in /mobile/orders can be rejected.
+    """
+
+    __tablename__ = "receipts"
+
+    id = Column(Integer, primary_key=True)
+    receipt_id = Column(String, unique=True, nullable=False, index=True)
+    kiosk_pin_id = Column(Integer, ForeignKey("kiosk_pins.id"), nullable=False, index=True)
+    url = Column(String, nullable=False, default="")
+    content_type = Column(String, default="")
+    size_bytes = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
     kiosk_pin = relationship("KioskPin")
 
