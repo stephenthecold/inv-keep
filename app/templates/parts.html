@@ -161,10 +161,15 @@
             <div class="item-name">{{ p.name }}{% if not p.active %} <span class="tag muted">inactive</span>{% endif %}</div>
             {% if p.description %}<div class="muted item-desc">{{ p.description }}</div>{% endif %}
           </td>
-          <td><code>{{ p.barcode }}</code>{% if p.barcode_generated %} <a href="/parts/{{ p.id }}/label" title="Print label">🏷️</a>{% endif %}</td>
+          <td><code>{{ p.barcode }}</code> <a href="/parts/{{ p.id }}/label" title="Print label">🏷️</a></td>
           {% if view == 'all' %}<td>{{ cat_names.get(p.category_id, '') }}</td>{% endif %}
           <td class="num {% if p.quantity_on_hand <= 0 %}low{% endif %}">
             {{ p.quantity_on_hand }}
+            {% if (p.pack_size or 1) > 1 %}
+            {% set packs = p.quantity_on_hand // p.pack_size %}
+            {% set rem = p.quantity_on_hand % p.pack_size %}
+            <div class="muted small">{{ packs }} pack{% if packs != 1 %}s{% endif %}{% if rem %} + {{ rem }}{% endif %} of {{ p.pack_size }}{% if p.pack_unit_label %} {{ p.pack_unit_label }}{% endif %}</div>
+            {% endif %}
             {% if p.quantity_on_hand <= 0 %}<span class="tag oos-tag" title="Out of stock — restock or archive">Out of stock</span>{% endif %}
             {% set chips = part_stock.get(p.id, []) %}
             {% if chips %}
@@ -183,7 +188,8 @@
                 data-description="{{ p.description }}" data-category="{{ p.category_id if p.category_id is not none else '' }}"
                 data-cost="{{ '%.2f'|format(p.unit_cost) }}" data-price="{{ '%.2f'|format(p.unit_price) }}"
                 data-threshold="{{ p.low_stock_threshold if p.low_stock_threshold is not none else '' }}"
-                data-active="{{ '1' if p.active else '0' }}" data-archived="{{ '1' if p.archived else '0' }}" data-barcode="{{ p.barcode }}" data-type="{{ p.type }}">Edit</button>
+                data-active="{{ '1' if p.active else '0' }}" data-archived="{{ '1' if p.archived else '0' }}" data-barcode="{{ p.barcode }}" data-type="{{ p.type }}"
+                data-pack-size="{{ p.pack_size or 1 }}" data-pack-unit="{{ p.pack_unit_label or '' }}">Edit</button>
               <button type="button" class="manage-stock"
                 data-id="{{ p.id }}" data-name="{{ p.name }}"
                 data-total="{{ p.quantity_on_hand }}"
@@ -225,6 +231,8 @@
     </label>
     <label>Qty on hand <input name="quantity_on_hand" type="number" value="0"></label>
     <label>Low-stock at <input name="low_stock_threshold" type="number" placeholder="default"></label>
+    <label>Pack size <input name="pack_size" type="number" min="1" value="1" title="Units per sealed pack. 1 = plain item."></label>
+    <label>Unit label <input name="pack_unit_label" maxlength="32" placeholder="e.g. cable, outlet"></label>
     <menu class="modal-actions">
       <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
       <button type="submit">Add item</button>
@@ -254,6 +262,9 @@
       {% if can('see_cost') %}<label>Our cost <input name="unit_cost" id="ep-cost" type="number" step="0.01"></label>{% else %}<input type="hidden" name="unit_cost" id="ep-cost" value="0">{% endif %}
       <label>Client price <input name="unit_price" id="ep-price" type="number" step="0.01"></label>
       <label>Low-stock at <input name="low_stock_threshold" id="ep-threshold" type="number" placeholder="default"></label>
+      <label>Barcode <input name="barcode" id="ep-barcode" maxlength="128" autocapitalize="off" autocomplete="off" spellcheck="false"></label>
+      <label>Pack size <input name="pack_size" id="ep-pack-size" type="number" min="1" value="1" title="Units per sealed pack. 1 = plain item."></label>
+      <label>Unit label <input name="pack_unit_label" id="ep-pack-unit" maxlength="32" placeholder="e.g. cable, outlet"></label>
       <label class="check">Active <input type="checkbox" name="active" id="ep-active"></label>
     </div>
     <menu class="modal-actions">

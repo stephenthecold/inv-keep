@@ -140,7 +140,13 @@
     <div id="label-preview" class="label-preview"></div>
   </div>
   <script>
-  (function(){
+  // The preview needs `iconHTML` from /static/app.js, which loads at the
+  // end of <body> — i.e. AFTER this inline script's <script> tag is parsed.
+  // Wait for DOMContentLoaded so app.js has actually executed before the
+  // first render(), otherwise the initial paint silently throws on
+  // undefined iconHTML and the box renders blank until the user changes a
+  // form field. That was the "preview only works once you touch it" bug.
+  document.addEventListener('DOMContentLoaded', function(){
     var f = document.getElementById('label-content-form');
     var box = document.getElementById('label-preview');
     var sizeSel = document.getElementById('lp-size');
@@ -194,7 +200,7 @@
     if(sizeSel) sizeSel.addEventListener('change', function(){ applySize(); render(); });
     if(codeSel) codeSel.addEventListener('change', render);
     applySize(); render();
-  })();
+  });
   </script>
 </section>
 

@@ -110,12 +110,16 @@ scripts/make_icons.py  regenerate PWA icons (needs Pillow; results committed)
 - **Part** = an *Item* (UI label "Items"; route paths stay `/parts`; table `parts`).
   Fields: name, description, icon (emoji or `svg:<key>`), image (uploaded photo
   path), barcode (auto-generated `PCO000001` if blank → printable label, or
-  `CUSTOM-<hex>` for ad-hoc cart additions), type bulk|unique, **unit_cost** +
-  **unit_price**, **quantity_on_hand** (aggregate across all locations — see
-  StockLevel for per-location), category, low_stock_threshold/alerted,
-  barcode_generated, active, **archived** (hidden from /parts by default;
-  "Show archived" toggle. Archive is reversible, delete is permanent and
-  refused on items with any history).
+  `CUSTOM-<hex>` for ad-hoc cart additions; editable on /parts/<id>/edit so
+  an item can be re-stickered — uniqueness enforced, sets barcode_generated=
+  False), type bulk|unique, **unit_cost** + **unit_price**,
+  **quantity_on_hand** (aggregate across all locations — see StockLevel for
+  per-location), category, low_stock_threshold/alerted, barcode_generated,
+  active, **archived** (hidden from /parts by default; "Show archived" toggle.
+  Archive is reversible, delete is permanent and refused on items with any
+  history), **pack_size** (units per sealed pack; default 1 keeps the legacy
+  one-unit-one-SKU shape), **pack_unit_label** (singular display name for
+  one unit, e.g. "cable").
 - **Location** — a place stock is kept. Name, notes, `active`, `archived` (refused
   while stock > 0). Seeded with "Main" on first boot.
 - **StockLevel** — per-(part, location) qty row (unique on the pair). Cart scans,
@@ -315,6 +319,18 @@ returns no spaces after colons — grep with that in mind. **Never commit** `.en
 - **Item lifecycle** (v1.21). `POST /parts/<id>/archive` `/restore`
   `/delete`. Delete refuses when the part has any `Transaction` or
   `TransferLine` rows and tells the user to archive instead.
+- **Pack-size items** (v1.25). Part gained `pack_size` (default 1) +
+  `pack_unit_label`. Stock and billing stay per-unit so consuming one
+  cable from a 10-pack bills one cable's price; the items table shows
+  the derived `qty // pack_size` packs + remainder hint under the
+  on-hand count when pack_size > 1.
+- **Re-tag labels** (v1.25). `/parts/<id>/edit` accepts a new
+  `barcode` field (unique enforced; sets `barcode_generated=False`).
+  `/labels/print?value=<bc>&name=<caption>` renders an ad-hoc single
+  label for any string — no Part required — with a control-char +
+  length guard so the encoder can't be poked into producing a giant
+  SVG. The `/labels` sheet got an `?all=1` toggle that includes
+  items whose code was scanned in off a manufacturer barcode.
 
 ## Known limitations / good next tasks
 - **Email OAuth** (MS/Google) implemented but only the **SMTP** path was live-tested.
