@@ -3,6 +3,27 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.26.0] — 2026-06-05
+- **Mobile companion API for rugged Android scanners.** New `/mobile/*`
+  REST surface — bearer-token auth, JSON in/out, CSRF-exempt — for the
+  Android app field techs will run on MUNBYN / iData PDAs. Five routes:
+  `POST /mobile/auth/token` (exchange a kiosk PIN *or* an NFC badge UID
+  for a 12-hour opaque token, persisted to a new `mobile_sessions`
+  table so an admin can revoke a stolen device); `GET
+  /mobile/items/by-barcode/{code}` (scan lookup with the tech's
+  default-location stock count + cents-typed price); `POST
+  /mobile/orders` (submit a whole charge-out in one shot, idempotent
+  on a device-supplied `client_action_id` so a retry over flaky cell
+  signal doesn't double-bill); `GET /mobile/orders/recent` (cursor-
+  paginated "my recent submissions" feed); `GET
+  /mobile/customers/by-card/{uid}` (tap-an-NFC-card customer pick).
+  Reuses the existing `KioskPin` row as the tech identity — a tech's
+  configured default location, audit username, and active flag all
+  flow into the mobile session, so revoking a PIN revokes the
+  matching mobile app. Additive columns: `customers.card_uid`,
+  `kiosk_pins.badge_uid`, `orders.client_action_id`. No web-UI route
+  changes — the namespace is self-contained.
+
 ## [1.25.0] — 2026-06-05
 - **Re-tag any item, not just the auto-generated ones.** The 🏷️ print
   link now shows on every row in `/parts`, including items whose

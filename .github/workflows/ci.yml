@@ -425,6 +425,89 @@ jobs:
           assert r.status_code == 303 and 'differ' in unquote(r.headers['location']).lower()
           print('bulk item actions OK')
           "
+      - name: Mobile API end-to-end (feature smoke)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_mobile.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import re
+          from fastapi.testclient import TestClient
+          from app.main import app
+          from app.database import SessionLocal
+          from app.models import KioskPin, Location, Client, Part
+          c = TestClient(app)
+          # Seed via the web UI: one client, one part, then a KioskPin via the DB.
+          r = c.get('/'); tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', r.text).group(1)
+          c.post('/clients/add', data={'_csrf': tok, 'name': 'Acme Corp'})
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'Cable A', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2.50', 'quantity_on_hand': '10'})
+          db = SessionLocal()
+          loc_id = db.query(Location).first().id
+          client_id = db.query(Client).first().id
+          part = db.query(Part).first(); part_id = part.id; barcode = part.barcode
+          # Set a card_uid on Acme for endpoint 5
+          db.query(Client).filter(Client.id == client_id).update({'card_uid': 'CARD-04A1B2'})
+          # Create a tech (KioskPin) with PIN + badge
+          db.add(KioskPin(label='Field tech', pin='9876', kiosk_username='stephen', location_id=loc_id, active=True, badge_uid='04A1B2C3D4E580'))
+          db.commit(); pin_id = db.query(KioskPin).order_by(KioskPin.id.desc()).first().id; db.close()
+          # 1. Auth by PIN
+          r = c.post('/mobile/auth/token', json={'pin': '9876'})
+          assert r.status_code == 200, (r.status_code, r.text)
+          j = r.json()
+          assert j['tech']['id'] == pin_id and j['tech']['default_location_id'] == loc_id
+          token = j['token']
+          # Auth by badge
+          assert c.post('/mobile/auth/token', json={'badge_uid': '04A1B2C3D4E580'}).status_code == 200
+          # Wrong PIN
+          assert c.post('/mobile/auth/token', json={'pin': '0000'}).status_code == 401
+          # No credentials
+          assert c.post('/mobile/auth/token', json={}).status_code == 401
+          bh = {'Authorization': 'Bearer ' + token}
+          # No-auth call rejected
+          assert c.get('/mobile/items/by-barcode/' + barcode).status_code == 401
+          # 2. Item by barcode
+          r = c.get('/mobile/items/by-barcode/' + barcode, headers=bh)
+          assert r.status_code == 200, r.text
+          ij = r.json()
+          assert ij['id'] == part_id and ij['sku'] == barcode and ij['in_stock_at_location'] == 10 and ij['default_price_cents'] == 250
+          assert c.get('/mobile/items/by-barcode/NOPE', headers=bh).status_code == 404
+          # 3. Submit order
+          payload = {
+              'client_action_id': 'abc-1234-uuid',
+              'customer_id': client_id, 'location_id': loc_id,
+              'captured_at': '2026-06-05T15:42:11Z',
+              'geo_lat': 40.5187, 'geo_lon': -74.4121,
+              'lines': [{'item_id': part_id, 'qty': 2}],
+              'note': 'CI mobile test',
+          }
+          r = c.post('/mobile/orders', json=payload, headers=bh)
+          assert r.status_code == 201, (r.status_code, r.text)
+          oj = r.json()
+          assert oj['order_number'].startswith('ORD-') and oj['idempotent_replay'] is False
+          order_id = oj['order_id']
+          # Idempotent replay
+          r = c.post('/mobile/orders', json=payload, headers=bh)
+          assert r.status_code == 200 and r.json()['order_id'] == order_id and r.json()['idempotent_replay'] is True
+          # Insufficient stock -> 409
+          r = c.post('/mobile/orders', json={**payload, 'client_action_id': 'oth-uuid', 'lines': [{'item_id': part_id, 'qty': 9999}]}, headers=bh)
+          assert r.status_code == 409 and r.json()['detail']['error'] == 'insufficient_stock'
+          # Unknown customer -> 404
+          r = c.post('/mobile/orders', json={**payload, 'client_action_id': 'oth-uuid-2', 'customer_id': 99999}, headers=bh)
+          assert r.status_code == 404 and r.json()['detail']['error'] == 'customer_not_found'
+          # 4. Recent orders
+          r = c.get('/mobile/orders/recent', headers=bh)
+          assert r.status_code == 200
+          rj = r.json()
+          assert rj['orders'][0]['order_id'] == order_id and rj['orders'][0]['line_count'] == 1 and rj['orders'][0]['total_cents'] == 500
+          # 5. Customer by card
+          r = c.get('/mobile/customers/by-card/CARD-04A1B2', headers=bh)
+          assert r.status_code == 200 and r.json()['id'] == client_id
+          assert c.get('/mobile/customers/by-card/UNKNOWN', headers=bh).status_code == 404
+          # Mobile routes are CSRF-exempt — POST without _csrf or X-CSRF-Token works
+          assert c.post('/mobile/auth/token', json={'pin': '9876'}).status_code == 200
+          print('mobile API end-to-end OK')
+          "
       - name: Check JavaScript syntax
         run: node --check app/static/app.js
       - name: Lint shell installer

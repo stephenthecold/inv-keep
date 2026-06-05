@@ -24,7 +24,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import audit, auth, csrf, emailer, icons, labels, orders, rbac, reports
+from . import audit, auth, csrf, emailer, icons, labels, mobile as mobile_api, orders, rbac, reports
 from . import settings_store as store
 from .config import settings
 
@@ -216,6 +216,11 @@ self.addEventListener('fetch', (e) => {
 PUBLIC_PATHS = {"/welcome", "/login", "/auth/callback", "/logout", "/health", "/manifest.webmanifest",
                 "/sw.js", "/.well-known/assetlinks.json", "/kiosk/login"}
 
+# Path prefixes that bypass the cookie/session auth middleware entirely.
+# Used by the mobile API, which carries its own ``Authorization: Bearer``
+# token validated inside the router via ``mobile.get_current_tech``.
+PUBLIC_PREFIXES = ("/mobile/",)
+
 # In-memory PIN-attempt throttle keyed by client IP. Single-process app, so a
 # dict is fine; matches the rest of the codebase (no Redis dependency).
 # Maps ip -> (failure_count, locked_until_epoch).
@@ -278,7 +283,9 @@ _MAX_REQUEST_BODY = 8 * 1024 * 1024  # 8 MB hard cap — generous wrt logo (2MB)
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    if path.startswith("/static") or path in PUBLIC_PATHS:
+    if (path.startswith("/static")
+            or path in PUBLIC_PATHS
+            or any(path.startswith(p) for p in PUBLIC_PREFIXES)):
         return await call_next(request)
     # Reject oversized bodies before Starlette buffers them (memory + disk DoS).
     # Content-Length is client-controlled, so this is a coarse first-pass guard;
@@ -394,6 +401,7 @@ async def security_headers(request: Request, call_next):
 # route handler). add_middleware adds to the FRONT of the stack, so the LAST
 # add_middleware call ends up outermost: register CSRF first, Session second.
 app.add_middleware(csrf.CSRFMiddleware)
+app.include_router(mobile_api.router)
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.session_secret,
