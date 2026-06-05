@@ -1221,6 +1221,47 @@ def api_cart_walkin(payload: CartWalkinIn, request: Request, db: Session = Depen
     return {"ok": True, "cart": _cart_payload(db, cart), "fresh_cart": fresh_cart}
 
 
+class CartJobIn(BaseModel):
+    name: str
+    reference: str = ""
+
+
+@app.post("/api/cart/job/new")
+def api_cart_job_new(payload: CartJobIn, request: Request, db: Session = Depends(get_db)):
+    """Create a Job for the open cart's current client and attach it, so the
+    operator can spin up a job mid-checkout without leaving the scan page.
+    Requires a real (non walk-in) client already set on the cart."""
+    user = current_user(request)
+    name = (payload.name or "").strip()
+    if not name:
+        return {"ok": False, "error": "name_required"}
+    if len(name) > 200:
+        return {"ok": False, "error": "name_too_long"}
+    cart = orders.open_cart_for(db, user.get("username", ""))
+    if cart is None or not cart.customer_id:
+        return {"ok": False, "error": "no_client"}
+    client = db.get(Client, cart.customer_id)
+    if not client:
+        return {"ok": False, "error": "no_client"}
+    reference = (payload.reference or "").strip()[:200]
+    job = Job(client_id=client.id, name=name, reference=reference)
+    db.add(job)
+    db.flush()
+    cart.job_id = job.id
+    # Backfill onto any open lines so reporting points at the new job.
+    db.query(Transaction).filter(
+        Transaction.order_id == cart.id,
+        Transaction.voided == False,  # noqa: E712
+    ).update({"job_id": job.id})
+    audit.record(db, user, "job.create", "job", job.id, f"Created {job.name} (mid-cart)")
+    db.commit()
+    return {
+        "ok": True,
+        "cart": _cart_payload(db, cart),
+        "job": {"id": job.id, "name": job.name, "reference": job.reference, "client_id": client.id},
+    }
+
+
 @app.post("/api/cart/line/{line_id}")
 def api_cart_line_update(line_id: int, payload: CartLineIn, request: Request, db: Session = Depends(get_db)):
     user = current_user(request)

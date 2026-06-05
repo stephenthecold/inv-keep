@@ -104,8 +104,8 @@ input, select, button {
 }
 #scan {
   width: 100%;
-  font-size: 1.4rem;
-  padding: 1rem;
+  font-size: 1.15rem;
+  padding: .6rem .9rem;
   border: 2px solid var(--accent);
 }
 .scan-bar { display: flex; gap: 1rem; align-items: flex-end; }
@@ -210,6 +210,12 @@ details.card.inactive summary { opacity: .55; }
 .grid-form select option { color: #000; }
 .lines select { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: .3rem; }
 .lines select option { color: #000; }
+
+/* Larger, easier-to-tap dropdowns inside modals (per-item stock add/move/set,
+   bulk actions). The default .grid-form select rendered as a small target;
+   bump the padding, min height (~44px touch target) and min width so the
+   stock pop-up's location/from/to pickers are comfortable to hit. */
+dialog.modal select { padding: .65rem .7rem; min-height: 2.75rem; min-width: 11rem; font-size: 1rem; }
 
 /* page header with top-right add button */
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
@@ -497,7 +503,7 @@ body.nav-open .nav-toggle .hamburger-bar:nth-child(3) { transform: translateY(-7
   main { padding: 1rem .8rem 4rem; }
   .page-head { flex-wrap: wrap; }
   .scan-bar { flex-direction: column; align-items: stretch; }
-  #scan { font-size: 1.5rem; padding: 1.1rem; }
+  #scan { font-size: 1.25rem; padding: .7rem .9rem; }
   .charge-actions button { flex: 1; }
   .grid-form label, .grid-form .subgroup { flex: 1 1 100%; }
   dialog.modal { width: 96%; padding: 1rem; }
