@@ -69,6 +69,7 @@ _ADDED_COLUMNS = {
         "geo_accuracy_m": "REAL",
         "order_id": "INTEGER",
         "location_id": "INTEGER",
+        "receipt_id": "TEXT",
     },
     "orders": {
         "location_id": "INTEGER",

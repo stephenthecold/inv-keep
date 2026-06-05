@@ -3,6 +3,48 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.26.2] — 2026-06-05
+- **Mobile API surface, round two — match the kiosk's scan-pick-charge
+  flow on a phone.** v1.26.0 covered auth + barcode scan + order submit;
+  the field-tech UX needed the rest of the in-store flow. New routes:
+  - `GET /mobile/items/lookup?q=…` — fuzzy scan-or-type lookup that
+    returns `{exact, candidates}`. SKU/barcode exact match wins; falls
+    through to case-insensitive, name-prefix, then contains. A single
+    hit is promoted to `exact` so the Android UI can drop straight
+    into the cart instead of re-prompting.
+  - `GET /mobile/items/search?q=&limit=&offset=` — paginated catalog
+    browse with name / SKU / category-name match.
+  - `GET /mobile/customers/search?q=&limit=&offset=` — paginated
+    customer browse, archived (walk-in) clients excluded.
+  - `GET /mobile/customers/{id}/jobs` and `POST
+    /mobile/customers/{id}/jobs` — list chargeable jobs under a
+    client, plus the "start a job in the field" create.
+  - `GET /mobile/locations` — every active location with the tech's
+    `default_location_id` flagged so the device pre-selects the right
+    source.
+  - `POST /mobile/receipts` (multipart) — upload a paper-receipt
+    image for a store-bought item. JPEG / PNG only (matches the
+    favicon allowlist that excludes SVG to avoid stored XSS via
+    `/uploads/`), 5 MB cap. Returns `{receipt_id, url}` for the
+    custom-line reference. Scoped per-tech.
+  - `POST /mobile/orders` (updated, backwards-compatible) — now
+    accepts an optional top-level `job_id` (422 if it doesn't belong
+    to the order's `customer_id`) and a `type: "custom"` line shape
+    `{name, qty, unit_price_cents, receipt_id?}` for store-bought
+    items. Custom lines reuse the web-UI's archived-Part pattern
+    (`CUSTOM-…` barcode, `archived=True`) so they still flow through
+    reports, audit, and voids exactly like a catalog line.
+- **`/mobile/items/by-barcode/{code}` falls through to case-insensitive
+  match** before 404'ing, matching the lookup endpoint's strictness
+  order. Existing exact-match callers are unaffected.
+- **Additive schema:** new `Receipt` table (opaque `receipt_id`, owning
+  `kiosk_pin_id`, on-disk URL); new `Transaction.receipt_id` column
+  (nullable, indexed) so a custom line can link back to the receipt
+  image. Web-UI orders never set this — no impact on existing rows.
+- **Stays inside the mobile bubble:** all new routes go through the
+  same bearer-auth `get_current_tech` dependency, the CSRF exemption
+  for `/mobile/*` already covers them, and the web UI is untouched.
+
 ## [1.26.0] — 2026-06-05
 - **Mobile companion API for rugged Android scanners.** New `/mobile/*`
   REST surface — bearer-token auth, JSON in/out, CSRF-exempt — for the

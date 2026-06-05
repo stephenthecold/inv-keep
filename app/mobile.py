@@ -16,13 +16,15 @@ Routes live OUTSIDE the cookie auth middleware and outside CSRF — see the
 
 import hmac
 import math
+import os
 import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import desc
+from sqlalchemy import desc, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -30,7 +32,8 @@ from . import audit
 from . import orders as orders_mod
 from .database import get_db
 from .models import (
-    Client, KioskPin, Location, MobileSession, Order, Part, Transaction,
+    Category, Client, Job, KioskPin, Location, MobileSession, Order, Part,
+    Receipt, Transaction,
 )
 
 
@@ -39,6 +42,12 @@ router = APIRouter(prefix="/mobile", tags=["mobile"])
 
 TOKEN_LIFETIME = timedelta(hours=12)
 
+# Receipts live under the existing /uploads mount so the web UI back-office
+# (cookie-authed) can view them when reviewing a custom-line order.
+RECEIPTS_DIR = os.path.join("data", "uploads", "receipts")
+os.makedirs(RECEIPTS_DIR, exist_ok=True)
+_RECEIPT_EXT = {"image/jpeg": ".jpg", "image/png": ".png"}
+_MAX_RECEIPT_BYTES = 5 * 1024 * 1024  # 5 MB per the mobile spec
 
 # ---- helpers ---------------------------------------------------------------
 
@@ -175,7 +184,7 @@ def auth_token(payload: AuthTokenIn, db: Session = Depends(get_db)):
     )
 
 
-# ---- 2. GET /mobile/items/by-barcode/{code} --------------------------------
+# ---- 2. items: by-barcode / lookup / search --------------------------------
 
 class ItemOut(BaseModel):
     id: int
@@ -186,45 +195,369 @@ class ItemOut(BaseModel):
     default_price_cents: int
 
 
+def _item_dto(db: Session, tech: KioskPin, part: Part) -> ItemOut:
+    """Render a Part as the wire shape. ``in_stock_at_location`` is the
+    quantity at the tech's default location (or the part's aggregate
+    quantity_on_hand when the tech has no default location pinned)."""
+    loc_id = tech.location_id
+    if loc_id:
+        qty = orders_mod.stock_at(db, part.id, loc_id)
+    else:
+        qty = int(part.quantity_on_hand or 0)
+    return ItemOut(
+        id=part.id,
+        sku=part.barcode,
+        name=part.name,
+        category=(part.category.name if part.category else ""),
+        in_stock_at_location=qty,
+        default_price_cents=int(round(float(part.unit_price or 0) * 100)),
+    )
+
+
 @router.get("/items/by-barcode/{code}", response_model=ItemOut)
 def item_by_barcode(
     code: str,
     tech: KioskPin = Depends(get_current_tech),
     db: Session = Depends(get_db),
 ):
-    part = (db.query(Part)
-            .filter(Part.barcode == code, Part.active == True)  # noqa: E712
-            .first())
+    """Strict barcode-scan lookup. inv-keep stores the SKU as ``Part.barcode``
+    (no separate sku column), so the spec's "fall through sku as a fallback"
+    is the same column — we try exact, then case-insensitive exact, then
+    404. The /items/lookup endpoint is the right place for fuzzy matching."""
+    base = db.query(Part).filter(Part.active == True,  # noqa: E712
+                                  Part.archived == False)  # noqa: E712
+    part = base.filter(Part.barcode == code).first()
+    if part is None:
+        part = base.filter(func.lower(Part.barcode) == code.lower()).first()
     if part is None:
         raise HTTPException(status_code=404, detail="item_not_found")
-    loc_id = tech.location_id
-    if loc_id:
-        qty = orders_mod.stock_at(db, part.id, loc_id)
-    else:
-        qty = int(part.quantity_on_hand or 0)
-    cat_name = part.category.name if part.category else ""
-    price_cents = int(round(float(part.unit_price or 0) * 100))
-    return ItemOut(
-        id=part.id,
-        sku=part.barcode,
-        name=part.name,
-        category=cat_name,
-        in_stock_at_location=qty,
-        default_price_cents=price_cents,
+    return _item_dto(db, tech, part)
+
+
+class ItemsLookupOut(BaseModel):
+    exact: Optional[ItemOut] = None
+    candidates: List[ItemOut] = []
+
+
+@router.get("/items/lookup", response_model=ItemsLookupOut)
+def items_lookup(
+    q: str = "",
+    tech: KioskPin = Depends(get_current_tech),
+    db: Session = Depends(get_db),
+):
+    """Fuzzy lookup used by the scan path when the camera/HID read isn't
+    a guaranteed catalog hit. Tries (in order): exact SKU/barcode match
+    (case-sensitive, then case-insensitive), then a name prefix match,
+    then a contains match. A single hit is returned as ``exact``;
+    multiple → ``candidates``."""
+    qv = (q or "").strip()
+    if not qv:
+        return ItemsLookupOut(exact=None, candidates=[])
+
+    base = db.query(Part).filter(Part.active == True,  # noqa: E712
+                                  Part.archived == False)  # noqa: E712
+
+    # 1. Exact SKU/barcode (case-sensitive, then -insensitive).
+    exact = base.filter(Part.barcode == qv).first()
+    if exact is None:
+        exact = base.filter(func.lower(Part.barcode) == qv.lower()).first()
+    if exact is not None:
+        return ItemsLookupOut(exact=_item_dto(db, tech, exact), candidates=[])
+
+    # 2. Prefix match on name / barcode.
+    pfx = f"{qv}%"
+    rows = (base.filter(or_(Part.name.ilike(pfx), Part.barcode.ilike(pfx)))
+            .order_by(Part.name).limit(10).all())
+
+    # 3. Fall through to contains if prefix found nothing.
+    if not rows:
+        cnt = f"%{qv}%"
+        rows = (base.filter(or_(Part.name.ilike(cnt), Part.barcode.ilike(cnt)))
+                .order_by(Part.name).limit(10).all())
+
+    if len(rows) == 1:
+        return ItemsLookupOut(exact=_item_dto(db, tech, rows[0]), candidates=[])
+    return ItemsLookupOut(
+        exact=None,
+        candidates=[_item_dto(db, tech, r) for r in rows],
     )
 
 
-# ---- 3. POST /mobile/orders ------------------------------------------------
+class ItemsSearchOut(BaseModel):
+    items: List[ItemOut]
+    total: int
+    has_more: bool
+
+
+@router.get("/items/search", response_model=ItemsSearchOut)
+def items_search(
+    q: str = "",
+    limit: int = 20,
+    offset: int = 0,
+    tech: KioskPin = Depends(get_current_tech),
+    db: Session = Depends(get_db),
+):
+    """Paginated catalog browse. Searches name, SKU/barcode, and category
+    name (case-insensitive contains). ``total`` is the unfiltered match
+    count so the client can page without re-querying."""
+    qv = (q or "").strip()
+    limit = max(1, min(100, int(limit or 20)))
+    offset = max(0, int(offset or 0))
+
+    base = (db.query(Part)
+            .outerjoin(Category, Part.category_id == Category.id)
+            .filter(Part.active == True,  # noqa: E712
+                    Part.archived == False))  # noqa: E712
+    if qv:
+        like = f"%{qv}%"
+        base = base.filter(or_(Part.name.ilike(like),
+                               Part.barcode.ilike(like),
+                               Category.name.ilike(like)))
+
+    total = base.with_entities(func.count(func.distinct(Part.id))).scalar() or 0
+    rows = base.order_by(Part.name).offset(offset).limit(limit).all()
+    return ItemsSearchOut(
+        items=[_item_dto(db, tech, p) for p in rows],
+        total=int(total),
+        has_more=(offset + len(rows)) < int(total),
+    )
+
+
+# ---- 3. customers: search / jobs / by-card ---------------------------------
+
+class CustomerOut(BaseModel):
+    id: int
+    name: str
+    default_location_id: Optional[int] = None
+
+
+def _customer_dto(c: Client) -> CustomerOut:
+    return CustomerOut(id=c.id, name=c.name, default_location_id=None)
+
+
+class CustomersSearchOut(BaseModel):
+    customers: List[CustomerOut]
+    total: int
+    has_more: bool
+
+
+@router.get("/customers/search", response_model=CustomersSearchOut)
+def customers_search(
+    q: str = "",
+    limit: int = 20,
+    offset: int = 0,
+    tech: KioskPin = Depends(get_current_tech),
+    db: Session = Depends(get_db),
+):
+    """Paginated customer browse. Searches name + account reference
+    (case-insensitive contains). Archived (walk-in) clients are
+    excluded so they don't pollute the recurring-customer roster."""
+    qv = (q or "").strip()
+    limit = max(1, min(100, int(limit or 20)))
+    offset = max(0, int(offset or 0))
+
+    base = db.query(Client).filter(Client.active == True,  # noqa: E712
+                                    Client.archived == False)  # noqa: E712
+    if qv:
+        like = f"%{qv}%"
+        base = base.filter(or_(Client.name.ilike(like),
+                               Client.reference.ilike(like)))
+
+    total = base.count()
+    rows = base.order_by(Client.name).offset(offset).limit(limit).all()
+    return CustomersSearchOut(
+        customers=[_customer_dto(c) for c in rows],
+        total=int(total),
+        has_more=(offset + len(rows)) < int(total),
+    )
+
+
+class JobOut(BaseModel):
+    id: int
+    name: str
+    status: str
+    created_at: str
+
+
+def _job_dto(j: Job) -> JobOut:
+    return JobOut(
+        id=j.id,
+        name=j.name,
+        status="open" if j.active else "inactive",
+        created_at=_iso_utc(j.created_at) or "",
+    )
+
+
+class JobsListOut(BaseModel):
+    jobs: List[JobOut]
+
+
+@router.get("/customers/{customer_id}/jobs", response_model=JobsListOut)
+def customer_jobs(
+    customer_id: int,
+    tech: KioskPin = Depends(get_current_tech),
+    db: Session = Depends(get_db),
+):
+    """Jobs under a customer that a mobile cart can charge to. inv-keep
+    has no "archived" flag on Job — we filter by ``active == True``
+    (the closest mirror of the spec's "chargeable" rule)."""
+    client = db.get(Client, customer_id)
+    if client is None or client.archived:
+        raise HTTPException(status_code=404, detail="customer_not_found")
+    rows = (db.query(Job)
+            .filter(Job.client_id == customer_id,
+                    Job.active == True)  # noqa: E712
+            .order_by(Job.name).all())
+    return JobsListOut(jobs=[_job_dto(j) for j in rows])
+
+
+class JobCreateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    note: Optional[str] = None
+
+
+@router.post("/customers/{customer_id}/jobs", status_code=201, response_model=JobOut)
+def create_customer_job(
+    customer_id: int,
+    payload: JobCreateIn,
+    tech: KioskPin = Depends(get_current_tech),
+    db: Session = Depends(get_db),
+):
+    """Field-tech "start a new job on the fly" — creates an active Job
+    under the named customer. Notes column stays compatible with the
+    web UI's /jobs/add path."""
+    client = db.get(Client, customer_id)
+    if client is None or client.archived:
+        raise HTTPException(status_code=404, detail="customer_not_found")
+    job = Job(
+        client_id=customer_id,
+        name=payload.name.strip(),
+        notes=(payload.note or "").strip(),
+        active=True,
+    )
+    db.add(job)
+    db.flush()
+    audit.record(db, {"username": _tech_username(tech)}, "job.create", "job", job.id,
+                 f"Mobile job: {job.name} (client #{customer_id})")
+    db.commit()
+    return _job_dto(job)
+
+
+@router.get("/customers/by-card/{uid}", response_model=CustomerOut)
+def customer_by_card(
+    uid: str,
+    tech: KioskPin = Depends(get_current_tech),
+    db: Session = Depends(get_db),
+):
+    if not uid:
+        raise HTTPException(status_code=404, detail="card_not_found")
+    client = (db.query(Client)
+              .filter(Client.card_uid == uid,
+                      Client.active == True)  # noqa: E712
+              .first())
+    if client is None:
+        raise HTTPException(status_code=404, detail="card_not_found")
+    # Client doesn't carry a per-row default location today; the device
+    # falls back to the tech's default_location_id from /mobile/auth/token.
+    return _customer_dto(client)
+
+
+# ---- 4. GET /mobile/locations ----------------------------------------------
+
+class LocationOut(BaseModel):
+    id: int
+    name: str
+    is_default: bool
+
+
+class LocationsListOut(BaseModel):
+    locations: List[LocationOut]
+
+
+@router.get("/locations", response_model=LocationsListOut)
+def list_locations(
+    tech: KioskPin = Depends(get_current_tech),
+    db: Session = Depends(get_db),
+):
+    """Locations the tech can charge from. inv-keep doesn't carry
+    per-tech location permissions (the web UI shows every active
+    location to every signed-in user), so we return every active,
+    non-archived location and flag the tech's default."""
+    rows = (db.query(Location)
+            .filter(Location.active == True,  # noqa: E712
+                    Location.archived == False)  # noqa: E712
+            .order_by(Location.name).all())
+    default_id = tech.location_id
+    return LocationsListOut(locations=[
+        LocationOut(id=l.id, name=l.name,
+                    is_default=(default_id is not None and l.id == default_id))
+        for l in rows
+    ])
+
+
+# ---- 5. POST /mobile/receipts ----------------------------------------------
+
+class ReceiptOut(BaseModel):
+    receipt_id: str
+    url: str
+
+
+@router.post("/receipts", status_code=201, response_model=ReceiptOut)
+async def upload_receipt(
+    image: UploadFile = File(...),
+    tech: KioskPin = Depends(get_current_tech),
+    db: Session = Depends(get_db),
+):
+    """Upload an image of a paper receipt for a custom store-bought
+    purchase. The returned ``receipt_id`` is referenced from a custom
+    order line on POST /mobile/orders. JPEG / PNG only (no SVG — stored
+    XSS via /uploads/), 5 MB cap.
+    """
+    ctype = (image.content_type or "").lower()
+    ext = _RECEIPT_EXT.get(ctype)
+    if not ext:
+        raise HTTPException(status_code=415, detail="unsupported_image_type")
+    # Read a hair over the limit so we can tell "exactly 5MB" from "5MB+1".
+    data = await image.read(_MAX_RECEIPT_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=422, detail="empty_image")
+    if len(data) > _MAX_RECEIPT_BYTES:
+        raise HTTPException(status_code=413, detail="image_too_large")
+    receipt_id = "rcpt_" + secrets.token_hex(8)
+    fname = f"{receipt_id}{ext}"
+    with open(os.path.join(RECEIPTS_DIR, fname), "wb") as fh:
+        fh.write(data)
+    url = f"/uploads/receipts/{fname}"
+    db.add(Receipt(receipt_id=receipt_id, kiosk_pin_id=tech.id, url=url,
+                   content_type=ctype, size_bytes=len(data)))
+    audit.record(db, {"username": _tech_username(tech)}, "receipt.upload",
+                 "receipt", None, f"{receipt_id} ({len(data)} bytes)")
+    db.commit()
+    return ReceiptOut(receipt_id=receipt_id, url=url)
+
+
+# ---- 6. POST /mobile/orders (catalog + custom lines + job_id) --------------
 
 class OrderLineIn(BaseModel):
-    item_id: int
+    # ``type`` defaults to "catalog" for backwards compat with v1.26.0
+    # clients that only ever sent ``{item_id, qty}``.
+    type: Optional[str] = None
+    # Catalog line — references an existing Part.
+    item_id: Optional[int] = None
     qty: int = Field(gt=0)
+    # Custom line — store-bought item billed through to the client.
+    # ``name`` + ``unit_price_cents`` are required for type="custom".
+    name: Optional[str] = None
+    unit_price_cents: Optional[int] = None
+    receipt_id: Optional[str] = None
 
 
 class OrderIn(BaseModel):
     client_action_id: str = Field(min_length=1, max_length=120)
     customer_id: int
     location_id: int
+    # Optional: when supplied, must belong to the order's customer_id.
+    job_id: Optional[int] = None
     captured_at: Optional[str] = None
     geo_lat: Optional[float] = None
     geo_lon: Optional[float] = None
@@ -247,6 +580,39 @@ def _serialize_order(order: Order, replay: bool) -> OrderOut:
         created_at=_iso_utc(when) or "",
         idempotent_replay=replay,
     )
+
+
+def _validate_line_shape(idx: int, ln: OrderLineIn) -> str:
+    """Return the validated line type ("catalog" / "custom") or raise 422."""
+    line_type = (ln.type or "catalog").lower()
+    if line_type == "catalog":
+        if not ln.item_id:
+            raise HTTPException(status_code=422, detail=[{
+                "loc": ["body", "lines", idx, "item_id"],
+                "msg": "required for catalog lines",
+            }])
+        return "catalog"
+    if line_type == "custom":
+        if not (ln.name or "").strip():
+            raise HTTPException(status_code=422, detail=[{
+                "loc": ["body", "lines", idx, "name"],
+                "msg": "required for custom lines",
+            }])
+        if ln.unit_price_cents is None:
+            raise HTTPException(status_code=422, detail=[{
+                "loc": ["body", "lines", idx, "unit_price_cents"],
+                "msg": "required for custom lines",
+            }])
+        if int(ln.unit_price_cents) < 0:
+            raise HTTPException(status_code=422, detail=[{
+                "loc": ["body", "lines", idx, "unit_price_cents"],
+                "msg": "must be >= 0",
+            }])
+        return "custom"
+    raise HTTPException(status_code=422, detail=[{
+        "loc": ["body", "lines", idx, "type"],
+        "msg": "must be 'catalog' or 'custom'",
+    }])
 
 
 @router.post("/orders", status_code=201, response_model=OrderOut)
@@ -284,16 +650,47 @@ def create_order(
                             detail={"error": "location_not_found",
                                     "location_id": payload.location_id})
 
-    # Validate items up-front (404 on unknown is clearer than blowing up
-    # mid-loop), then re-check stock atomically below.
-    parts_by_id = {}
-    for ln in payload.lines:
-        part = db.get(Part, ln.item_id)
-        if part is None or not part.active:
-            raise HTTPException(status_code=404,
-                                detail={"error": "item_not_found",
-                                        "item_id": ln.item_id})
-        parts_by_id[ln.item_id] = part
+    # Job (optional) must belong to the same customer + still be active.
+    job: Optional[Job] = None
+    if payload.job_id:
+        job = db.get(Job, payload.job_id)
+        if job is None or not job.active or job.client_id != client.id:
+            raise HTTPException(status_code=422, detail={
+                "error": "job_mismatch",
+                "job_id": payload.job_id,
+                "customer_id": client.id,
+            })
+
+    # Pre-validate every line so we don't half-commit on a bad payload.
+    line_types: List[str] = []
+    catalog_parts: dict = {}
+    receipt_ids: set = set()
+    for idx, ln in enumerate(payload.lines):
+        kind = _validate_line_shape(idx, ln)
+        line_types.append(kind)
+        if kind == "catalog":
+            part = db.get(Part, ln.item_id)
+            if part is None or not part.active:
+                raise HTTPException(status_code=404,
+                                    detail={"error": "item_not_found",
+                                            "item_id": ln.item_id})
+            catalog_parts[ln.item_id] = part
+        elif kind == "custom" and ln.receipt_id:
+            receipt_ids.add(ln.receipt_id)
+
+    # Receipts must belong to this tech — same scope rule as the rest of
+    # the mobile surface.
+    if receipt_ids:
+        owned = {r.receipt_id for r in
+                 db.query(Receipt)
+                 .filter(Receipt.receipt_id.in_(receipt_ids),
+                         Receipt.kiosk_pin_id == tech.id).all()}
+        missing = receipt_ids - owned
+        if missing:
+            raise HTTPException(status_code=422, detail={
+                "error": "unknown_receipt",
+                "receipt_ids": sorted(missing),
+            })
 
     # Geo sanitisation — same NaN/Infinity guard as /api/cart/scan.
     lat, lng = payload.geo_lat, payload.geo_lon
@@ -315,6 +712,7 @@ def create_order(
         created_by=tech_user,
         submitted_by=tech_user,
         customer_id=client.id,
+        job_id=job.id if job else None,
         location_id=location.id,
         client_action_id=cid,
         submitted_at=datetime.utcnow(),
@@ -325,33 +723,66 @@ def create_order(
     db.flush()
 
     note = (payload.note or "").strip()[:500]
-    total_cents = 0
-    for ln in payload.lines:
-        part = parts_by_id[ln.item_id]
+    for idx, ln in enumerate(payload.lines):
+        kind = line_types[idx]
         qty = int(ln.qty)
-        sl = orders_mod.ensure_stock_row(db, part.id, location.id)
-        if sl.quantity < qty:
-            db.rollback()
-            raise HTTPException(status_code=409,
-                                detail={"error": "insufficient_stock",
-                                        "item_id": part.id,
-                                        "available": int(sl.quantity)})
-        sl.quantity -= qty
-        part.quantity_on_hand -= qty
+        if kind == "catalog":
+            part = catalog_parts[ln.item_id]
+            sl = orders_mod.ensure_stock_row(db, part.id, location.id)
+            if sl.quantity < qty:
+                db.rollback()
+                raise HTTPException(status_code=409,
+                                    detail={"error": "insufficient_stock",
+                                            "item_id": part.id,
+                                            "available": int(sl.quantity)})
+            sl.quantity -= qty
+            part.quantity_on_hand -= qty
+            unit_cost = part.unit_cost
+            unit_price = part.unit_price
+            line_receipt = None
+            txn_note = note
+        else:  # custom
+            # Mirror /api/cart/custom: build an archived Part so the line
+            # still flows through reports / audits / voids like every other
+            # transaction. The Part name + price ARE the custom line's
+            # display data — round-tripped via Transaction.part_id.
+            part = Part(
+                name=(ln.name or "").strip()[:200],
+                description="",
+                type="bulk",
+                unit_cost=0,
+                unit_price=round(int(ln.unit_price_cents) / 100, 2),
+                quantity_on_hand=0,
+                archived=True,
+                barcode=f"CUSTOM-{uuid.uuid4().hex[:12].upper()}",
+                barcode_generated=False,
+                active=True,
+            )
+            db.add(part)
+            db.flush()
+            # Stamp a stock_levels row at zero so per-location ledgers stay
+            # consistent (no decrement — we never had this stock).
+            orders_mod.ensure_stock_row(db, part.id, location.id)
+            unit_cost = 0
+            unit_price = part.unit_price
+            line_receipt = ln.receipt_id or None
+            txn_note = (note + " | custom") if note else "custom"
+
         txn = Transaction(
             order_id=order.id,
             part_id=part.id,
             customer_id=client.id,
+            job_id=order.job_id,
             location_id=location.id,
             quantity=qty,
-            unit_cost_at_time=part.unit_cost,
-            unit_price_at_time=part.unit_price,
+            unit_cost_at_time=unit_cost,
+            unit_price_at_time=unit_price,
             scanned_by=tech_user,
-            note=note,
+            note=txn_note,
+            receipt_id=line_receipt,
             lat=lat, lng=lng,
         )
         db.add(txn)
-        total_cents += int(round(float(part.unit_price or 0) * 100)) * qty
 
     # Number assignment with retry on UNIQUE collision — same pattern as
     # /api/cart/submit.
@@ -378,7 +809,7 @@ def create_order(
     return _serialize_order(order, False)
 
 
-# ---- 4. GET /mobile/orders/recent ------------------------------------------
+# ---- 7. GET /mobile/orders/recent ------------------------------------------
 
 class RecentOrderOut(BaseModel):
     order_id: int
@@ -439,30 +870,3 @@ def recent_orders(
         anchor = rows[-1].submitted_at or rows[-1].created_at
         next_before = _iso_utc(anchor)
     return RecentOrdersOut(orders=out, next_before=next_before)
-
-
-# ---- 5. GET /mobile/customers/by-card/{uid} --------------------------------
-
-class CustomerOut(BaseModel):
-    id: int
-    name: str
-    default_location_id: Optional[int] = None
-
-
-@router.get("/customers/by-card/{uid}", response_model=CustomerOut)
-def customer_by_card(
-    uid: str,
-    tech: KioskPin = Depends(get_current_tech),
-    db: Session = Depends(get_db),
-):
-    if not uid:
-        raise HTTPException(status_code=404, detail="card_not_found")
-    client = (db.query(Client)
-              .filter(Client.card_uid == uid,
-                      Client.active == True)  # noqa: E712
-              .first())
-    if client is None:
-        raise HTTPException(status_code=404, detail="card_not_found")
-    # Client doesn't carry a per-row default location today; the device
-    # falls back to the tech's default_location_id from /mobile/auth/token.
-    return CustomerOut(id=client.id, name=client.name, default_location_id=None)
