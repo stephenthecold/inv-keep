@@ -90,6 +90,10 @@ class Client(Base):
     location = Column(String, default="")  # site / building / room
     address = Column(Text, default="")
     notes = Column(Text, default="")
+    # Optional NFC card UID for the mobile app's "tap card to pick customer"
+    # flow (field techs identifying a site by its posted card). Not used for
+    # payment. Unique so a UID resolves to exactly one client.
+    card_uid = Column(String, unique=True, nullable=True, index=True)
     active = Column(Boolean, nullable=False, default=True)
     # Hidden from the main /clients list by default. Used for walk-in /
     # one-time-purchase clients created from the cart card without polluting
@@ -207,6 +211,10 @@ class Order(Base):
     submitted_by = Column(String, default="")
     voided_by = Column(String, default="")
     voided_reason = Column(Text, default="")
+    # Idempotency key supplied by the mobile app (UUID generated on the
+    # device). Lets a retry from a flaky cell signal land on the same order
+    # instead of creating a duplicate. Nullable — web-UI orders never set it.
+    client_action_id = Column(String, nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     submitted_at = Column(DateTime, nullable=True)
     voided_at = Column(DateTime, nullable=True)
@@ -315,10 +323,34 @@ class KioskPin(Base):
     pin = Column(String, nullable=False, default="")          # 4–12 digits, stored as-is (matches legacy)
     kiosk_username = Column(String, nullable=False, default="kiosk")
     location_id = Column(Integer, ForeignKey("locations.id"), nullable=True)
+    # Optional NFC badge UID — lets a tech tap their badge instead of typing
+    # the PIN on /mobile/auth/token. Unique so a UID maps to exactly one PIN.
+    badge_uid = Column(String, unique=True, nullable=True, index=True)
     active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     location = relationship("Location")
+
+
+class MobileSession(Base):
+    """Opaque bearer token issued by /mobile/auth/token to the Android app.
+
+    Each row is a logged-in tech session: ``kiosk_pin_id`` points at the
+    KioskPin row that authenticated, ``token`` is the random string the
+    device sends in ``Authorization: Bearer …``, and ``expires_at`` is the
+    UTC cutoff after which the token is rejected. Stored server-side so an
+    admin can revoke a stolen device by deleting the row.
+    """
+
+    __tablename__ = "mobile_sessions"
+
+    id = Column(Integer, primary_key=True)
+    token = Column(String, unique=True, nullable=False, index=True)
+    kiosk_pin_id = Column(Integer, ForeignKey("kiosk_pins.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+
+    kiosk_pin = relationship("KioskPin")
 
 
 class AuditLog(Base):

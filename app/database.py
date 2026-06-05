@@ -56,6 +56,10 @@ _ADDED_COLUMNS = {
         "address": "TEXT DEFAULT ''",
         "notes": "TEXT DEFAULT ''",
         "archived": "BOOLEAN DEFAULT 0",
+        "card_uid": "TEXT",
+    },
+    "kiosk_pins": {
+        "badge_uid": "TEXT",
     },
     "transactions": {
         "job_id": "INTEGER",
@@ -68,6 +72,7 @@ _ADDED_COLUMNS = {
     },
     "orders": {
         "location_id": "INTEGER",
+        "client_action_id": "TEXT",
     },
     "roles": {
         # v1.22: once True, rbac.seed_roles() leaves the role's perm list

@@ -35,6 +35,11 @@ SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 # - /auth/callback is the OIDC IdP redirecting the browser back here.
 EXEMPT_PATHS = {"/auth/callback"}
 
+# Path PREFIXES exempted from CSRF. The mobile API uses bearer tokens
+# (no session cookie -> no CSRF surface) and is authenticated inside the
+# router via ``mobile.get_current_tech``.
+EXEMPT_PREFIXES = ("/mobile/",)
+
 
 def issue(request) -> str:
     """Return the session's CSRF token, minting one on first use."""
@@ -86,7 +91,9 @@ class CSRFMiddleware:
         method = scope.get("method", "GET").upper()
         path = scope.get("path", "")
 
-        if method in SAFE_METHODS or path in EXEMPT_PATHS:
+        if (method in SAFE_METHODS
+                or path in EXEMPT_PATHS
+                or any(path.startswith(p) for p in EXEMPT_PREFIXES)):
             await self.app(scope, receive, send)
             return
 
