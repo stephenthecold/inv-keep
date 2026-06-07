@@ -37,13 +37,17 @@
   <div class="table-scroll">
   <table class="lines">
     <thead>
-      <tr><th>Part</th><th>Barcode</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Line charge</th></tr>
+      <tr><th>Part</th><th>Barcode</th><th>Charged by</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Line charge</th></tr>
     </thead>
     <tbody>
       {% for line in job.lines %}
       <tr>
         <td>{{ line.part }}</td>
         <td><code>{{ line.barcode }}</code></td>
+        <td class="report-by">
+          {% if line.whos %}{{ line.whos | join(', ') }}{% else %}<span class="muted">—</span>{% endif %}
+          {% if line.techs %}<div class="report-by-tech muted"><span aria-hidden="true">👷</span> {{ line.techs | join(', ') }}</div>{% endif %}
+        </td>
         <td class="num">{{ line.quantity }}</td>
         <td class="num">{{ line.unit_price | money(cfg.currency) }}</td>
         <td class="num">{{ line.charge | money(cfg.currency) }}</td>
@@ -51,7 +55,7 @@
       {% endfor %}
     </tbody>
     <tfoot>
-      <tr><td colspan="4">Job subtotal</td><td class="num">{{ job.charge | money(cfg.currency) }}</td></tr>
+      <tr><td colspan="5">Job subtotal</td><td class="num">{{ job.charge | money(cfg.currency) }}</td></tr>
     </tfoot>
   </table>
   </div>

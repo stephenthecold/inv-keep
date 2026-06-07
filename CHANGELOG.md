@@ -3,6 +3,22 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.40.0] — 2026-06-07
+Mobile graphical fixes + report attribution.
+
+- **The History/map embedded map no longer paints over the mobile nav drawer.**
+  Each Leaflet map is now its own stacking context, so its internal tile + control
+  layers stay contained and the slide-in menu (and header) always sit on top.
+- **History note text stops shattering on phones.** The order-note hint (e.g. a
+  "warranty" badge) kept whole words intact instead of breaking into "war rant
+  y", and the data tables now keep a sensible minimum width inside their
+  horizontal-scroll wrapper so columns don't crush into character-by-character
+  wrapping.
+- **The Charge-Out Report now shows who charged each line out.** A new *Charged
+  by* column lists the user / kiosk station (from `scanned_by`) and the credited
+  technician (👷) for each line, on screen and in the CSV export (a *Charged By*
+  and *Technician* column).
+
 ## [1.39.0] — 2026-06-07
 Cleaner per-item Stock modal.
 
