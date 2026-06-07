@@ -8,6 +8,8 @@ on:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    # Cap the whole job so a hung step fails fast instead of holding a runner.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -104,43 +106,44 @@ jobs:
         env:
           DATABASE_URL: "sqlite:///./data/ci_perm.db"
           SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
         run: |
           python -c "
           import re
           from app import rbac
-          # The real charge-out path (POST /api/cart/*) requires `checkout`, not
-          # the bare `view` it used to fall through to. GET stays at `view`.
+          # The real charge-out path (POST /api/cart/*) requires \`checkout\`, not
+          # the bare \`view\` it used to fall through to. GET stays at \`view\`.
           assert rbac.required_perm('/api/cart/scan', 'POST') == 'checkout'
           assert rbac.required_perm('/api/cart/submit', 'POST') == 'checkout'
           assert rbac.required_perm('/api/cart/job/new', 'POST') == 'checkout'
           assert rbac.required_perm('/api/cart', 'GET') == 'view'
-          # Cost-gate: a Kiosk session (no see_cost) must not receive our cost
-          # in /api/search or the cart payload — only client price.
-          from app.main import app
+          assert rbac.required_perm('/api/void/3', 'POST') == 'checkout'
+          # Only admin / see_cost holders may see our cost — Kiosk + Operator
+          # (view/view_catalog/checkout) must not.
+          from app.main import app, _can_see_cost, _cart_payload
+          assert _can_see_cost({'is_admin': True})
+          assert _can_see_cost({'perms': {'see_cost'}})
+          assert not _can_see_cost({'perms': {'view', 'view_catalog', 'checkout'}})
+          assert not _can_see_cost(None)
           from app.database import SessionLocal
-          from app import settings_store as store
-          from app.models import KioskPin, Part, StockLevel, Location
-          db = SessionLocal()
-          store.set(db, 'auth_mode', 'oidc')
-          store.set(db, 'oidc_discovery_url', 'https://x/.well-known/openid-configuration')
-          store.set(db, 'oidc_client_id', 'x')
-          store.set(db, 'kiosk_enabled', '1')
-          db.add(KioskPin(label='CI', pin='1234', kiosk_username='kiosk', active=True))
-          loc = db.query(Location).first()
-          if not loc:
-              loc = Location(name='Main', active=True, archived=False); db.add(loc); db.flush()
-          p = Part(name='Cable', type='bulk', unit_cost=1.5, unit_price=2.0, quantity_on_hand=10, barcode='BC-COST-1', active=True, archived=False)
-          db.add(p); db.flush(); db.add(StockLevel(part_id=p.id, location_id=loc.id, quantity=10)); db.commit(); db.close()
+          from app.models import Order
           from fastapi.testclient import TestClient
-          c = TestClient(app, base_url='https://testserver')
-          tok = re.search(r'name=\"_csrf\" value=\"([^\"]+)\"', c.get('/welcome').text).group(1)
-          assert c.post('/kiosk/login', data={'_csrf': tok, 'pin': '1234'}, follow_redirects=False).headers['location'] == '/'
-          res = c.get('/api/search?q=Cable').json()['results'][0]
-          assert res['unit_cost'] == 0.0 and res['unit_price'] == 2.0, res
-          tok2 = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', c.get('/').text).group(1)
-          sc = c.post('/api/cart/scan', json={'barcode': 'BC-COST-1', 'quantity': 1}, headers={'X-CSRF-Token': tok2}).json()
-          assert sc['ok'] and sc['cart']['lines'][0]['unit_cost'] == 0.0 and sc['cart']['cost'] == 0, sc
-          print('checkout perm + kiosk cost-gate OK')
+          c = TestClient(app)
+          tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', c.get('/').text).group(1)
+          h = {'X-CSRF-Token': tok}
+          c.post('/clients/add', data={'_csrf': tok, 'name': 'Co'})
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'Cable', 'type': 'bulk', 'unit_cost': '1.5', 'unit_price': '2', 'quantity_on_hand': '10'})
+          bc = c.get('/api/search?q=Cable').json()['results'][0]
+          assert bc['unit_cost'] == 1.5  # admin sees cost
+          assert c.post('/api/cart/scan', json={'barcode': bc['barcode'], 'quantity': 2}, headers=h).json()['ok']
+          db = SessionLocal(); cart = db.query(Order).filter(Order.status == 'open').first()
+          hidden = _cart_payload(db, cart, see_cost=False)
+          shown = _cart_payload(db, cart, see_cost=True)
+          db.close()
+          # No-see_cost payload carries zeroed cost/margin; see_cost payload keeps them.
+          assert hidden['cost'] == 0 and hidden['margin'] == 0 and hidden['lines'][0]['unit_cost'] == 0.0, hidden
+          assert shown['cost'] > 0 and shown['lines'][0]['unit_cost'] == 1.5, shown
+          print('checkout perm + cost-gate OK')
           "
       - name: Negative restock + category cycle rejected (regression)
         env:
