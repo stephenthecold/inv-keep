@@ -207,6 +207,7 @@ def build_report_html(db, start, end):
 
     report, totals = reports.build_report_range(db, start, end)
     cur = store.get(db, "currency")
+    _m = reports._c  # ceiling-to-cent, matching the UI/CSV (never under-bill)
     rows = []
     for c in report:
         rows.append(f"<h3>{c['name']}{(' — ' + c['reference']) if c['reference'] else ''}</h3>")
@@ -218,13 +219,13 @@ def build_report_html(db, start, end):
             for line in job["lines"]:
                 rows.append(
                     f"<tr><td>{line['part']}</td><td>{line['quantity']}</td>"
-                    f"<td>{cur}{line['unit_price']:.2f}</td><td>{cur}{line['charge']:.2f}</td></tr>"
+                    f"<td>{cur}{_m(line['unit_price'])}</td><td>{cur}{_m(line['charge'])}</td></tr>"
                 )
-            rows.append(f"<tr><td colspan='3'><b>Job subtotal</b></td><td><b>{cur}{job['charge']:.2f}</b></td></tr>")
+            rows.append(f"<tr><td colspan='3'><b>Job subtotal</b></td><td><b>{cur}{_m(job['charge'])}</b></td></tr>")
             rows.append("</table>")
-        rows.append(f"<p><b>{c['name']} total: {cur}{c['charge']:.2f}</b></p>")
-    rows.append(f"<p style='font-size:1.1em'><b>Grand total (billable): {cur}{totals['charge']:.2f}</b></p>")
-    rows.append(f"<p style='color:#666'>Internal — cost: {cur}{totals['cost']:.2f}, margin: {cur}{totals['margin']:.2f}</p>")
+        rows.append(f"<p><b>{c['name']} total: {cur}{_m(c['charge'])}</b></p>")
+    rows.append(f"<p style='font-size:1.1em'><b>Grand total (billable): {cur}{_m(totals['charge'])}</b></p>")
+    rows.append(f"<p style='color:#666'>Internal — cost: {cur}{_m(totals['cost'])}, margin: {cur}{_m(totals['margin'])}</p>")
     return "".join(rows) if report else "<p>No charge-outs recorded for this period.</p>"
 
 

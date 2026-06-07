@@ -237,6 +237,90 @@ jobs:
           assert c.post('/mobile/auth/token', json={'pin': '9876'}).status_code == 429
           print('mobile PIN throttle OK')
           "
+      - name: Mobile order idempotency + kiosk token revocation (regression)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_idem.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import re, sqlite3
+          from fastapi.testclient import TestClient
+          from app.main import app
+          from app.database import SessionLocal
+          from app.models import KioskPin, Location, Client, Part, MobileSession
+          c = TestClient(app)
+          tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', c.get('/').text).group(1)
+          c.post('/clients/add', data={'_csrf': tok, 'name': 'Acme'})
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'Cable', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2', 'quantity_on_hand': '10'})
+          db = SessionLocal(); loc = db.query(Location).first().id; cl = db.query(Client).first().id; pid = db.query(Part).first().id
+          db.add(KioskPin(label='T', pin='9876', kiosk_username='alice', location_id=loc, active=True)); db.commit()
+          pin_id = db.query(KioskPin).first().id; db.close()
+          # COR-5: the idempotency unique index exists and blocks a duplicate (cid, created_by).
+          con = sqlite3.connect('./data/ci_idem.db')
+          assert 'uq_order_action' in [r[1] for r in con.execute('PRAGMA index_list(orders)')]
+          con.close()
+          tkn = c.post('/mobile/auth/token', json={'pin': '9876'}).json()['token']
+          bh = {'Authorization': 'Bearer ' + tkn}
+          body = {'client_action_id': 'act-1', 'customer_id': cl, 'location_id': loc, 'lines': [{'item_id': pid, 'qty': 1}]}
+          r1 = c.post('/mobile/orders', json=body, headers=bh); assert r1.status_code == 201, r1.text
+          oid = r1.json()['order_id']
+          r2 = c.post('/mobile/orders', json=body, headers=bh)
+          assert r2.status_code == 200 and r2.json()['order_id'] == oid and r2.json()['idempotent_replay'] is True, r2.json()
+          con = sqlite3.connect('./data/ci_idem.db')
+          try:
+              con.execute(\"INSERT INTO orders (created_by, client_action_id, status) VALUES ('alice','act-1','submitted')\"); con.commit()
+              raise SystemExit('duplicate (cid, created_by) insert should have been blocked')
+          except sqlite3.IntegrityError:
+              pass
+          con.close()
+          # COR-7: deleting the kiosk PIN revokes its live mobile tokens.
+          db = SessionLocal(); assert db.query(MobileSession).count() == 1; db.close()
+          assert c.post('/settings/kiosk/' + str(pin_id) + '/delete', data={'_csrf': tok}, follow_redirects=False).status_code == 303
+          db = SessionLocal(); assert db.query(MobileSession).count() == 0; db.close()
+          assert c.get('/mobile/locations', headers=bh).status_code == 401
+          print('mobile idempotency + token revocation OK')
+          "
+      - name: parts_add input validation + emailer rounding (regression)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_inval.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import re, datetime
+          from urllib.parse import unquote
+          from fastapi.testclient import TestClient
+          from app import emailer, reports
+          from app.main import app
+          from app.database import SessionLocal
+          from app.models import Part
+          c = TestClient(app)
+          tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', c.get('/').text).group(1)
+          # COR-8: negative price / quantity rejected, no row created.
+          r = c.post('/parts/add', data={'_csrf': tok, 'name': 'Neg', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '-5', 'quantity_on_hand': '1'}, follow_redirects=False)
+          assert r.status_code == 303 and 'positive' in unquote(r.headers['location']).lower()
+          r = c.post('/parts/add', data={'_csrf': tok, 'name': 'NegQ', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '5', 'quantity_on_hand': '-3'}, follow_redirects=False)
+          assert r.status_code == 303 and 'negative' in unquote(r.headers['location']).lower()
+          db = SessionLocal(); assert db.query(Part).count() == 0; db.close()
+          # COR-6: emailed report uses the ceil-cents helper, consistent with the CSV/UI.
+          c.post('/clients/add', data={'_csrf': tok, 'name': 'Acme'})
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'Widget', 'type': 'bulk', 'unit_cost': '0.75', 'unit_price': '1.50', 'quantity_on_hand': '9'})
+          bc = c.get('/api/search?q=Widget').json()['results'][0]['barcode']
+          h = {'X-CSRF-Token': tok}
+          assert c.post('/api/cart/scan', json={'barcode': bc, 'quantity': 3}, headers=h).json()['ok']
+          assert c.post('/api/cart/set', json={'client_id': 1, 'job_id': None}, headers=h).json()['ok']
+          assert c.post('/api/cart/submit', headers=h).json()['ok']
+          db = SessionLocal()
+          now = datetime.datetime.utcnow(); start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+          end = (start + datetime.timedelta(days=40)).replace(day=1)
+          html = emailer.build_report_html(db, start, end)
+          report, totals = reports.build_report_range(db, start, end)
+          db.close()
+          assert '4.50' in html and '2.25' in html, html
+          assert reports._c(totals['charge']) == '4.50' and reports._c(totals['margin']) == '2.25'
+          print('parts_add validation + emailer rounding OK')
+          "
       - name: NaN geo rejected (security regression test)
         env:
           DATABASE_URL: "sqlite:///./data/ci2.db"
