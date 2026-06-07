@@ -36,8 +36,8 @@
     <tr>
       <td>
         <form id="cat-{{ cid }}" method="post" action="/categories/{{ cid }}/edit"><input type="hidden" name="_csrf" value="{{ csrf_token }}"></form>
-        <span style="display:inline-block;width:{{ depth * 1.4 }}rem"></span>
-        <input form="cat-{{ cid }}" name="name" value="{{ c.name }}" aria-label="Category name">
+        <span class="cat-indent" style="width:{{ depth * 1.5 }}rem" aria-hidden="true"></span>{% if depth %}<span class="cat-branch" aria-hidden="true">└</span>{% endif %}
+        <input form="cat-{{ cid }}" name="name" value="{{ c.name }}" aria-label="Category name"{% if not depth %} class="cat-top"{% endif %}>
       </td>
       <td class="num">{% if n %}<a class="tag" href="/parts?cat={{ cid }}" title="View items in this category">{{ n }}</a>{% else %}<span class="muted">0</span>{% endif %}</td>
       <td><input form="cat-{{ cid }}" name="description" value="{{ c.description }}" placeholder="—" style="width:16rem" aria-label="Category description"></td>
@@ -52,11 +52,13 @@
         </select>
       </td>
       <td>
-        <button form="cat-{{ cid }}" type="submit">Save</button>
-        <form method="post" action="/categories/{{ cid }}/delete" class="inline" onsubmit="return confirm('Delete this category?')">
-          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-          <button class="danger" type="submit">Delete</button>
-        </form>
+        <span class="row-actions">
+          <button form="cat-{{ cid }}" type="submit">Save</button>
+          <form method="post" action="/categories/{{ cid }}/delete" class="inline" onsubmit="return confirm('Delete this category?')">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <button class="danger" type="submit">Delete</button>
+          </form>
+        </span>
       </td>
     </tr>
     {% else %}

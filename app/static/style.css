@@ -155,6 +155,14 @@ tfoot td { font-weight: 700; }
 .grid-form { display: flex; flex-wrap: wrap; gap: .75rem; align-items: flex-end; margin-top: .75rem; }
 .grid-form label { display: flex; flex-direction: column; font-size: .85rem; color: var(--muted); gap: .25rem; }
 .inline { display: inline; }
+/* Inline row action clusters (Save / Delete in a table cell) — give the
+   buttons breathing room instead of butting together. */
+.row-actions { display: inline-flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+/* Category tree (/categories): a corner glyph + indent makes the parent →
+   child nesting obvious at a glance rather than relying on whitespace alone. */
+.cat-indent { display: inline-block; }
+.cat-branch { color: var(--muted); margin-right: .35rem; }
+input.cat-top { font-weight: 600; }
 .filter { display: flex; gap: .75rem; align-items: center; margin: 1rem 0; flex-wrap: wrap; }
 /* File inputs render the native "Choose File" button + filename, which has
    a wide intrinsic size that won't shrink in a flex row — on phones it blew
@@ -422,7 +430,7 @@ dialog.modal h2 { margin-top: 0; }
 .cat-card-meta { grid-column: 1; grid-row: 2; color: var(--muted); font-size: .8rem; margin-top: .2rem; }
 .cat-card-chev { grid-column: 2; grid-row: 1 / span 2; color: var(--muted); font-size: 1.6rem; line-height: 1; align-self: center; padding-left: .35rem; }
 .cat-card-tap:active { transform: scale(.985); }
-.cat-card-admin { display: flex; flex-wrap: wrap; gap: .35rem; padding: .35rem .65rem .65rem; border-top: 1px dashed var(--line); margin-top: -.15rem; }
+.cat-card-admin { display: flex; flex-wrap: wrap; gap: .5rem; padding: .45rem .65rem .65rem; border-top: 1px dashed var(--line); margin-top: -.15rem; }
 .cat-card-admin button, .cat-card-admin .danger { background: transparent; border: 1px solid var(--line); color: var(--text); padding: .25rem .55rem; font-size: .75rem; border-radius: 6px; }
 .cat-card-admin .danger { color: var(--bad); border-color: var(--line); }
 .cat-card-admin .danger:hover { border-color: var(--bad); }

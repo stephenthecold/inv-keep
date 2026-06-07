@@ -3,6 +3,26 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.33.0] — 2026-06-07
+Items "Manage mode" + category readability fixes.
+
+- **Manage mode actions now keep you in the items browser.** Rename / + Sub /
+  Delete on `/parts` (manage mode) worked, but redirected to the separate
+  `/categories` page afterwards — so it looked like nothing happened and you
+  lost your place. They now return to the same manage view (a same-app `next`,
+  open-redirect-guarded; the dedicated `/categories` page still stays put).
+- **Category hierarchy is easier to read.** On `/categories`, nested categories
+  now show a `└` branch marker and deeper indent, and top-level names are bold,
+  so parent → child nesting is obvious at a glance instead of relying on
+  whitespace alone.
+- **Buttons aren't crammed together.** The Save / Delete clusters on the
+  Categories and Kiosk-PINs rows, and the Rename / + Sub / Delete buttons on the
+  manage-mode category cards, now have proper spacing.
+- **Kiosk PINs table fits without side-scrolling.** Trimmed the input/select
+  widths so the row fits its card on a normal screen (the `.table-scroll`
+  wrapper from v1.32.2 stays as the safety net for very narrow viewports), so
+  you don't have to scroll back and forth.
+
 ## [1.32.2] — 2026-06-07
 - **Settings → Kiosk PINs:** the PINs table overflowed its card once the new
   "Inv admin" column widened the row — it now sits in a `.table-scroll`

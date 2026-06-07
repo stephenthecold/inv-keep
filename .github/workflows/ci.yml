@@ -177,6 +177,38 @@ jobs:
           assert c.post('/categories/' + str(b) + '/edit', data={'_csrf': tok, 'name': 'B', 'parent_id': 'abc'}, follow_redirects=False).status_code == 303
           print('negative restock + category cycle guards OK')
           "
+      - name: Category manage actions return to /parts (regression)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_catnext.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import re
+          from fastapi.testclient import TestClient
+          from app.main import app
+          from app.database import SessionLocal
+          from app.models import Category
+          c = TestClient(app)
+          tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', c.get('/').text).group(1)
+          c.post('/categories/add', data={'_csrf': tok, 'name': 'Wiring'})
+          db = SessionLocal(); wid = db.query(Category).filter(Category.name == 'Wiring').first().id; db.close()
+          nxt = '/parts?cat=' + str(wid) + '&manage=1'
+          # The /parts manage view embeds next= in the category admin forms.
+          mv = c.get('/parts?manage=1&cat=' + str(wid)).text
+          assert ('name=\"next\" value=\"/parts?cat=' + str(wid) + '&amp;manage=1\"') in mv, 'manage forms missing next='
+          # add-sub / rename / delete driven from /parts return to that /parts view.
+          r = c.post('/categories/add', data={'_csrf': tok, 'name': 'Ethernet', 'parent_id': str(wid), 'next': nxt}, follow_redirects=False)
+          assert r.headers['location'].startswith(nxt), r.headers['location']
+          db = SessionLocal(); eid = db.query(Category).filter(Category.name == 'Ethernet').first().id; db.close()
+          assert c.post('/categories/' + str(eid) + '/edit', data={'_csrf': tok, 'name': 'Cat6', 'parent_id': str(wid), 'next': nxt}, follow_redirects=False).headers['location'].startswith(nxt)
+          assert c.post('/categories/' + str(eid) + '/delete', data={'_csrf': tok, 'next': nxt}, follow_redirects=False).headers['location'].startswith(nxt)
+          # No next (the dedicated /categories page) still lands on /categories.
+          assert c.post('/categories/add', data={'_csrf': tok, 'name': 'Solo'}, follow_redirects=False).headers['location'].startswith('/categories')
+          # A non-/parts next is ignored (open-redirect guard) -> /categories.
+          assert c.post('/categories/add', data={'_csrf': tok, 'name': 'Evil', 'next': 'https://evil.test/x'}, follow_redirects=False).headers['location'].startswith('/categories')
+          print('category manage return-to-/parts OK')
+          "
       - name: Transactions rebuild keeps location_id + receipt_id (migration regression)
         env:
           # Importing app.database runs a module-level makedirs on the DB path;

@@ -306,17 +306,17 @@
       <td>
         <form id="kp-{{ p.id }}" method="post" action="/settings/kiosk/{{ p.id }}/save" autocomplete="off"></form>
         <input form="kp-{{ p.id }}" type="hidden" name="_csrf" value="{{ csrf_token }}">
-        <input form="kp-{{ p.id }}" name="label" value="{{ p.label }}" maxlength="64" required style="width:11rem">
+        <input form="kp-{{ p.id }}" name="label" value="{{ p.label }}" maxlength="64" required style="width:8.5rem">
       </td>
       <td>
-        <input form="kp-{{ p.id }}" name="pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="new-password" placeholder="•••••• (unchanged)" style="width:10rem">
+        <input form="kp-{{ p.id }}" name="pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="new-password" placeholder="•••• unchanged" style="width:8rem">
         <small class="muted" style="display:block">Blank = keep</small>
       </td>
       <td>
-        <input form="kp-{{ p.id }}" name="kiosk_username" value="{{ p.kiosk_username }}" maxlength="64" style="width:9rem">
+        <input form="kp-{{ p.id }}" name="kiosk_username" value="{{ p.kiosk_username }}" maxlength="64" style="width:7.5rem">
       </td>
       <td>
-        <select form="kp-{{ p.id }}" name="location_id">
+        <select form="kp-{{ p.id }}" name="location_id" style="max-width:11rem">
           <option value="">— first active location —</option>
           {% for l in kiosk_locations %}<option value="{{ l.id }}" {% if p.location_id == l.id %}selected{% endif %}>{{ l.name }}</option>{% endfor %}
         </select>
@@ -327,10 +327,12 @@
       <td style="text-align:center">
         <input form="kp-{{ p.id }}" type="checkbox" name="is_inventory_admin" {% if p.is_inventory_admin %}checked{% endif %} aria-label="Inventory admin">
       </td>
-      <td style="white-space:nowrap">
-        <button form="kp-{{ p.id }}" type="submit">Save</button>
-        <button form="kp-{{ p.id }}" type="submit" formaction="/settings/kiosk/{{ p.id }}/delete" formnovalidate class="danger"
-                onclick="return confirm('Delete this kiosk PIN? Active sessions using it stay alive until they sign out.')">Delete</button>
+      <td>
+        <span class="row-actions">
+          <button form="kp-{{ p.id }}" type="submit">Save</button>
+          <button form="kp-{{ p.id }}" type="submit" formaction="/settings/kiosk/{{ p.id }}/delete" formnovalidate class="danger"
+                  onclick="return confirm('Delete this kiosk PIN? Active sessions using it stay alive until they sign out.')">Delete</button>
+        </span>
       </td>
     </tr>
     {% endfor %}

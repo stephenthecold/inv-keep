@@ -2290,6 +2290,15 @@ def _bulk_return(form):
     return nxt if nxt.startswith("/parts") else "/parts"
 
 
+def _cat_return(next_val):
+    """Category add/edit/delete can be driven from the /parts manage browser
+    OR the dedicated /categories page. Honour a same-app /parts `next` so the
+    operator stays in the manage view they acted from instead of being bounced
+    to /categories; default to /categories otherwise."""
+    nxt = (next_val or "").strip()
+    return nxt if nxt.startswith("/parts") else "/categories"
+
+
 def _form_int(form, key):
     """Parse one form field as an int, or None if missing / non-numeric."""
     try:
@@ -2580,17 +2589,17 @@ def categories_page(request: Request, db: Session = Depends(get_db)):
 
 
 @app.post("/categories/add")
-def categories_add(request: Request, name: str = Form(...), description: str = Form(""), parent_id: str = Form(""), db: Session = Depends(get_db)):
+def categories_add(request: Request, name: str = Form(...), description: str = Form(""), parent_id: str = Form(""), next: str = Form(""), db: Session = Depends(get_db)):
     cat = Category(name=name.strip(), description=description.strip(), parent_id=_safe_int(parent_id))
     db.add(cat)
     db.flush()
     audit.record(db, current_user(request), "category.create", "category", cat.id, f"Created {cat.name}")
     db.commit()
-    return redirect("/categories", "Category added.")
+    return redirect(_cat_return(next), "Category added.")
 
 
 @app.post("/categories/{cat_id}/edit")
-def categories_edit(cat_id: int, request: Request, name: str = Form(...), description: str = Form(""), parent_id: str = Form(""), db: Session = Depends(get_db)):
+def categories_edit(cat_id: int, request: Request, name: str = Form(...), description: str = Form(""), parent_id: str = Form(""), next: str = Form(""), db: Session = Depends(get_db)):
     cat = db.get(Category, cat_id)
     if cat:
         new_parent = _safe_int(parent_id)
@@ -2598,17 +2607,17 @@ def categories_edit(cat_id: int, request: Request, name: str = Form(...), descri
         # descendants — a cycle orphans the subtree from the root browse and
         # can RecursionError the (unguarded) category-count walk.
         if new_parent is not None and _would_cycle(db, cat.id, new_parent):
-            return redirect("/categories", "Can't move a category under itself or its own sub-category.", ok=False)
+            return redirect(_cat_return(next), "Can't move a category under itself or its own sub-category.", ok=False)
         cat.parent_id = new_parent
         cat.name = name.strip()
         cat.description = description.strip()
         audit.record(db, current_user(request), "category.edit", "category", cat.id, f"Edited {cat.name}")
         db.commit()
-    return redirect("/categories", "Category saved.")
+    return redirect(_cat_return(next), "Category saved.")
 
 
 @app.post("/categories/{cat_id}/delete")
-def categories_delete(cat_id: int, request: Request, db: Session = Depends(get_db)):
+def categories_delete(cat_id: int, request: Request, next: str = Form(""), db: Session = Depends(get_db)):
     cat = db.get(Category, cat_id)
     if cat:
         for child in list(cat.children):
@@ -2618,7 +2627,7 @@ def categories_delete(cat_id: int, request: Request, db: Session = Depends(get_d
         audit.record(db, current_user(request), "category.delete", "category", cat.id, f"Deleted {cat.name}")
         db.delete(cat)
         db.commit()
-    return redirect("/categories", "Category deleted.")
+    return redirect(_cat_return(next), "Category deleted.")
 
 
 # ============================================================ clients
