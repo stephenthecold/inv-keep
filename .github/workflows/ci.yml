@@ -1135,6 +1135,84 @@ jobs:
           assert '/mobile/items/' + str(pid) + '/icon' in c.get('/mobile/items/search?q=Cat6', headers=bh).json()['items'][0]['icon_url']
           print('mobile preset icons OK')
           "
+      - name: Technician attribution (admin CRUD + kiosk-required picker)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_tech.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import re
+          from app.main import app
+          from app.database import SessionLocal
+          from app.models import Technician, Order, Client, Part
+          from fastapi.testclient import TestClient
+          c = TestClient(app)
+          tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', c.get('/').text).group(1)
+          # Admin CRUD: add two techs, deactivate one; settings section + nav present.
+          assert c.post('/settings/techs/add', data={'_csrf': tok, 'name': 'Jordan Lee'}, follow_redirects=False).status_code == 303
+          assert c.post('/settings/techs/add', data={'_csrf': tok, 'name': 'Sam Rivera'}, follow_redirects=False).status_code == 303
+          db = SessionLocal(); techs = {t.name: t.id for t in db.query(Technician).all()}; db.close()
+          assert c.post('/settings/techs/' + str(techs['Sam Rivera']) + '/save', data={'_csrf': tok, 'name': 'Sam Rivera', 'active': ''}, follow_redirects=False).status_code == 303
+          db = SessionLocal(); assert db.get(Technician, techs['Sam Rivera']).active is False; db.close()
+          s = c.get('/settings').text
+          assert 'data-tab-pane=\"techs\"' in s and 'data-tab=\"techs\"' in s and 'Jordan Lee' in s
+          # Non-kiosk charge-out: tech optional; attribution persists when supplied + shows on History.
+          c.post('/clients/add', data={'_csrf': tok, 'name': 'Acme'})
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'Cable', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2', 'quantity_on_hand': '10'})
+          bc = c.get('/api/search?q=Cable').json()['results'][0]['barcode']
+          h = {'X-CSRF-Token': tok, 'Content-Type': 'application/json'}
+          assert c.post('/api/cart/scan', json={'barcode': bc, 'quantity': 1}, headers=h).json()['ok']
+          assert c.post('/api/cart/set', json={'client_id': 1, 'job_id': None}, headers=h).json()['ok']
+          assert c.post('/api/cart/submit', json={'tech_id': techs['Jordan Lee']}, headers=h).json()['ok']
+          db = SessionLocal(); assert db.query(Order).filter(Order.status == 'submitted').first().tech_id == techs['Jordan Lee']; db.close()
+          assert 'Jordan Lee' in c.get('/transactions').text
+          # A deactivated tech is ignored (order attributed null), not rejected (non-kiosk).
+          assert c.post('/api/cart/scan', json={'barcode': bc, 'quantity': 1}, headers=h).json()['ok']
+          assert c.post('/api/cart/set', json={'client_id': 1, 'job_id': None}, headers=h).json()['ok']
+          assert c.post('/api/cart/submit', json={'tech_id': techs['Sam Rivera']}, headers=h).json()['ok']
+          print('technician CRUD + attribution OK')
+          "
+      - name: Technician required on kiosk charge-out (regression)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_techkiosk.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+        run: |
+          python -c "
+          import re
+          from app.main import app
+          from app.database import SessionLocal
+          from app import settings_store as store
+          from app.models import KioskPin, Technician, Client, Part, Location, StockLevel, Order
+          db = SessionLocal()
+          for k, v in [('auth_mode', 'oidc'), ('oidc_discovery_url', 'https://x/.well-known/openid-configuration'), ('oidc_client_id', 'x'), ('kiosk_enabled', '1')]:
+              store.set(db, k, v)
+          db.add(KioskPin(label='Front', pin='1234', kiosk_username='front', active=True))
+          loc = db.query(Location).first()
+          if not loc:
+              loc = Location(name='Main', active=True, archived=False); db.add(loc); db.flush()
+          db.add(Technician(name='Jordan Lee', active=True))
+          db.add(Client(name='Acme', active=True, archived=False))
+          p = Part(name='Cable', type='bulk', unit_cost=1, unit_price=2, quantity_on_hand=10, barcode='BC-T1', active=True, archived=False); db.add(p); db.flush()
+          db.add(StockLevel(part_id=p.id, location_id=loc.id, quantity=10)); db.commit()
+          tid = db.query(Technician).first().id; clid = db.query(Client).first().id; db.close()
+          from fastapi.testclient import TestClient
+          c = TestClient(app, base_url='https://testserver')
+          tok = re.search(r'name=\"_csrf\" value=\"([^\"]+)\"', c.get('/welcome').text).group(1)
+          assert c.post('/kiosk/login', data={'_csrf': tok, 'pin': '1234'}, follow_redirects=False).headers['location'] == '/'
+          page = c.get('/').text
+          assert 'id=\"cart-tech\"' in page and 'data-required=\"1\"' in page and 'Jordan Lee' in page
+          tok2 = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', page).group(1)
+          h = {'X-CSRF-Token': tok2, 'Content-Type': 'application/json'}
+          assert c.post('/api/cart/scan', json={'barcode': 'BC-T1', 'quantity': 1}, headers=h).json()['ok']
+          assert c.post('/api/cart/set', json={'client_id': clid, 'job_id': None}, headers=h).json()['ok']
+          assert c.post('/api/cart/submit', json={'tech_id': None}, headers=h).json() == {'ok': False, 'error': 'tech_required'}
+          assert c.post('/api/cart/submit', json={'tech_id': tid}, headers=h).json()['ok']
+          db = SessionLocal(); assert db.query(Order).filter(Order.status == 'submitted').first().tech_id == tid; db.close()
+          # Session remembers the pick for back-to-back charge-outs.
+          assert ('value=\"' + str(tid) + '\" selected') in c.get('/').text
+          print('kiosk technician requirement OK')
+          "
       - name: UI/UX regressions (popup money + table-scroll + a11y)
         env:
           DATABASE_URL: "sqlite:///./data/ci_ui.db"

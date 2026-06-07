@@ -76,6 +76,7 @@ _ADDED_COLUMNS = {
     "orders": {
         "location_id": "INTEGER",
         "client_action_id": "TEXT",
+        "tech_id": "INTEGER",
     },
     "roles": {
         # v1.22: once True, rbac.seed_roles() leaves the role's perm list

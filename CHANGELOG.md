@@ -3,6 +3,24 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.36.0] — 2026-06-07
+Technician attribution on web kiosk charge-out.
+
+- **New Technicians admin** (Settings → Access → Technicians) — manage the
+  people credited with charge-outs as their own records, separate from the
+  Kiosk PIN (station/login) they sign in on. Add / rename / deactivate;
+  deactivating drops someone from the picker without losing their history.
+- **Kiosk charge-out now requires picking the technician.** A required
+  "Technician" dropdown sits above Submit on kiosk sessions; submit is blocked
+  (client- and server-side) with "Pick the technician charging this out" until
+  one is chosen. The choice is stored on the order (`Order.tech_id`) and shown
+  on **History**. The pick is remembered for the session (back-to-back
+  charge-outs don't re-prompt) and cleared on sign-out — never pre-filled from
+  a prior session. If no technicians are configured yet, the kiosk isn't
+  blocked (the requirement kicks in once at least one exists). Non-kiosk
+  (signed-in) charge-outs may set a technician but aren't forced to, since
+  they're already attributed by username. Mobile orders are unchanged.
+
 ## [1.35.0] — 2026-06-07
 - **Order note / reason is now visible where orders are reviewed.** The mobile
   app sends a required note as the justification for a $0 warranty / no-charge

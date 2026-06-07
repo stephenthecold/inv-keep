@@ -39,7 +39,7 @@ if (not settings.session_secret
 from .database import Base, SessionLocal, engine, ensure_columns, get_db, seed_locations_and_stock
 from .models import (
     AuditLog, Category, Client, Job, KioskPin, Location, MobileSession, Order,
-    Part, Role, StockLevel, Transaction, Transfer, TransferLine, User,
+    Part, Role, StockLevel, Technician, Transaction, Transfer, TransferLine, User,
 )
 from .version import __version__
 
@@ -784,6 +784,7 @@ async def logout(request: Request):
     request.session.pop("kiosk", None)
     request.session.pop("kiosk_pin_id", None)
     request.session.pop("kiosk_started_at", None)
+    request.session.pop("kiosk_last_tech", None)
     request.session.pop("impersonate_role", None)
     return RedirectResponse("/welcome", status_code=303)
 
@@ -831,6 +832,7 @@ async def kiosk_login(
     throttle.clear(ip)
     request.session.pop("user", None)
     request.session.pop("impersonate_role", None)
+    request.session.pop("kiosk_last_tech", None)  # fresh session: don't pre-fill from a prior one
     request.session["kiosk"] = True
     request.session["kiosk_pin_id"] = matched.id
     request.session["kiosk_started_at"] = datetime.utcnow().isoformat()
@@ -909,12 +911,26 @@ def scan_page(request: Request, db: Session = Depends(get_db)):
     # KioskPin row, so each station can default to its own warehouse.
     user = current_user(request)
     default_loc = ""
+    # Kiosk sessions must credit a technician at charge-out (shared station, no
+    # signed-in user). Load the active techs + the last pick from this session
+    # so back-to-back charge-outs don't re-prompt.
+    technicians = []
+    last_tech_id = ""
     if user.get("is_kiosk"):
         default_loc = user.get("kiosk_location_id") or store.get(db, "kiosk_location_id") or ""
+        technicians = (db.query(Technician)
+                       .filter(Technician.active == True)  # noqa: E712
+                       .order_by(Technician.name).all())
+        last_tech_id = request.session.get("kiosk_last_tech") or ""
+    # Show + require the picker only when a kiosk session has techs to pick from,
+    # so a freshly-upgraded kiosk with none configured yet isn't bricked.
+    show_tech_picker = bool(user.get("is_kiosk")) and bool(technicians)
     return templates.TemplateResponse(
         "scan.html",
         ctx(request, db, clients=clients, jobs=jobs, recent=recent,
-            locations=locations, default_location_id=default_loc),
+            locations=locations, default_location_id=default_loc,
+            technicians=technicians, show_tech_picker=show_tech_picker,
+            last_tech_id=last_tech_id),
     )
 
 
@@ -1337,8 +1353,16 @@ def api_cart_line_remove(line_id: int, request: Request, db: Session = Depends(g
     return {"ok": True, "cart": _cart_payload(db, cart, see_cost=_can_see_cost(user))}
 
 
+class CartSubmitIn(BaseModel):
+    # The technician credited with the charge-out. Required for kiosk sessions
+    # (shared station — there's no signed-in user to attribute to); optional
+    # otherwise (a named operator/admin is already attributed by username).
+    tech_id: Optional[int] = None
+
+
 @app.post("/api/cart/submit")
-def api_cart_submit(request: Request, db: Session = Depends(get_db)):
+def api_cart_submit(request: Request, payload: Optional[CartSubmitIn] = None,
+                    db: Session = Depends(get_db)):
     user = current_user(request)
     cart = orders.open_cart_for(db, user.get("username", ""))
     if cart is None:
@@ -1348,6 +1372,23 @@ def api_cart_submit(request: Request, db: Session = Depends(get_db)):
         return {"ok": False, "error": "empty_cart"}
     if not cart.customer_id:
         return {"ok": False, "error": "no_client"}
+    # Technician attribution. Kiosk sessions MUST pick an active technician
+    # (the picker is required client-side too); other sessions may, but aren't
+    # forced. Remember the pick in the session so back-to-back kiosk charge-outs
+    # don't re-prompt (cleared on sign-out with the rest of the session).
+    tech_id = payload.tech_id if payload else None
+    tech = db.get(Technician, tech_id) if tech_id else None
+    if tech is not None and not tech.active:
+        tech = None
+    if user.get("is_kiosk") and tech is None:
+        has_techs = (db.query(Technician)
+                     .filter(Technician.active == True)  # noqa: E712
+                     .first() is not None)
+        if has_techs:
+            return {"ok": False, "error": "tech_required"}
+    cart.tech_id = tech.id if tech else None
+    if user.get("is_kiosk") and tech is not None:
+        request.session["kiosk_last_tech"] = tech.id
     # next_order_number is SELECT-max+1 with no row lock, so two concurrent
     # submits can both compute the same value. Retry on the UNIQUE-constraint
     # violation; SQLite serializes commits so a single retry almost always
@@ -1358,6 +1399,7 @@ def api_cart_submit(request: Request, db: Session = Depends(get_db)):
         cart.status = "submitted"
         cart.submitted_by = user.get("username", "")
         cart.submitted_at = datetime.utcnow()
+        cart.tech_id = tech.id if tech else None  # re-stamp after a rollback/reload
         summary = (f"{cart.number}: {len(lines)} line(s) → "
                    f"{cart.client.name}{(' / ' + cart.job.name) if cart.job else ''} "
                    f"({reports_money(db, charge)})")
@@ -2903,7 +2945,7 @@ def transactions_page(request: Request, db: Session = Depends(get_db)):
                 selectinload(Transaction.client),
                 selectinload(Transaction.job),
                 selectinload(Transaction.location),
-                selectinload(Transaction.order),
+                selectinload(Transaction.order).selectinload(Order.technician),
             )
             .order_by(Transaction.created_at.desc()).limit(500).all())
     cfg = store.all_settings(db)
@@ -3179,7 +3221,10 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
             timezones=TIMEZONES,
             roles=db.query(Role).order_by(Role.name).all(),
             kiosk_locations=kiosk_locs,
-            kiosk_pins=kiosk_pins),
+            kiosk_pins=kiosk_pins,
+            technicians=(db.query(Technician)
+                         .order_by(Technician.active.desc(), Technician.name, Technician.id)
+                         .all())),
     )
 
 
@@ -3856,6 +3901,44 @@ def settings_kiosk_delete(
                  f"Deleted kiosk PIN '{label}'" + (f" (revoked {revoked} mobile token(s))" if revoked else ""))
     db.commit()
     return redirect("/settings", "Kiosk PIN deleted.")
+
+
+# ---- Technicians (people credited with charge-outs) ----
+@app.post("/settings/techs/add")
+def settings_tech_add(request: Request, name: str = Form(""), db: Session = Depends(get_db)):
+    user = current_user(request)
+    if not user.get("is_admin"):
+        return JSONResponse({"detail": "Admin only"}, status_code=403)
+    nm = (name or "").strip()
+    if not nm:
+        return redirect("/settings", "Technician name is required.", ok=False)
+    row = Technician(name=nm[:100], active=True)
+    db.add(row)
+    db.flush()
+    audit.record(db, user, "tech.create", "technician", row.id, f"Added technician '{row.name}'")
+    db.commit()
+    return redirect("/settings", "Technician added.")
+
+
+@app.post("/settings/techs/{tech_id}/save")
+def settings_tech_save(tech_id: int, request: Request, name: str = Form(""),
+                       active: str = Form(""), db: Session = Depends(get_db)):
+    """Rename / activate-deactivate a technician. No hard delete — orders
+    reference techs, so deactivating keeps history intact while removing them
+    from the kiosk picker."""
+    user = current_user(request)
+    if not user.get("is_admin"):
+        return JSONResponse({"detail": "Admin only"}, status_code=403)
+    row = db.get(Technician, tech_id)
+    if row is None:
+        return redirect("/settings", "Technician not found.", ok=False)
+    nm = (name or "").strip()
+    if nm:
+        row.name = nm[:100]
+    row.active = active == "on"
+    audit.record(db, user, "tech.edit", "technician", row.id, f"Edited technician '{row.name}'")
+    db.commit()
+    return redirect("/settings", "Technician saved.")
 
 
 @app.post("/settings/email")
