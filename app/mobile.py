@@ -1213,6 +1213,9 @@ class RecentOrderOut(BaseModel):
     created_at: str
     line_count: int
     total_cents: int
+    # The order's note / reason (e.g. a $0 warranty justification). Null when
+    # the order has none. Lets the app badge annotated rows in the list.
+    note: Optional[str] = None
 
 
 class RecentOrdersOut(BaseModel):
@@ -1237,6 +1240,20 @@ def _order_total_cents(lines) -> int:
                for ln in lines)
 
 
+def _order_note(lines) -> Optional[str]:
+    """Recover the order-level note from its line notes. create_order stamps the
+    payload note onto every line — catalog lines verbatim, custom lines with a
+    ``| custom`` marker appended (or just ``custom`` when there's no note). Strip
+    the marker and return the first meaningful note, or None."""
+    for ln in lines:
+        n = (ln.note or "").strip()
+        if n.endswith("| custom"):
+            n = n[: -len("| custom")].strip()
+        if n and n != "custom":
+            return n
+    return None
+
+
 def _order_row(o: Order, lines) -> RecentOrderOut:
     return RecentOrderOut(
         order_id=o.id,
@@ -1245,6 +1262,7 @@ def _order_row(o: Order, lines) -> RecentOrderOut:
         created_at=_iso_utc(o.submitted_at or o.created_at) or "",
         line_count=len(lines),
         total_cents=_order_total_cents(lines),
+        note=_order_note(lines),
     )
 
 
