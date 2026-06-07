@@ -297,6 +297,7 @@
   {% if not kiosk_pins %}
   <p class="muted"><i>No PINs configured yet. Add one below — you'll need at least one active PIN before the kiosk switch above lets sessions start.</i></p>
   {% else %}
+  <div class="table-scroll">
   <table class="lines" style="margin-bottom:.75rem">
     <thead><tr><th>Label</th><th>PIN</th><th>Username</th><th>Default location</th><th>Active</th><th title="Can add/edit items + adjust stock from the mobile app">Inv&nbsp;admin</th><th></th></tr></thead>
     <tbody>
@@ -335,6 +336,7 @@
     {% endfor %}
     </tbody>
   </table>
+  </div>
   {% endif %}
 
   <h3 style="margin-top:1rem">Add a kiosk PIN</h3>
