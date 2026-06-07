@@ -331,11 +331,11 @@ jobs:
           import re, sqlite3
           from sqlalchemy import event
           from fastapi.testclient import TestClient
+          # Importing app.main runs create_all + ensure_columns on the DB.
           from app.main import app
           from app.database import engine, SessionLocal
           from app.models import KioskPin, Location, Client, Part
           # 1. The hot-path indexes exist on a fresh DB.
-          import app.main  # triggers create_all + ensure_columns
           con = sqlite3.connect('./data/ci_perf.db')
           def idxs(t): return {r[1] for r in con.execute('PRAGMA index_list(' + t + ')')}
           ti, ai, ji = idxs('transactions'), idxs('audit_log'), idxs('jobs')
