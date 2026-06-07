@@ -166,8 +166,14 @@ input.cat-top { font-weight: 600; }
 /* Order note / reason shown under the part name in History + recent activity.
    Neutral by default; tinted like a warning callout when the line is $0 (a
    warranty / no-charge order) so those jump out to a reviewer. */
-.txn-note { font-size: .78rem; color: var(--muted); margin-top: .2rem; max-width: 24rem; word-break: break-word; }
-.txn-note-flag { color: var(--warn); background: rgba(210, 153, 34, .12); border: 1px solid rgba(210, 153, 34, .32); border-radius: 6px; padding: .1rem .4rem; font-weight: 600; }
+/* Order-note hint under a part name. overflow-wrap:anywhere keeps whole words
+   intact ("warranty" stays one token) and only breaks a word that genuinely
+   can't fit — the old word-break:break-word shattered it into "war rant y" in
+   the cramped mobile column. inline-block lets the amber flag hug its text. */
+.txn-note { font-size: .78rem; color: var(--muted); margin-top: .2rem; max-width: 24rem; overflow-wrap: anywhere; word-break: normal; }
+.txn-note-flag { display: inline-block; color: var(--warn); background: rgba(210, 153, 34, .12); border: 1px solid rgba(210, 153, 34, .32); border-radius: 6px; padding: .1rem .4rem; font-weight: 600; }
+.report-by { font-size: .85rem; }
+.report-by-tech { font-size: .75rem; margin-top: .15rem; }
 /* Technician credited on a charge-out (History "By" cell) + the required kiosk
    technician picker above the Submit button. */
 .txn-tech { font-size: .78rem; margin-top: .15rem; }
@@ -301,8 +307,11 @@ dialog.modal h2 { margin-top: 0; }
 .map-section { margin: 1rem 0; border: 1px solid var(--line); border-radius: 10px; padding: .5rem .75rem; background: var(--panel); }
 .map-section > summary { cursor: pointer; font-weight: 600; padding: .25rem 0; list-style: none; }
 .map-section > summary::-webkit-details-marker { display: none; }
-.map-section .txn-map { height: 360px; margin-top: .5rem; border-radius: 8px; }
-.map-full { position: relative; height: calc(100vh - 200px); min-height: 480px; border-radius: 10px; }
+/* z-index: 0 here makes each map its own stacking context so Leaflet's internal
+   panes + controls (z-index up to 1000) can't paint over the mobile nav drawer
+   / header — the whole map then stacks at level 0 against the page. */
+.map-section .txn-map { height: 360px; margin-top: .5rem; border-radius: 8px; position: relative; z-index: 0; }
+.map-full { position: relative; z-index: 0; height: calc(100vh - 200px); min-height: 480px; border-radius: 10px; }
 
 /* Belt-and-braces: the [hidden] HTML attribute is supposed to set
    display:none, but ANY explicit display rule (e.g. .grid-form > label
@@ -536,7 +545,7 @@ body.nav-open .nav-toggle .hamburger-bar:nth-child(3) { transform: translateY(-7
   .brand-title { font-size: 1rem; }
 
   /* drawer: full height, slides in from the right; sized to feel native on phones */
-  .nav-mobile { display: flex; flex-direction: column; position: fixed; top: 0; right: 0; bottom: 0; width: 84vw; max-width: 340px; background: var(--panel); border-left: 1px solid var(--line); z-index: 100; padding: calc(env(safe-area-inset-top) + 3.6rem) 1rem calc(env(safe-area-inset-bottom) + 1.5rem); overflow-y: auto; transform: translateX(100%); transition: transform .22s ease-out; box-shadow: -12px 0 32px rgba(0,0,0,.45); }
+  .nav-mobile { display: flex; flex-direction: column; position: fixed; top: 0; right: 0; bottom: 0; width: 84vw; max-width: 340px; background: var(--panel); border-left: 1px solid var(--line); z-index: 1100; padding: calc(env(safe-area-inset-top) + 3.6rem) 1rem calc(env(safe-area-inset-bottom) + 1.5rem); overflow-y: auto; transform: translateX(100%); transition: transform .22s ease-out; box-shadow: -12px 0 32px rgba(0,0,0,.45); }
   body.nav-open .nav-mobile { transform: translateX(0); }
   .nav-mobile a, .nav-mobile-logout button { display: block; padding: .95rem .85rem; color: var(--text); text-decoration: none; border-radius: 10px; font-size: 1.05rem; line-height: 1.2; }
   .nav-mobile a:active, .nav-mobile a:hover { background: var(--panel-2); }
@@ -546,10 +555,16 @@ body.nav-open .nav-toggle .hamburger-bar:nth-child(3) { transform: translateY(-7
   .nav-mobile-logout button { width: 100%; text-align: left; background: transparent; border: 0; font: inherit; cursor: pointer; color: var(--accent); }
 
   /* scrim — sits under the drawer, dims the page, closes on tap */
-  .nav-backdrop { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 99; opacity: 0; pointer-events: none; transition: opacity .18s ease-out; }
+  .nav-backdrop { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 1090; opacity: 0; pointer-events: none; transition: opacity .18s ease-out; }
   body.nav-open .nav-backdrop { opacity: 1; pointer-events: auto; }
   /* lock body scroll while drawer is open so taps inside don't drag the page */
   body.nav-open { overflow: hidden; }
+
+  /* Data tables inside a horizontal-scroll wrapper get a width floor on phones
+     so columns keep readable widths and the wrapper scrolls sideways, instead
+     of every cell collapsing and wrapping text character-by-character. */
+  .table-scroll { -webkit-overflow-scrolling: touch; }
+  .table-scroll > table.lines { min-width: 680px; }
 
   /* existing mobile tweaks for body content */
   main { padding: 1rem .8rem 4rem; }

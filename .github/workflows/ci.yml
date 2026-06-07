@@ -360,6 +360,52 @@ jobs:
           assert reports._c(totals['charge']) == '4.50' and reports._c(totals['margin']) == '2.25'
           print('parts_add validation + emailer rounding OK')
           "
+      - name: Report shows charged-by + technician (regression)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_repby.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import re, csv, io, datetime
+          from fastapi.testclient import TestClient
+          from app.main import app
+          from app.database import SessionLocal
+          from app import reports
+          from app.models import Transaction, Technician
+          c = TestClient(app)
+          tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', c.get('/').text).group(1)
+          h = {'X-CSRF-Token': tok, 'Content-Type': 'application/json'}
+          c.post('/settings/techs/add', data={'_csrf': tok, 'name': 'Jordan Lee'})
+          c.post('/clients/add', data={'_csrf': tok, 'name': 'Acme'})
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'Cable', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2', 'quantity_on_hand': '10'})
+          bc = c.get('/api/search?q=Cable').json()['results'][0]['barcode']
+          c.post('/api/cart/scan', json={'barcode': bc, 'quantity': 3}, headers=h)
+          c.post('/api/cart/set', json={'client_id': 1, 'job_id': None}, headers=h)
+          db = SessionLocal(); tid = db.query(Technician).first().id; db.close()
+          assert c.post('/api/cart/submit', json={'tech_id': tid}, headers=h).json()['ok']
+          # scanned_by carries the kiosk station name on PIN sessions.
+          db = SessionLocal()
+          for t in db.query(Transaction): t.scanned_by = 'Office-PDA'
+          db.commit()
+          now = datetime.datetime.utcnow()
+          report, totals = reports.build_report(db, now.year, now.month)
+          ln = report[0]['jobs'][0]['lines'][0]
+          assert ln['whos'] == ['Office-PDA'] and ln['techs'] == ['Jordan Lee'], (ln['whos'], ln['techs'])
+          db.close()
+          # On-screen report renders the Charged by column with both.
+          page = c.get('/report').text
+          assert 'Charged by' in page and 'Office-PDA' in page and 'Jordan Lee' in page
+          # CSV gains the two columns and every row stays aligned to the header width.
+          rows = list(csv.reader(io.StringIO(reports.report_csv_for(report, totals, see_cost=True))))
+          assert 'Charged By' in rows[0] and 'Technician' in rows[0]
+          assert all(len(r) == len(rows[0]) for r in rows if r), [len(r) for r in rows]
+          assert 'Office-PDA' in rows[1] and 'Jordan Lee' in rows[1]
+          rows2 = list(csv.reader(io.StringIO(reports.report_csv_for(report, totals, see_cost=False))))
+          assert 'Charged By' in rows2[0] and 'Technician' in rows2[0]
+          assert all(len(r) == len(rows2[0]) for r in rows2 if r)
+          print('report charged-by + technician OK')
+          "
       - name: Hot-path indexes + no N+1 (perf regression)
         env:
           DATABASE_URL: "sqlite:///./data/ci_perf.db"

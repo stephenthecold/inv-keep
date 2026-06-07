@@ -63,6 +63,7 @@ def build_report_range(db, start, end, client_ids=None, location_id=None):
         selectinload(Transaction.client),
         selectinload(Transaction.job),
         selectinload(Transaction.location),
+        selectinload(Transaction.order).selectinload(Order.technician),
     )
     txns = q.all()
 
@@ -85,11 +86,20 @@ def build_report_range(db, start, end, client_ids=None, location_id=None):
             key,
             {"part": t.part.name, "barcode": t.part.barcode,
              "unit_cost": float(t.unit_cost_at_time), "unit_price": float(t.unit_price_at_time),
-             "quantity": 0, "charge": 0.0, "cost": 0.0},
+             "quantity": 0, "charge": 0.0, "cost": 0.0,
+             # Who charged it out: the scanned_by username (which is the kiosk
+             # station name for PIN sessions) + the credited technician, if any.
+             # Sets here, flattened to sorted lists after the loop.
+             "_whos": set(), "_techs": set()},
         )
         line["quantity"] += t.quantity
         line["charge"] += t.total_charge
         line["cost"] += t.total_cost
+        who = (t.scanned_by or "").strip()
+        if who:
+            line["_whos"].add(who)
+        if t.order is not None and t.order.technician is not None:
+            line["_techs"].add(t.order.technician.name)
         job["charge"] += t.total_charge
         job["cost"] += t.total_cost
         c["charge"] += t.total_charge
@@ -99,6 +109,9 @@ def build_report_range(db, start, end, client_ids=None, location_id=None):
     for c in clients.values():
         jobs = []
         for j in c["jobs"].values():
+            for ln in j["lines"].values():
+                ln["whos"] = sorted(ln.pop("_whos"))
+                ln["techs"] = sorted(ln.pop("_techs"))
             j["lines"] = sorted(j["lines"].values(), key=lambda x: x["part"].lower())
             j["margin"] = j["charge"] - j["cost"]
             jobs.append(j)
@@ -143,35 +156,47 @@ def report_csv_for(report, totals, see_cost=True) -> str:
     buf = io.StringIO()
     w = csv.writer(buf)
     if see_cost:
-        w.writerow(["Client", "Account Ref", "Job", "Job Ref", "Part", "Barcode", "Quantity",
+        w.writerow(["Client", "Account Ref", "Job", "Job Ref", "Part", "Barcode",
+                    "Charged By", "Technician", "Quantity",
                     "Unit Cost", "Unit Charge", "Line Cost", "Line Charge", "Line Margin"])
         for c in report:
             for job in c["jobs"]:
                 for ln in job["lines"]:
                     w.writerow([c["name"], c["reference"], job["name"], job["reference"],
-                                ln["part"], ln["barcode"], ln["quantity"],
+                                ln["part"], ln["barcode"], _who(ln), _tech(ln), ln["quantity"],
                                 _c(ln["unit_cost"]), _c(ln["unit_price"]),
                                 _c(ln["cost"]), _c(ln["charge"]), _c(ln["charge"] - ln["cost"])])
-                w.writerow([c["name"], c["reference"], job["name"], job["reference"], "", "", "",
-                            "", "Job subtotal", _c(job["cost"]), _c(job["charge"]), _c(job["margin"])])
-            w.writerow([c["name"], c["reference"], "", "", "", "", "",
-                        "", "Client total", _c(c["cost"]), _c(c["charge"]), _c(c["margin"])])
+                w.writerow([c["name"], c["reference"], job["name"], job["reference"], "", "", "", "",
+                            "", "", "Job subtotal", _c(job["cost"]), _c(job["charge"]), _c(job["margin"])])
+            w.writerow([c["name"], c["reference"], "", "", "", "", "", "",
+                        "", "", "Client total", _c(c["cost"]), _c(c["charge"]), _c(c["margin"])])
             w.writerow([])
-        w.writerow(["", "", "", "", "", "", "", "", "GRAND TOTAL",
+        w.writerow(["", "", "", "", "", "", "", "", "", "", "GRAND TOTAL",
                     _c(totals["cost"]), _c(totals["charge"]), _c(totals["margin"])])
     else:
-        w.writerow(["Client", "Account Ref", "Job", "Job Ref", "Part", "Barcode", "Quantity",
-                    "Unit Charge", "Line Charge"])
+        w.writerow(["Client", "Account Ref", "Job", "Job Ref", "Part", "Barcode",
+                    "Charged By", "Technician", "Quantity", "Unit Charge", "Line Charge"])
         for c in report:
             for job in c["jobs"]:
                 for ln in job["lines"]:
                     w.writerow([c["name"], c["reference"], job["name"], job["reference"],
-                                ln["part"], ln["barcode"], ln["quantity"],
+                                ln["part"], ln["barcode"], _who(ln), _tech(ln), ln["quantity"],
                                 _c(ln["unit_price"]), _c(ln["charge"])])
-                w.writerow([c["name"], c["reference"], job["name"], job["reference"], "", "", "",
-                            "Job subtotal", _c(job["charge"])])
-            w.writerow([c["name"], c["reference"], "", "", "", "", "",
-                        "Client total", _c(c["charge"])])
+                w.writerow([c["name"], c["reference"], job["name"], job["reference"], "", "", "", "",
+                            "", "Job subtotal", _c(job["charge"])])
+            w.writerow([c["name"], c["reference"], "", "", "", "", "", "",
+                        "", "Client total", _c(c["charge"])])
             w.writerow([])
-        w.writerow(["", "", "", "", "", "", "", "GRAND TOTAL", _c(totals["charge"])])
+        w.writerow(["", "", "", "", "", "", "", "", "", "GRAND TOTAL", _c(totals["charge"])])
     return buf.getvalue()
+
+
+def _who(ln) -> str:
+    """Comma-joined list of who charged the (aggregated) line out — the
+    scanned_by usernames, which is the kiosk station name for PIN sessions."""
+    return ", ".join(ln.get("whos") or [])
+
+
+def _tech(ln) -> str:
+    """Comma-joined credited technician name(s) for the line, if any."""
+    return ", ".join(ln.get("techs") or [])
