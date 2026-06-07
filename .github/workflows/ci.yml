@@ -1313,6 +1313,58 @@ jobs:
           db = SessionLocal(); assert db.query(Order).filter(Order.status == 'submitted').first().tech_id == tid; db.close()
           print('kiosk hardware-verify checkout OK')
           "
+      - name: Order comment thread (justification merge + add/edit + audit + XSS)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_ocomment.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import re, sqlite3
+          from fastapi.testclient import TestClient
+          from app.main import app, _kiosk_allowed
+          from app.database import SessionLocal
+          from app.models import Order, Transaction, AuditLog
+          # /orders is outside the kiosk lockdown floor (comments need attribution).
+          assert _kiosk_allowed('/orders/1/comments', 'GET') is False and _kiosk_allowed('/orders/1/comments', 'POST') is False
+          c = TestClient(app)
+          tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', c.get('/').text).group(1)
+          h = {'X-CSRF-Token': tok, 'Content-Type': 'application/json'}
+          c.post('/clients/add', data={'_csrf': tok, 'name': 'Acme'})
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'Cable', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2', 'quantity_on_hand': '10'})
+          bc = c.get('/api/search?q=Cable').json()['results'][0]['barcode']
+          assert c.post('/api/cart/scan', json={'barcode': bc, 'quantity': 1}, headers=h).json()['ok']
+          assert c.post('/api/cart/set', json={'client_id': 1, 'job_id': None}, headers=h).json()['ok']
+          assert c.post('/api/cart/submit', json={}, headers=h).json()['ok']
+          db = SessionLocal(); oid = db.query(Order).filter(Order.status == 'submitted').first().id
+          for t in db.query(Transaction).filter(Transaction.order_id == oid): t.note = 'Warranty replacement | custom'
+          db.commit(); db.close()
+          # order_comments table auto-created on the existing DB via create_all.
+          con = sqlite3.connect('./data/ci_ocomment.db'); assert ('order_comments',) in con.execute(\"SELECT name FROM sqlite_master WHERE type='table'\").fetchall(); con.close()
+          # Justification note surfaces as the thread origin; no web comments yet.
+          g = c.get('/orders/' + str(oid) + '/comments').json()
+          assert g['ok'] and g['justification'] == 'Warranty replacement' and g['comments'] == [], g
+          # Add a comment (author + timestamp), empty rejected, XSS kept as data.
+          r = c.post('/orders/' + str(oid) + '/comments', json={'body': 'Followed up with client.'}, headers=h).json()
+          assert r['ok'] and r['comment']['body'] == 'Followed up with client.' and r['comment']['edited'] is False
+          cid = r['comment']['id']
+          assert c.post('/orders/' + str(oid) + '/comments', json={'body': '   '}, headers=h).status_code == 400
+          xss = c.post('/orders/' + str(oid) + '/comments', json={'body': '<img src=x onerror=alert(1)>'}, headers=h).json()
+          assert xss['comment']['body'] == '<img src=x onerror=alert(1)>'  # returned verbatim; client renders via textContent
+          # Edit in place sets the edited flag + author; mismatched order id -> 404.
+          e = c.post('/orders/' + str(oid) + '/comments/' + str(cid) + '/edit', json={'body': 'Client confirmed fixed.'}, headers=h).json()
+          assert e['ok'] and e['comment']['edited'] is True and e['comment']['edited_by']
+          assert c.post('/orders/' + str(oid + 999) + '/comments/' + str(cid) + '/edit', json={'body': 'x'}, headers=h).status_code == 404
+          assert c.get('/orders/999999/comments').status_code == 404
+          # Both add + edit are in the audit log (the trail the operator asked for).
+          db = SessionLocal(); acts = {a.action for a in db.query(AuditLog).filter(AuditLog.entity_type == 'order').all()}; db.close()
+          assert 'order.comment' in acts and 'order.comment_edit' in acts, acts
+          # History renders the comment button + thread modal; settings shell restyle markers present.
+          page = c.get('/transactions').text
+          assert 'comment-btn' in page and 'id=\"order-comments\"' in page
+          assert 'settings-shell' in c.get('/settings').text
+          print('order comment thread OK')
+          "
       - name: UI/UX regressions (popup money + table-scroll + a11y)
         env:
           DATABASE_URL: "sqlite:///./data/ci_ui.db"

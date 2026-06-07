@@ -235,6 +235,29 @@ class Order(Base):
     job = relationship("Job", foreign_keys=[job_id])
     location = relationship("Location", foreign_keys=[location_id])
     technician = relationship("Technician", foreign_keys=[tech_id])
+    comments = relationship("OrderComment", back_populates="order",
+                            cascade="all, delete-orphan", order_by="OrderComment.created_at")
+
+
+class OrderComment(Base):
+    """A free-text comment left on an order from the web UI. Forms a thread that
+    sits below the order's original app justification note (recovered from the
+    line notes) on the History page. Edits are kept light — the body is updated
+    in place and stamped with edited_at/edited_by — while the AuditLog keeps the
+    full before/after trail the operator asked for. Authored by the signed-in
+    user; kiosk (shared/anonymous) sessions can't reach the route."""
+
+    __tablename__ = "order_comments"
+
+    id = Column(Integer, primary_key=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False, index=True)
+    author = Column(String, nullable=False, default="")
+    body = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    edited_at = Column(DateTime, nullable=True)
+    edited_by = Column(String, default="")
+
+    order = relationship("Order", back_populates="comments")
 
 
 class Technician(Base):

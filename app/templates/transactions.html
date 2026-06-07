@@ -72,7 +72,13 @@
     {% for t in txns %}
     <tr {% if t.voided %}class="voided"{% endif %} id="txn-{{ t.id }}">
       <td>{{ t.created_at | local_dt(cfg.timezone) }}</td>
-      <td>{% if t.order and t.order.number %}<code>{{ t.order.number }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td class="order-cell">
+        {% if t.order and t.order.number %}<code>{{ t.order.number }}</code>{% else %}<span class="muted">—</span>{% endif %}
+        {% if t.order and not user.is_kiosk %}
+        <button type="button" class="comment-btn" title="Comments / notes for this order"
+                data-order-id="{{ t.order.id }}" data-order-number="{{ t.order.number or '' }}">💬</button>
+        {% endif %}
+      </td>
       <td>{{ t.part.name }}
         {% set nt = (t.note or '').replace(' | custom', '').strip() %}
         {% if nt and nt != 'custom' %}<div class="txn-note{% if t.total_charge == 0 %} txn-note-flag{% endif %}" title="Order note / reason"><span aria-hidden="true">💬</span> {{ nt }}</div>{% endif %}
@@ -103,4 +109,25 @@
   </tbody>
 </table>
 </div>
+
+{% if not user.is_kiosk %}
+<!-- Order comment thread. The original app justification note shows as the
+     pinned origin entry; web comments follow, oldest-first. Built/rendered in
+     app.js via createElement + textContent (never innerHTML) so user text can't
+     break out as HTML. Any signed-in user can add/edit; edits are audited. -->
+<dialog id="order-comments" class="modal order-comments-modal">
+  <header class="oc-head">
+    <h2>Order notes <span id="oc-order-number" class="muted"></span></h2>
+    <button type="button" class="ghost oc-close" aria-label="Close">✕</button>
+  </header>
+  <div id="oc-thread" class="oc-thread" aria-live="polite"></div>
+  <form id="oc-form" class="oc-form">
+    <textarea id="oc-input" rows="2" maxlength="2000" placeholder="Add a note or comment…" required></textarea>
+    <div class="oc-form-actions">
+      <button type="submit">Add comment</button>
+    </div>
+  </form>
+</dialog>
+<div id="toast" class="toast"></div>
+{% endif %}
 {% endblock %}
