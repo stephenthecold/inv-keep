@@ -179,6 +179,9 @@ jobs:
           "
       - name: Transactions rebuild keeps location_id + receipt_id (migration regression)
         env:
+          # Importing app.database runs a module-level makedirs on the DB path;
+          # point it at a writable location so the default /code/data isn't used.
+          DATABASE_URL: "sqlite:///./data/ci_mig.db"
           SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
         run: |
           python -c "
