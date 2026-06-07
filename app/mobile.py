@@ -459,6 +459,10 @@ class WhitelabelOut(BaseModel):
     logo_url: Optional[str] = None
     primary_color_hex: Optional[str] = None
     accent_color_hex: Optional[str] = None
+    # v1.37: when true, this install requires a technician to be identified by a
+    # hardware credential (badge barcode / NFC tap) at charge-out. The companion
+    # app mirrors the kiosk requirement so it can prompt for a scan/tap too.
+    require_hardware_tech_verification: bool = False
 
 
 @router.get("/whitelabel", response_model=WhitelabelOut)
@@ -476,6 +480,8 @@ def whitelabel(request: Request, db: Session = Depends(get_db)):
         logo_url=logo_url,
         primary_color_hex=primary,
         accent_color_hex=None,
+        require_hardware_tech_verification=store.get_bool(
+            db, "require_hardware_tech_verification"),
     )
 
 

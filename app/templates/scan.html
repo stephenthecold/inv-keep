@@ -102,6 +102,21 @@
   <div class="cart-footer">
     <div class="cart-subtotal">Subtotal <strong id="cart-subtotal">{{ cfg.currency }}0.00</strong></div>
     {% if show_tech_picker %}
+    {% if tech_hardware_verify %}
+    <!-- Hardware-verified identity: the operator scans their badge barcode or
+         taps their NFC card (keyboard-wedge into #cart-tech-scan); app.js posts
+         it to /kiosk/verify-tech and fills the hidden #cart-tech with the
+         resolved id. No dropdown, so a tech can't be picked without the badge. -->
+    <div class="cart-tech-row" id="cart-tech-row" data-verify="1">
+      <label for="cart-tech-scan">Technician <span aria-hidden="true" style="color:var(--bad)">*</span></label>
+      <input type="text" id="cart-tech-scan" autocomplete="off" inputmode="none"
+             placeholder="Scan badge or tap card…" aria-describedby="cart-tech-msg"
+             data-verify-url="/kiosk/verify-tech">
+      <input type="hidden" id="cart-tech" data-required="1" value="">
+      <span id="cart-tech-name" class="tech-verified" hidden></span>
+      <small id="cart-tech-msg" class="muted">Scan your badge or tap your card to verify.</small>
+    </div>
+    {% else %}
     <div class="cart-tech-row" id="cart-tech-row">
       <label for="cart-tech">Technician <span aria-hidden="true" style="color:var(--bad)">*</span></label>
       <select id="cart-tech" required aria-describedby="cart-tech-msg" data-required="1">
@@ -110,6 +125,7 @@
       </select>
       <small id="cart-tech-msg" class="muted">Pick the technician charging this out.</small>
     </div>
+    {% endif %}
     {% endif %}
     <div class="cart-actions cart-actions-bottom">
       <button type="button" class="ghost" id="cart-cancel">Cancel</button>

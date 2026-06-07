@@ -78,6 +78,11 @@ _ADDED_COLUMNS = {
         "client_action_id": "TEXT",
         "tech_id": "INTEGER",
     },
+    "technicians": {
+        # v1.37: hardware-identity credentials for the kiosk verify flow.
+        "barcode_value": "TEXT",
+        "nfc_uid": "TEXT",
+    },
     "roles": {
         # v1.22: once True, rbac.seed_roles() leaves the role's perm list
         # alone on startup so admins can remove default perms.
@@ -104,6 +109,7 @@ def ensure_columns():
                     conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
         _relax_transactions_customer_id(conn)
         _ensure_order_idempotency_index(conn)
+        _ensure_tech_credential_indexes(conn)
         _ensure_perf_indexes(conn)
 
 
@@ -119,6 +125,31 @@ _PERF_INDEXES = {
     "ix_audit_log_action": "CREATE INDEX IF NOT EXISTS ix_audit_log_action ON audit_log(action)",
     "ix_jobs_client_id": "CREATE INDEX IF NOT EXISTS ix_jobs_client_id ON jobs(client_id)",
 }
+
+
+def _ensure_tech_credential_indexes(conn):
+    """v1.37: the technician hardware-credential columns (barcode_value, nfc_uid)
+    are declared UNIQUE in the model, so fresh DBs get the unique index from
+    create_all. On an upgraded DB they arrive via ALTER ADD COLUMN as plain
+    columns — all rows NULL at that point — so creating the unique index now is
+    safe (distinct NULLs don't collide in SQLite) and keeps the constraint that
+    POST /kiosk/verify-tech relies on for a one-credential-to-one-tech mapping."""
+    try:
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(technicians)")}
+    except Exception:
+        return
+    for col in ("barcode_value", "nfc_uid"):
+        if col not in cols:
+            continue
+        try:
+            conn.exec_driver_sql(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS ix_technicians_{col} "
+                f"ON technicians({col})"
+            )
+        except Exception:
+            # A stray duplicate (shouldn't happen for freshly-added NULL columns)
+            # just means the admin must dedupe; don't crash boot over it.
+            continue
 
 
 def _ensure_perf_indexes(conn):

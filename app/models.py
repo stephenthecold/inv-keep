@@ -247,6 +247,13 @@ class Technician(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     active = Column(Boolean, nullable=False, default=True, index=True)
+    # v1.37: optional hardware-identity credentials used by the kiosk's
+    # "scan badge / tap card to verify" flow when an admin turns on
+    # `require_hardware_tech_verification`. Both are exact-match lookups via
+    # POST /kiosk/verify-tech; both unique so a credential maps to exactly one
+    # tech. Blank/NULL = not enrolled (distinct NULLs don't collide in SQLite).
+    barcode_value = Column(String, unique=True, nullable=True, index=True)
+    nfc_uid = Column(String, unique=True, nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
