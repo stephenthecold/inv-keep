@@ -178,9 +178,15 @@ def _relax_transactions_customer_id(conn):
     if not cust or cust[3] == 0:
         return  # already nullable (or column missing) — nothing to do
     cols = [row[1] for row in info]
-    col_list = ", ".join(cols)
     conn.exec_driver_sql("CREATE TABLE _txn_rebuild AS SELECT * FROM transactions")
     conn.exec_driver_sql("DROP TABLE transactions")
+    # The new table must list EVERY column the live table has by this point —
+    # ensure_columns() runs the additive ADD COLUMN loop before us, so on an
+    # old DB the source already carries location_id + receipt_id. Omitting them
+    # here (as an earlier version did) made the INSERT below reference columns
+    # the target lacked → OperationalError on boot + lost per-location/receipt
+    # history. We declare them, and additionally copy only the columns common
+    # to both tables so any future additive column can't break this rebuild.
     conn.exec_driver_sql("""
         CREATE TABLE transactions (
             id INTEGER PRIMARY KEY,
@@ -197,9 +203,14 @@ def _relax_transactions_customer_id(conn):
             created_at DATETIME,
             lat REAL,
             lng REAL,
-            geo_accuracy_m REAL
+            geo_accuracy_m REAL,
+            location_id INTEGER REFERENCES locations(id),
+            receipt_id TEXT
         )
     """)
+    new_cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(transactions)")}
+    common = [c for c in cols if c in new_cols]
+    col_list = ", ".join(common)
     conn.exec_driver_sql(f"INSERT INTO transactions ({col_list}) SELECT {col_list} FROM _txn_rebuild")
     conn.exec_driver_sql("DROP TABLE _txn_rebuild")
     conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_transactions_order_id ON transactions(order_id)")

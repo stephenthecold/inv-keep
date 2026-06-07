@@ -56,7 +56,7 @@
   {% endfor %}
   <div class="client-subtotal">
     {{ c.name }} total: {{ c.charge | money(cfg.currency) }}
-    <span class="muted">(cost {{ c.cost | money(cfg.currency) }} · margin {{ c.margin | money(cfg.currency) }})</span>
+    {% if can('see_cost') %}<span class="muted">(cost {{ c.cost | money(cfg.currency) }} · margin {{ c.margin | money(cfg.currency) }})</span>{% endif %}
   </div>
 </div>
 {% else %}
@@ -67,15 +67,15 @@
 <div class="card report-by-location">
   <h2>By location</h2>
   <table class="lines">
-    <thead><tr><th>Location</th><th class="num">Lines</th><th class="num">Cost</th><th class="num">Charge</th><th class="num">Margin</th></tr></thead>
+    <thead><tr><th>Location</th><th class="num">Lines</th>{% if can('see_cost') %}<th class="num">Cost</th>{% endif %}<th class="num">Charge</th>{% if can('see_cost') %}<th class="num">Margin</th>{% endif %}</tr></thead>
     <tbody>
       {% for b in totals.by_location %}
       <tr>
         <td>{{ b.name }}</td>
         <td class="num">{{ b.lines }}</td>
-        <td class="num">{{ b.cost | money(cfg.currency) }}</td>
+        {% if can('see_cost') %}<td class="num">{{ b.cost | money(cfg.currency) }}</td>{% endif %}
         <td class="num">{{ b.charge | money(cfg.currency) }}</td>
-        <td class="num">{{ b.margin | money(cfg.currency) }}</td>
+        {% if can('see_cost') %}<td class="num">{{ b.margin | money(cfg.currency) }}</td>{% endif %}
       </tr>
       {% endfor %}
     </tbody>
@@ -85,7 +85,7 @@
 
 {% if report %}
 <div class="grand-total">Billable total: {{ totals.charge | money(cfg.currency) }}</div>
-<div class="muted" style="text-align:right">Cost: {{ totals.cost | money(cfg.currency) }} · Margin: {{ totals.margin | money(cfg.currency) }}</div>
+{% if can('see_cost') %}<div class="muted" style="text-align:right">Cost: {{ totals.cost | money(cfg.currency) }} · Margin: {{ totals.margin | money(cfg.currency) }}</div>{% endif %}
 {% endif %}
 <script>
 (function(){

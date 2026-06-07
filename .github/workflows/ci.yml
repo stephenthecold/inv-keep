@@ -100,6 +100,137 @@ jobs:
           assert c.post('/api/cart/job/new', json={'name': 'x'}).status_code == 403
           print('inline job-on-checkout OK ->', job.id)
           "
+      - name: checkout perm + cost-gate (security regression)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_perm.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+        run: |
+          python -c "
+          import re
+          from app import rbac
+          # The real charge-out path (POST /api/cart/*) requires `checkout`, not
+          # the bare `view` it used to fall through to. GET stays at `view`.
+          assert rbac.required_perm('/api/cart/scan', 'POST') == 'checkout'
+          assert rbac.required_perm('/api/cart/submit', 'POST') == 'checkout'
+          assert rbac.required_perm('/api/cart/job/new', 'POST') == 'checkout'
+          assert rbac.required_perm('/api/cart', 'GET') == 'view'
+          # Cost-gate: a Kiosk session (no see_cost) must not receive our cost
+          # in /api/search or the cart payload — only client price.
+          from app.main import app
+          from app.database import SessionLocal
+          from app import settings_store as store
+          from app.models import KioskPin, Part, StockLevel, Location
+          db = SessionLocal()
+          store.set(db, 'auth_mode', 'oidc')
+          store.set(db, 'oidc_discovery_url', 'https://x/.well-known/openid-configuration')
+          store.set(db, 'oidc_client_id', 'x')
+          store.set(db, 'kiosk_enabled', '1')
+          db.add(KioskPin(label='CI', pin='1234', kiosk_username='kiosk', active=True))
+          loc = db.query(Location).first()
+          if not loc:
+              loc = Location(name='Main', active=True, archived=False); db.add(loc); db.flush()
+          p = Part(name='Cable', type='bulk', unit_cost=1.5, unit_price=2.0, quantity_on_hand=10, barcode='BC-COST-1', active=True, archived=False)
+          db.add(p); db.flush(); db.add(StockLevel(part_id=p.id, location_id=loc.id, quantity=10)); db.commit(); db.close()
+          from fastapi.testclient import TestClient
+          c = TestClient(app, base_url='https://testserver')
+          tok = re.search(r'name=\"_csrf\" value=\"([^\"]+)\"', c.get('/welcome').text).group(1)
+          assert c.post('/kiosk/login', data={'_csrf': tok, 'pin': '1234'}, follow_redirects=False).headers['location'] == '/'
+          res = c.get('/api/search?q=Cable').json()['results'][0]
+          assert res['unit_cost'] == 0.0 and res['unit_price'] == 2.0, res
+          tok2 = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', c.get('/').text).group(1)
+          sc = c.post('/api/cart/scan', json={'barcode': 'BC-COST-1', 'quantity': 1}, headers={'X-CSRF-Token': tok2}).json()
+          assert sc['ok'] and sc['cart']['lines'][0]['unit_cost'] == 0.0 and sc['cart']['cost'] == 0, sc
+          print('checkout perm + kiosk cost-gate OK')
+          "
+      - name: Negative restock + category cycle rejected (regression)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_guard.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import re
+          from urllib.parse import unquote
+          from fastapi.testclient import TestClient
+          from app.main import app
+          from app.database import SessionLocal
+          from app.models import Part, Category
+          c = TestClient(app)
+          tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', c.get('/').text).group(1)
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'W', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2', 'quantity_on_hand': '10'})
+          db = SessionLocal(); pid = db.query(Part).first().id; db.close()
+          # Negative restock is rejected and does not mutate stock.
+          r = c.post('/parts/' + str(pid) + '/restock', data={'_csrf': tok, 'amount': '-9999'}, follow_redirects=False)
+          assert r.status_code == 303 and 'positive' in unquote(r.headers['location']).lower()
+          db = SessionLocal(); assert db.query(Part).first().quantity_on_hand == 10; db.close()
+          # Category cycle (parent set to a descendant) is rejected; bad int doesn't 500.
+          c.post('/categories/add', data={'_csrf': tok, 'name': 'A'})
+          db = SessionLocal(); a = db.query(Category).filter(Category.name == 'A').first().id; db.close()
+          c.post('/categories/add', data={'_csrf': tok, 'name': 'B', 'parent_id': str(a)})
+          db = SessionLocal(); b = db.query(Category).filter(Category.name == 'B').first().id; db.close()
+          r = c.post('/categories/' + str(a) + '/edit', data={'_csrf': tok, 'name': 'A', 'parent_id': str(b)}, follow_redirects=False)
+          assert r.status_code == 303 and 'sub-category' in unquote(r.headers['location']).lower()
+          db = SessionLocal(); assert db.get(Category, a).parent_id is None; db.close()
+          assert c.post('/categories/' + str(b) + '/edit', data={'_csrf': tok, 'name': 'B', 'parent_id': 'abc'}, follow_redirects=False).status_code == 303
+          print('negative restock + category cycle guards OK')
+          "
+      - name: Transactions rebuild keeps location_id + receipt_id (migration regression)
+        env:
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+        run: |
+          python -c "
+          import sqlite3
+          from sqlalchemy import create_engine
+          from app import database
+          path = './data/ci_mig.db'
+          import os
+          if os.path.exists(path): os.remove(path)
+          con = sqlite3.connect(path)
+          # Pre-v1.9 shape: customer_id NOT NULL, with the later additive columns present.
+          con.executescript('''
+            CREATE TABLE transactions (
+              id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL, job_id INTEGER, part_id INTEGER NOT NULL,
+              order_id INTEGER, quantity INTEGER NOT NULL DEFAULT 1, unit_cost_at_time NUMERIC NOT NULL DEFAULT 0,
+              unit_price_at_time NUMERIC NOT NULL DEFAULT 0, scanned_by TEXT DEFAULT '', note TEXT DEFAULT '',
+              voided BOOLEAN NOT NULL DEFAULT 0, created_at DATETIME, lat REAL, lng REAL, geo_accuracy_m REAL,
+              location_id INTEGER, receipt_id TEXT );
+            INSERT INTO transactions (id,customer_id,part_id,quantity,location_id,receipt_id) VALUES (1,7,3,2,42,'rcpt_abc');
+          ''')
+          con.commit(); con.close()
+          eng = create_engine('sqlite:///' + path)
+          with eng.begin() as conn:
+              database._relax_transactions_customer_id(conn)
+          con = sqlite3.connect(path)
+          info = list(con.execute('PRAGMA table_info(transactions)'))
+          cols = {r[1] for r in info}
+          assert 'location_id' in cols and 'receipt_id' in cols, cols
+          cust = [r for r in info if r[1] == 'customer_id'][0]
+          assert cust[3] == 0, 'customer_id should be nullable after rebuild'
+          row = con.execute('SELECT customer_id,part_id,quantity,location_id,receipt_id FROM transactions WHERE id=1').fetchone()
+          assert row == (7, 3, 2, 42, 'rcpt_abc'), row
+          con.close()
+          print('transactions rebuild preserves location_id/receipt_id OK')
+          "
+      - name: Mobile PIN brute-force throttle (security regression)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_throttle.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+        run: |
+          python -c "
+          from fastapi.testclient import TestClient
+          from app.main import app
+          from app.database import SessionLocal
+          from app.models import KioskPin
+          db = SessionLocal(); db.add(KioskPin(label='T', pin='9876', kiosk_username='alice', active=True)); db.commit(); db.close()
+          c = TestClient(app)
+          codes = [c.post('/mobile/auth/token', json={'pin': '0000'}).status_code for _ in range(5)]
+          assert codes == [401] * 5, codes
+          r = c.post('/mobile/auth/token', json={'pin': '0000'})
+          assert r.status_code == 429 and r.headers.get('Retry-After'), (r.status_code, dict(r.headers))
+          # Even the correct PIN is refused while the IP is locked out.
+          assert c.post('/mobile/auth/token', json={'pin': '9876'}).status_code == 429
+          print('mobile PIN throttle OK')
+          "
       - name: NaN geo rejected (security regression test)
         env:
           DATABASE_URL: "sqlite:///./data/ci2.db"
