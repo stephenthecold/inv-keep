@@ -46,11 +46,17 @@ DEFAULT_ROLES = {
 
 
 def seed_roles(db):
+    # Called once at startup AND from resolve_login on every oidc/forward
+    # request. Only commit when a row was actually added/changed so the common
+    # (already-seeded) case is read-only — an unconditional commit per request
+    # serialized a write transaction against SQLite's single writer.
+    dirty = False
     for name, info in DEFAULT_ROLES.items():
         row = db.query(Role).filter(Role.name == name).first()
         if row is None:
             db.add(Role(name=name, permissions=",".join(info["perms"]),
                         is_admin=info["admin"], builtin=True, customized=False))
+            dirty = True
             continue
         # Backfill: a previously-seeded built-in role may have an older perm
         # set. Add any default perm it's missing, but never remove what an
@@ -64,7 +70,9 @@ def seed_roles(db):
             if missing:
                 merged = sorted(existing.union(info["perms"]))
                 row.permissions = ",".join(merged)
-    db.commit()
+                dirty = True
+    if dirty:
+        db.commit()
 
 
 def perms_for_role(role):

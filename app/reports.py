@@ -3,6 +3,8 @@ import io
 import math
 from datetime import datetime
 
+from sqlalchemy.orm import selectinload
+
 from .models import Client, Order, Part, Transaction
 
 NO_JOB = "— No job —"
@@ -52,6 +54,16 @@ def build_report_range(db, start, end, client_ids=None, location_id=None):
         q = q.filter(Transaction.customer_id.in_(list(client_ids)))
     if location_id:
         q = q.filter(Transaction.location_id == location_id)
+    # The .join()s above only filter — they don't populate the ORM
+    # relationships the loops below read (t.part / t.client / t.job /
+    # t.location), so without eager loading each is a lazy per-row query
+    # (~4×rows). selectinload batches them into one query per relationship.
+    q = q.options(
+        selectinload(Transaction.part),
+        selectinload(Transaction.client),
+        selectinload(Transaction.job),
+        selectinload(Transaction.location),
+    )
     txns = q.all()
 
     clients = {}

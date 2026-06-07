@@ -108,7 +108,7 @@ class Job(Base):
     __tablename__ = "jobs"
 
     id = Column(Integer, primary_key=True)
-    client_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
+    client_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
     name = Column(String, nullable=False)
     reference = Column(String, default="")  # ticket / work-order number
     notes = Column(Text, default="")
@@ -236,9 +236,9 @@ class Transaction(Base):
     # Nullable so cart lines can exist before the user picks a client; submit
     # rejects an open cart without a client set, and /api/cart/set backfills
     # this column onto every line when the user picks one.
-    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
-    part_id = Column(Integer, ForeignKey("parts.id"), nullable=False)
+    part_id = Column(Integer, ForeignKey("parts.id"), nullable=False, index=True)
     # FK to the Order this line belongs to. Nullable for legacy rows that
     # predate the cart redesign.
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=True, index=True)
@@ -252,7 +252,9 @@ class Transaction(Base):
     scanned_by = Column(String, default="")
     note = Column(Text, default="")
     voided = Column(Boolean, nullable=False, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    # Indexed: every history / report / map / home query orders by or
+    # range-filters on this on the highest-growth table.
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
     # Optional link to a paper-receipt image uploaded via POST /mobile/receipts.
     # Stored as the opaque receipt_id token (e.g. "rcpt_abc123") rather than a
     # numeric FK so the device can stamp the line at submit time without
@@ -389,9 +391,11 @@ class AuditLog(Base):
     __tablename__ = "audit_log"
 
     id = Column(Integer, primary_key=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    # Indexed: /audit orders by created_at and filters by action; the log is
+    # unbounded so an index keeps the page from scanning the whole table.
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
     user = Column(String, default="")
-    action = Column(String, nullable=False)  # e.g. part.create, sale.checkout
+    action = Column(String, nullable=False, index=True)  # e.g. part.create, sale.checkout
     entity_type = Column(String, default="")
     entity_id = Column(Integer, nullable=True)
     summary = Column(Text, default="")

@@ -408,11 +408,14 @@ app.add_middleware(
 
 
 def ctx(request: Request, db: Session, **kwargs):
+    # A handler that already loaded the settings dict (e.g. to format markers
+    # before rendering) can pass cfg=... to avoid a second full-table read.
+    cfg = kwargs.pop("cfg", None) or store.all_settings(db)
     base = {
         "request": request,
         "user": getattr(request.state, "user", {"username": "", "email": ""}),
         "settings": settings,
-        "cfg": store.all_settings(db),
+        "cfg": cfg,
         "version": __version__,
         "icon_set": icons.ICON_SET,
         "icon_choices": icons.ICON_CHOICES,
@@ -2625,7 +2628,9 @@ def clients_page(request: Request, db: Session = Depends(get_db)):
     q = db.query(Client)
     if not show_archived:
         q = q.filter(Client.archived == False)  # noqa: E712
-    clients = q.order_by(Client.name).all()
+    # clients.html renders a job count + the job list per card; eager-load
+    # Client.jobs so it's one query, not one per client (N+1).
+    clients = q.options(selectinload(Client.jobs)).order_by(Client.name).all()
     return templates.TemplateResponse(
         "clients.html",
         ctx(request, db, clients=clients, show_archived=show_archived),
@@ -2877,13 +2882,15 @@ def transactions_page(request: Request, db: Session = Depends(get_db)):
             except ValueError:
                 pass
     # selectinload prevents 500× per-row trips to fetch part / client / job /
-    # location relationships from the template (transactions.html touches
-    # all four). One query per relationship instead of one per row.
+    # location / order relationships from the template (transactions.html
+    # touches all five — the Order link renders t.order.number per row). One
+    # query per relationship instead of one per row.
     txns = (q.options(
                 selectinload(Transaction.part),
                 selectinload(Transaction.client),
                 selectinload(Transaction.job),
                 selectinload(Transaction.location),
+                selectinload(Transaction.order),
             )
             .order_by(Transaction.created_at.desc()).limit(500).all())
     cfg = store.all_settings(db)
@@ -2893,7 +2900,7 @@ def transactions_page(request: Request, db: Session = Depends(get_db)):
                    .order_by(Location.name).all())
     return templates.TemplateResponse(
         "transactions.html",
-        ctx(request, db, txns=txns, month=month, markers=markers,
+        ctx(request, db, cfg=cfg, txns=txns, month=month, markers=markers,
             currency=cfg.get("currency", "$"),
             filter_locations=filter_locs,
             selected_location_id=selected_loc if selected_loc is not None else ""),
@@ -2918,12 +2925,14 @@ def map_page(request: Request, db: Session = Depends(get_db)):
         )
         .order_by(Transaction.created_at.desc())
     )
-    txns = q.all()
+    # _txn_markers reads t.order.number per row — eager-load it so the map isn't
+    # an N+1 over the order table.
+    txns = q.options(selectinload(Transaction.order)).all()
     cfg = store.all_settings(db)
     markers = _txn_markers(txns, cfg.get("timezone") or "UTC")
     return templates.TemplateResponse(
         "map.html",
-        ctx(request, db, markers=markers, range_label=label, month=month_str,
+        ctx(request, db, cfg=cfg, markers=markers, range_label=label, month=month_str,
             date_from=date_from, date_to=date_to, currency=cfg.get("currency", "$")),
     )
 

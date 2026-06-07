@@ -3,6 +3,27 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.30.0] — 2026-06-07
+Performance (review batch 3) — faster history, reports, and listings as the
+data grows. No behaviour change; same pages, fewer/cheaper queries.
+
+- **Indexes on the hot, unbounded tables.** Added indexes on
+  `transactions.created_at` (every history / report / map / home query orders
+  by or range-filters on it), `transactions.customer_id` + `part_id` (delete /
+  void history checks), `audit_log.created_at` + `action` (the `/audit` page),
+  and `jobs.client_id`. They're created on fresh databases and back-filled onto
+  existing ones at startup.
+- **Killed the N+1 query fan-outs.** `/transactions` and `/map` now eager-load
+  the order link they render per row; the monthly **report builder** eager-loads
+  part/client/job/location (previously ~4 lazy queries per line); `/clients`
+  eager-loads each client's jobs; and the mobile **recent-orders** endpoint
+  batches every order's lines into one query and eager-loads the customer
+  (was ~2 queries per order).
+- **Less per-request work.** Role seeding no longer issues a write transaction
+  on every authenticated request — it only commits when a role actually changed.
+  `/transactions` and `/map` reuse the settings dict they already loaded instead
+  of reading the whole settings table twice.
+
 ## [1.29.0] — 2026-06-07
 Correctness hardening (review batch 2).
 
