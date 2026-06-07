@@ -3,6 +3,36 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.32.0] — 2026-06-07
+Mobile companion app v3 — six additive capabilities on the `/mobile/*` API.
+No breaking changes to existing endpoints.
+
+- **Category browse.** `GET /mobile/items/categories` returns each category
+  with an active-item count (count desc, name asc); `GET /mobile/items/search`
+  takes an optional `?category=` exact-match filter, combinable with `?q=`.
+- **Per-item icons.** `ItemDto` gains a nullable `icon_url`. Icons upload via
+  `POST /mobile/items/{id}/icon` and serve from `GET /mobile/items/{id}/icon`.
+  SVG is supported — but, unlike the web favicon/logo uploads, only because the
+  serving route is hardened (sandbox CSP + `nosniff`, `<img>`-only) so an
+  embedded script can't execute. Long immutable cache headers.
+- **White-labeling.** `GET /mobile/whitelabel` (public — usable before login)
+  returns `brand_name` / `logo_url` / `primary_color_hex` / `accent_color_hex`
+  from the install's branding settings; the logo serves publicly via
+  `GET /mobile/brand/logo` so the login screen can show it.
+- **Inventory management (admin-only).** A new per-PIN **Inventory admin** flag
+  (set in Settings → Kiosk PINs, surfaced as `TechDto.is_inventory_admin`)
+  gates `POST /mobile/items`, `PATCH /mobile/items/{id}`, and
+  `POST /mobile/items/{id}/stock-adjust` (ledgered to the audit log with the
+  reason + acting tech). Non-admins get 403.
+- **Reject $0 orders.** `POST /mobile/orders` now refuses a $0 total or a $0
+  client-supplied line with `400 {"error":"zero_total"}` — with an
+  `allow_zero_total:true` escape hatch for deliberate no-charge orders.
+- **$0 audit list.** `GET /mobile/orders/zero-total` lists historical $0
+  orders (same shape + pagination as `/orders/recent`) for review.
+- **GPS (confirmation):** mobile orders already persist `geo_lat`/`geo_lon`
+  per line and surface them in the web UI on **History** (per-row map pin) and
+  the **Map** page — no change needed.
+
 ## [1.31.0] — 2026-06-07
 UI / accessibility polish (review batch 4).
 

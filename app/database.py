@@ -44,6 +44,7 @@ _ADDED_COLUMNS = {
         "archived": "BOOLEAN DEFAULT 0",
         "pack_size": "INTEGER DEFAULT 1",
         "pack_unit_label": "TEXT DEFAULT ''",
+        "icon_image": "TEXT DEFAULT ''",
     },
     "categories": {
         "description": "TEXT DEFAULT ''",
@@ -60,6 +61,7 @@ _ADDED_COLUMNS = {
     },
     "kiosk_pins": {
         "badge_uid": "TEXT",
+        "is_inventory_admin": "BOOLEAN DEFAULT 0",
     },
     "transactions": {
         "job_id": "INTEGER",
