@@ -321,6 +321,52 @@ jobs:
           assert reports._c(totals['charge']) == '4.50' and reports._c(totals['margin']) == '2.25'
           print('parts_add validation + emailer rounding OK')
           "
+      - name: Hot-path indexes + no N+1 (perf regression)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_perf.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import re, sqlite3
+          from sqlalchemy import event
+          from fastapi.testclient import TestClient
+          # Importing app.main runs create_all + ensure_columns on the DB.
+          from app.main import app
+          from app.database import engine, SessionLocal
+          from app.models import KioskPin, Location, Client, Part
+          # 1. The hot-path indexes exist on a fresh DB.
+          con = sqlite3.connect('./data/ci_perf.db')
+          def idxs(t): return {r[1] for r in con.execute('PRAGMA index_list(' + t + ')')}
+          ti, ai, ji = idxs('transactions'), idxs('audit_log'), idxs('jobs')
+          assert {'ix_transactions_created_at', 'ix_transactions_customer_id', 'ix_transactions_part_id'} <= ti, ti
+          assert {'ix_audit_log_created_at', 'ix_audit_log_action'} <= ai, ai
+          assert 'ix_jobs_client_id' in ji, ji
+          con.close()
+          # 2. Mobile recent-orders query count is constant (no per-order N+1).
+          cnt = [0]
+          @event.listens_for(engine, 'before_cursor_execute')
+          def _c(conn, cur, stmt, params, ctx, many):
+              if stmt.lstrip().upper().startswith('SELECT'): cnt[0] += 1
+          def count(fn): cnt[0] = 0; fn(); return cnt[0]
+          c = TestClient(app)
+          tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', c.get('/').text).group(1)
+          for i in range(6):
+              c.post('/clients/add', data={'_csrf': tok, 'name': 'Cli' + str(i)})
+              c.post('/parts/add', data={'_csrf': tok, 'name': 'Part' + str(i), 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2', 'quantity_on_hand': '50'})
+          db = SessionLocal(); loc = db.query(Location).first().id
+          db.add(KioskPin(label='T', pin='9876', kiosk_username='alice', location_id=loc, active=True)); db.commit()
+          clients = [x.id for x in db.query(Client).all()]; pids = [p.id for p in db.query(Part).all()]; db.close()
+          bh = {'Authorization': 'Bearer ' + c.post('/mobile/auth/token', json={'pin': '9876'}).json()['token']}
+          for i in range(2):
+              c.post('/mobile/orders', json={'client_action_id': 'a' + str(i), 'customer_id': clients[i], 'location_id': loc, 'lines': [{'item_id': pids[i], 'qty': 1}]}, headers=bh)
+          q2 = count(lambda: c.get('/mobile/orders/recent?limit=50', headers=bh))
+          for i in range(2, 6):
+              c.post('/mobile/orders', json={'client_action_id': 'a' + str(i), 'customer_id': clients[i], 'location_id': loc, 'lines': [{'item_id': pids[i], 'qty': 1}]}, headers=bh)
+          q6 = count(lambda: c.get('/mobile/orders/recent?limit=50', headers=bh))
+          assert q6 <= q2 + 1, 'recent_orders N+1 regressed: ' + str(q2) + ' -> ' + str(q6)
+          print('hot-path indexes + constant-query recent OK (' + str(q2) + '/' + str(q6) + ')')
+          "
       - name: NaN geo rejected (security regression test)
         env:
           DATABASE_URL: "sqlite:///./data/ci2.db"

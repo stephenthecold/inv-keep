@@ -25,7 +25,7 @@ from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, Re
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from . import audit
 from . import orders as orders_mod
@@ -862,17 +862,26 @@ def recent_orders(
     cutoff = _parse_iso(before)
     if cutoff is not None:
         q = q.filter(Order.submitted_at < cutoff)
-    # Fetch one extra to know if a next page exists.
-    rows = q.limit(limit + 1).all()
+    # Fetch one extra to know if a next page exists. Eager-load the client so
+    # the loop below doesn't lazy-load o.client per order.
+    rows = q.options(selectinload(Order.client)).limit(limit + 1).all()
     has_more = len(rows) > limit
     rows = rows[:limit]
 
+    # Batch every order's lines into one query grouped by order_id, instead of
+    # a per-order SELECT (N+1).
+    order_ids = [o.id for o in rows]
+    lines_by_order: dict = {}
+    if order_ids:
+        for ln in (db.query(Transaction)
+                   .filter(Transaction.order_id.in_(order_ids),
+                           Transaction.voided == False)  # noqa: E712
+                   .all()):
+            lines_by_order.setdefault(ln.order_id, []).append(ln)
+
     out: List[RecentOrderOut] = []
     for o in rows:
-        lines = (db.query(Transaction)
-                 .filter(Transaction.order_id == o.id,
-                         Transaction.voided == False)  # noqa: E712
-                 .all())
+        lines = lines_by_order.get(o.id, [])
         total_cents = sum(
             int(round(float(ln.unit_price_at_time or 0) * 100)) * ln.quantity
             for ln in lines

@@ -101,6 +101,31 @@ def ensure_columns():
                     conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
         _relax_transactions_customer_id(conn)
         _ensure_order_idempotency_index(conn)
+        _ensure_perf_indexes(conn)
+
+
+# v1.30: indexes that back the hot history / report / audit paths. Fresh DBs
+# get these from the models' index=True via create_all; this adds them to
+# databases created before the index existed. Keyed by index name → DDL so the
+# IF NOT EXISTS guard is a cheap no-op once present.
+_PERF_INDEXES = {
+    "ix_transactions_created_at": "CREATE INDEX IF NOT EXISTS ix_transactions_created_at ON transactions(created_at)",
+    "ix_transactions_customer_id": "CREATE INDEX IF NOT EXISTS ix_transactions_customer_id ON transactions(customer_id)",
+    "ix_transactions_part_id": "CREATE INDEX IF NOT EXISTS ix_transactions_part_id ON transactions(part_id)",
+    "ix_audit_log_created_at": "CREATE INDEX IF NOT EXISTS ix_audit_log_created_at ON audit_log(created_at)",
+    "ix_audit_log_action": "CREATE INDEX IF NOT EXISTS ix_audit_log_action ON audit_log(action)",
+    "ix_jobs_client_id": "CREATE INDEX IF NOT EXISTS ix_jobs_client_id ON jobs(client_id)",
+}
+
+
+def _ensure_perf_indexes(conn):
+    for ddl in _PERF_INDEXES.values():
+        try:
+            conn.exec_driver_sql(ddl)
+        except Exception:
+            # A missing table on a partially-migrated DB just means create_all
+            # will make it (with the index) on this same startup; skip quietly.
+            continue
 
 
 def _ensure_order_idempotency_index(conn):
