@@ -3736,6 +3736,7 @@ def settings_kiosk_add(
     pin: str = Form(""),
     kiosk_username: str = Form("kiosk"),
     location_id: str = Form(""),
+    is_inventory_admin: str = Form(""),
     db: Session = Depends(get_db),
 ):
     """Create a new KioskPin. Refuses duplicate PINs across active rows
@@ -3763,6 +3764,7 @@ def settings_kiosk_add(
         kiosk_username=(kiosk_username or "kiosk").strip() or "kiosk",
         location_id=loc_id,
         active=True,
+        is_inventory_admin=(is_inventory_admin == "on"),
     )
     db.add(row)
     db.flush()
@@ -3781,6 +3783,7 @@ def settings_kiosk_save(
     kiosk_username: str = Form("kiosk"),
     location_id: str = Form(""),
     active: str = Form(""),
+    is_inventory_admin: str = Form(""),
     db: Session = Depends(get_db),
 ):
     """Edit an existing KioskPin. Blank `pin` keeps the current code; any
@@ -3813,6 +3816,7 @@ def settings_kiosk_save(
     row.label = (label or "").strip() or row.label or f"Kiosk #{row.id}"
     row.kiosk_username = (kiosk_username or "kiosk").strip() or "kiosk"
     row.active = active == "on"
+    row.is_inventory_admin = (is_inventory_admin == "on")
     audit.record(db, user, "kiosk_pin.edit", "kiosk_pin", row.id,
                  f"Edited kiosk PIN '{row.label}'")
     db.commit()

@@ -46,6 +46,10 @@ class Part(Base):
     description = Column(Text, default="")
     icon = Column(String, default="")   # emoji / short text for quick identification
     image = Column(String, default="")  # optional uploaded photo path (/uploads/items/..)
+    # v1.32: optional uploaded vector/raster icon for the mobile catalog, served
+    # hardened via GET /mobile/items/<id>/icon. Stored as that served path
+    # (with a ?v= cache-buster); blank = no custom icon.
+    icon_image = Column(String, default="")
     barcode = Column(String, unique=True, nullable=False, index=True)
     # "bulk"  -> quantity-tracked SKU, one barcode shared by many identical items
     # "unique"-> a single physical item with its own barcode
@@ -338,6 +342,9 @@ class KioskPin(Base):
     # the PIN on /mobile/auth/token. Unique so a UID maps to exactly one PIN.
     badge_uid = Column(String, unique=True, nullable=True, index=True)
     active = Column(Boolean, nullable=False, default=True)
+    # v1.32: techs flagged here may add/edit catalog items + adjust stock from
+    # the mobile app's Inventory screen. Default off — a normal POS PIN can't.
+    is_inventory_admin = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     location = relationship("Location")

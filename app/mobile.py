@@ -14,14 +14,18 @@ Routes live OUTSIDE the cookie auth middleware and outside CSRF — see the
 ``/mobile`` bypass in ``main.py:auth_middleware`` and ``csrf.EXEMPT_PREFIXES``.
 """
 
+import glob
 import hmac
 import os
+import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
+from urllib.parse import urljoin
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, Response, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, or_
 from sqlalchemy.exc import IntegrityError
@@ -51,7 +55,55 @@ os.makedirs(RECEIPTS_DIR, exist_ok=True)
 _RECEIPT_EXT = {"image/jpeg": ".jpg", "image/png": ".png"}
 _MAX_RECEIPT_BYTES = 5 * 1024 * 1024  # 5 MB per the mobile spec
 
+# Per-item catalog icons (mobile app). SVG is allowed here — unlike the web
+# favicon/logo uploads — but ONLY because the GET route below serves them with
+# a sandbox CSP + nosniff and the app references them as <img>, so an embedded
+# script can never execute (no stored-XSS). Never inline these into HTML.
+ITEM_ICON_DIR = os.path.join("data", "uploads", "item-icons")
+os.makedirs(ITEM_ICON_DIR, exist_ok=True)
+_ICON_EXT = {"image/svg+xml": ".svg", "image/png": ".png", "image/jpeg": ".jpg"}
+_MAX_ICON_BYTES = 256 * 1024  # ~256 KB per the spec
+# Headers that neutralise a hostile SVG: sandbox blocks scripts even on direct
+# navigation, nosniff pins the declared type. Long immutable cache (?v= busts it).
+_ICON_HEADERS = {
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "public, max-age=2592000, immutable",
+}
+_ICON_MEDIA = {".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg"}
+
 # ---- helpers ---------------------------------------------------------------
+
+
+def _abs_url(request: Request, path: str) -> str:
+    """Absolute URL for a served path, honouring the proxy's forwarded scheme/host
+    (uvicorn runs with --proxy-headers) so links are https behind a TLS proxy."""
+    return urljoin(str(request.base_url), path.lstrip("/"))
+
+
+_HEX_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
+def _hex_color_or_none(s: Optional[str]) -> Optional[str]:
+    s = (s or "").strip()
+    return s if _HEX_RE.match(s) else None
+
+
+def _resolve_or_create_category(db: Session, name: Optional[str]) -> Optional[int]:
+    """Map a category name to its id, creating a top-level category if it
+    doesn't exist (case-insensitive). Blank name → uncategorised (None)."""
+    nm = (name or "").strip()
+    if not nm:
+        return None
+    existing = (db.query(Category)
+                .filter(func.lower(Category.name) == nm.lower())
+                .first())
+    if existing is not None:
+        return existing.id
+    cat = Category(name=nm[:100])
+    db.add(cat)
+    db.flush()
+    return cat.id
 
 def _iso_utc(dt: Optional[datetime]) -> Optional[str]:
     """Format a naive-UTC or aware datetime as ``YYYY-MM-DDTHH:MM:SSZ``."""
@@ -116,6 +168,15 @@ def get_current_tech(
     return pin
 
 
+def get_inventory_admin(tech: KioskPin = Depends(get_current_tech)) -> KioskPin:
+    """Like get_current_tech, but 403s unless the tech's PIN is flagged
+    is_inventory_admin in the web admin UI. Gates the item create/edit/stock
+    endpoints."""
+    if not getattr(tech, "is_inventory_admin", False):
+        raise HTTPException(status_code=403, detail="inventory_admin_required")
+    return tech
+
+
 # ---- 1. POST /mobile/auth/token --------------------------------------------
 
 class AuthTokenIn(BaseModel):
@@ -127,6 +188,7 @@ class TechOut(BaseModel):
     id: int
     name: str
     default_location_id: Optional[int] = None
+    is_inventory_admin: bool = False
 
 
 class AuthTokenOut(BaseModel):
@@ -185,6 +247,7 @@ def auth_token(payload: AuthTokenIn, request: Request, db: Session = Depends(get
             id=matched.id,
             name=_tech_display_name(matched),
             default_location_id=matched.location_id,
+            is_inventory_admin=bool(matched.is_inventory_admin),
         ),
     )
 
@@ -198,9 +261,12 @@ class ItemOut(BaseModel):
     category: str
     in_stock_at_location: int
     default_price_cents: int
+    # Absolute URL to the item's custom icon (SVG/PNG), or null to fall back to
+    # a generic icon. Served hardened by GET /mobile/items/<id>/icon.
+    icon_url: Optional[str] = None
 
 
-def _item_dto(db: Session, tech: KioskPin, part: Part) -> ItemOut:
+def _item_dto(db: Session, tech: KioskPin, part: Part, request: Request) -> ItemOut:
     """Render a Part as the wire shape. ``in_stock_at_location`` is the
     quantity at the tech's default location (or the part's aggregate
     quantity_on_hand when the tech has no default location pinned)."""
@@ -209,6 +275,7 @@ def _item_dto(db: Session, tech: KioskPin, part: Part) -> ItemOut:
         qty = orders_mod.stock_at(db, part.id, loc_id)
     else:
         qty = int(part.quantity_on_hand or 0)
+    icon_url = _abs_url(request, part.icon_image) if (part.icon_image or "") else None
     return ItemOut(
         id=part.id,
         sku=part.barcode,
@@ -216,12 +283,14 @@ def _item_dto(db: Session, tech: KioskPin, part: Part) -> ItemOut:
         category=(part.category.name if part.category else ""),
         in_stock_at_location=qty,
         default_price_cents=int(round(float(part.unit_price or 0) * 100)),
+        icon_url=icon_url,
     )
 
 
 @router.get("/items/by-barcode/{code}", response_model=ItemOut)
 def item_by_barcode(
     code: str,
+    request: Request,
     tech: KioskPin = Depends(get_current_tech),
     db: Session = Depends(get_db),
 ):
@@ -236,7 +305,7 @@ def item_by_barcode(
         part = base.filter(func.lower(Part.barcode) == code.lower()).first()
     if part is None:
         raise HTTPException(status_code=404, detail="item_not_found")
-    return _item_dto(db, tech, part)
+    return _item_dto(db, tech, part, request)
 
 
 class ItemsLookupOut(BaseModel):
@@ -246,6 +315,7 @@ class ItemsLookupOut(BaseModel):
 
 @router.get("/items/lookup", response_model=ItemsLookupOut)
 def items_lookup(
+    request: Request,
     q: str = "",
     tech: KioskPin = Depends(get_current_tech),
     db: Session = Depends(get_db),
@@ -267,7 +337,7 @@ def items_lookup(
     if exact is None:
         exact = base.filter(func.lower(Part.barcode) == qv.lower()).first()
     if exact is not None:
-        return ItemsLookupOut(exact=_item_dto(db, tech, exact), candidates=[])
+        return ItemsLookupOut(exact=_item_dto(db, tech, exact, request), candidates=[])
 
     # 2. Prefix match on name / barcode.
     pfx = f"{qv}%"
@@ -281,10 +351,10 @@ def items_lookup(
                 .order_by(Part.name).limit(10).all())
 
     if len(rows) == 1:
-        return ItemsLookupOut(exact=_item_dto(db, tech, rows[0]), candidates=[])
+        return ItemsLookupOut(exact=_item_dto(db, tech, rows[0], request), candidates=[])
     return ItemsLookupOut(
         exact=None,
-        candidates=[_item_dto(db, tech, r) for r in rows],
+        candidates=[_item_dto(db, tech, r, request) for r in rows],
     )
 
 
@@ -296,16 +366,20 @@ class ItemsSearchOut(BaseModel):
 
 @router.get("/items/search", response_model=ItemsSearchOut)
 def items_search(
+    request: Request,
     q: str = "",
+    category: str = "",
     limit: int = 20,
     offset: int = 0,
     tech: KioskPin = Depends(get_current_tech),
     db: Session = Depends(get_db),
 ):
     """Paginated catalog browse. Searches name, SKU/barcode, and category
-    name (case-insensitive contains). ``total`` is the unfiltered match
-    count so the client can page without re-querying."""
+    name (case-insensitive contains). An optional ``category`` param restricts
+    to items whose category name matches exactly (case-insensitive), combinable
+    with ``q``. ``total`` is the unfiltered-by-page match count."""
     qv = (q or "").strip()
+    cat = (category or "").strip()
     limit = max(1, min(100, int(limit or 20)))
     offset = max(0, int(offset or 0))
 
@@ -318,14 +392,287 @@ def items_search(
         base = base.filter(or_(Part.name.ilike(like),
                                Part.barcode.ilike(like),
                                Category.name.ilike(like)))
+    if cat:
+        base = base.filter(func.lower(Category.name) == cat.lower())
 
     total = base.with_entities(func.count(func.distinct(Part.id))).scalar() or 0
     rows = base.order_by(Part.name).offset(offset).limit(limit).all()
     return ItemsSearchOut(
-        items=[_item_dto(db, tech, p) for p in rows],
+        items=[_item_dto(db, tech, p, request) for p in rows],
         total=int(total),
         has_more=(offset + len(rows)) < int(total),
     )
+
+
+# ---- 1b. GET /mobile/items/categories --------------------------------------
+
+class CategoryCountOut(BaseModel):
+    name: str
+    count: int
+
+
+class CategoriesOut(BaseModel):
+    categories: List[CategoryCountOut]
+
+
+@router.get("/items/categories", response_model=CategoriesOut)
+def items_categories(
+    tech: KioskPin = Depends(get_current_tech),
+    db: Session = Depends(get_db),
+):
+    """Category filter chips for the catalog: every category that has at least
+    one active, non-archived item, with its item count. Sorted by count desc,
+    then name asc. Uncategorised items are not a category and are excluded."""
+    rows = (db.query(Category.name, func.count(Part.id))
+            .join(Part, Part.category_id == Category.id)
+            .filter(Part.active == True,  # noqa: E712
+                    Part.archived == False)  # noqa: E712
+            .group_by(Category.id)
+            .having(func.count(Part.id) > 0)
+            .all())
+    out = sorted(((name, int(n)) for name, n in rows), key=lambda r: (-r[1], r[0].lower()))
+    return CategoriesOut(categories=[CategoryCountOut(name=name, count=n) for name, n in out])
+
+
+# ---- 1c. white-labeling (public — no bearer) -------------------------------
+
+class WhitelabelOut(BaseModel):
+    brand_name: Optional[str] = None
+    logo_url: Optional[str] = None
+    primary_color_hex: Optional[str] = None
+    accent_color_hex: Optional[str] = None
+
+
+@router.get("/whitelabel", response_model=WhitelabelOut)
+def whitelabel(request: Request, db: Session = Depends(get_db)):
+    """Per-host branding for the app's theme + login screen. PUBLIC by design —
+    no bearer token — so the login screen can be branded before sign-in. All
+    fields nullable; the app falls back to defaults. inv-keep stores a single
+    brand colour (brand_accent), mapped to primary; accent stays null."""
+    brand_name = (store.get(db, "app_title") or "").strip() or None
+    logo = (store.get(db, "brand_logo") or "").strip()
+    logo_url = _abs_url(request, "/mobile/brand/logo") if logo else None
+    primary = _hex_color_or_none(store.get(db, "brand_accent"))
+    return WhitelabelOut(
+        brand_name=brand_name,
+        logo_url=logo_url,
+        primary_color_hex=primary,
+        accent_color_hex=None,
+    )
+
+
+@router.get("/brand/logo")
+def brand_logo_file(db: Session = Depends(get_db)):
+    """Serve the uploaded brand logo so the app can show it on the pre-auth
+    login screen (the /uploads mount is cookie-auth-gated). PUBLIC. The logo is
+    always a raster image — the web upload allowlist excludes SVG — so no
+    sandbox CSP is needed here."""
+    logo = (store.get(db, "brand_logo") or "").strip()
+    if not logo:
+        raise HTTPException(status_code=404, detail="no_logo")
+    name = logo.split("?", 1)[0]  # strip the ?v= cache-buster
+    if not name.startswith("/uploads/"):
+        raise HTTPException(status_code=404, detail="no_logo")
+    fname = name[len("/uploads/"):]
+    if "/" in fname or ".." in fname or not fname:
+        raise HTTPException(status_code=404, detail="no_logo")
+    path = os.path.join("data", "uploads", fname)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="no_logo")
+    ext = os.path.splitext(path)[1].lower()
+    media = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+             ".webp": "image/webp", ".gif": "image/gif"}.get(ext, "application/octet-stream")
+    return FileResponse(path, media_type=media,
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+
+# ---- 1d. item icons: serve (public) + upload (admin) -----------------------
+
+@router.get("/items/{item_id}/icon")
+def item_icon_file(item_id: int, db: Session = Depends(get_db)):
+    """Serve an item's icon. PUBLIC so the app's image loader (no bearer) and
+    cache can fetch it. Hardened headers (sandbox CSP + nosniff) neutralise a
+    hostile SVG even on direct navigation; the app loads it as <img>."""
+    part = db.get(Part, item_id)
+    if part is None or not (part.icon_image or ""):
+        raise HTTPException(status_code=404, detail="no_icon")
+    matches = sorted(glob.glob(os.path.join(ITEM_ICON_DIR, f"{item_id}.*")))
+    if not matches:
+        raise HTTPException(status_code=404, detail="no_icon")
+    path = matches[0]
+    ext = os.path.splitext(path)[1].lower()
+    media = _ICON_MEDIA.get(ext, "application/octet-stream")
+    return FileResponse(path, media_type=media, headers=dict(_ICON_HEADERS))
+
+
+@router.post("/items/{item_id}/icon", status_code=201)
+async def upload_item_icon(
+    item_id: int,
+    request: Request,
+    image: UploadFile = File(...),
+    tech: KioskPin = Depends(get_inventory_admin),
+    db: Session = Depends(get_db),
+):
+    """Upload a per-item icon (SVG / PNG / JPEG, ~256 KB). Admin only. Returns
+    the icon_url that will appear in ItemDto.icon_url. SVG is allowed because
+    the GET route above serves it sandboxed."""
+    part = db.get(Part, item_id)
+    if part is None or not part.active:
+        raise HTTPException(status_code=404, detail="item_not_found")
+    ctype = (image.content_type or "").lower()
+    ext = _ICON_EXT.get(ctype)
+    if not ext:
+        raise HTTPException(status_code=415, detail="unsupported_icon_type")
+    data = await image.read(_MAX_ICON_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=422, detail="empty_image")
+    if len(data) > _MAX_ICON_BYTES:
+        raise HTTPException(status_code=413, detail="icon_too_large")
+    for old in glob.glob(os.path.join(ITEM_ICON_DIR, f"{item_id}.*")):
+        try:
+            os.remove(old)
+        except OSError:
+            pass
+    with open(os.path.join(ITEM_ICON_DIR, f"{item_id}{ext}"), "wb") as fh:
+        fh.write(data)
+    served = f"/mobile/items/{item_id}/icon?v={secrets.token_hex(4)}"
+    part.icon_image = served
+    audit.record(db, {"username": _tech_username(tech)}, "item.icon", "part", part.id,
+                 f"Mobile icon uploaded ({ctype}, {len(data)} bytes)")
+    db.commit()
+    return {"icon_url": _abs_url(request, served)}
+
+
+# ---- 1e. inventory management (admin only): create / patch / stock ----------
+
+class ItemCreateIn(BaseModel):
+    sku: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=200)
+    category: Optional[str] = None
+    default_price_cents: int = Field(ge=0)
+    starting_stock_at_location_id: Optional[int] = None
+    starting_stock_qty: int = 0
+
+
+@router.post("/items", status_code=201, response_model=ItemOut)
+def create_item(
+    payload: ItemCreateIn,
+    request: Request,
+    tech: KioskPin = Depends(get_inventory_admin),
+    db: Session = Depends(get_db),
+):
+    """Create a catalog item from the app's Inventory screen. Admin only.
+    Optionally seeds starting stock at a location."""
+    sku = payload.sku.strip()
+    if len(sku) > 128 or any(ord(ch) < 0x20 for ch in sku):
+        raise HTTPException(status_code=400, detail={"error": "bad_sku"})
+    if db.query(Part).filter(Part.barcode == sku).first() is not None:
+        raise HTTPException(status_code=409, detail={"error": "sku_exists", "sku": sku})
+    cat_id = _resolve_or_create_category(db, payload.category)
+    part = Part(
+        name=payload.name.strip()[:200],
+        barcode=sku,
+        type="bulk",
+        unit_cost=0,
+        unit_price=round(int(payload.default_price_cents) / 100, 2),
+        category_id=cat_id,
+        quantity_on_hand=0,
+        active=True,
+        archived=False,
+    )
+    db.add(part)
+    db.flush()
+    qty = max(0, int(payload.starting_stock_qty or 0))
+    if qty and payload.starting_stock_at_location_id:
+        loc = db.get(Location, payload.starting_stock_at_location_id)
+        if loc is None or not loc.active or loc.archived:
+            raise HTTPException(status_code=404, detail={"error": "location_not_found",
+                                                         "location_id": payload.starting_stock_at_location_id})
+        sl = orders_mod.ensure_stock_row(db, part.id, loc.id)
+        sl.quantity += qty
+        part.quantity_on_hand += qty
+        audit.record(db, {"username": _tech_username(tech)}, "part.restock", "part", part.id,
+                     f"+{qty} → {loc.name} (mobile create)")
+    audit.record(db, {"username": _tech_username(tech)}, "item.create", "part", part.id,
+                 f"Mobile item: {part.name} ({sku})")
+    db.commit()
+    return _item_dto(db, tech, part, request)
+
+
+class ItemPatchIn(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+    default_price_cents: Optional[int] = None
+
+
+@router.patch("/items/{item_id}", response_model=ItemOut)
+def patch_item(
+    item_id: int,
+    payload: ItemPatchIn,
+    request: Request,
+    tech: KioskPin = Depends(get_inventory_admin),
+    db: Session = Depends(get_db),
+):
+    """Edit name / category / price of a catalog item. Admin only."""
+    part = db.get(Part, item_id)
+    if part is None or not part.active:
+        raise HTTPException(status_code=404, detail="item_not_found")
+    if payload.name is not None:
+        nm = payload.name.strip()
+        if not nm:
+            raise HTTPException(status_code=422, detail={"error": "name_required"})
+        part.name = nm[:200]
+    if payload.category is not None:
+        part.category_id = _resolve_or_create_category(db, payload.category)
+    if payload.default_price_cents is not None:
+        if int(payload.default_price_cents) < 0:
+            raise HTTPException(status_code=422, detail={"error": "negative_price"})
+        part.unit_price = round(int(payload.default_price_cents) / 100, 2)
+    audit.record(db, {"username": _tech_username(tech)}, "item.edit", "part", part.id,
+                 f"Mobile edit: {part.name}")
+    db.commit()
+    return _item_dto(db, tech, part, request)
+
+
+class StockAdjustIn(BaseModel):
+    delta: int
+    location_id: int
+    reason: Optional[str] = None
+
+
+@router.post("/items/{item_id}/stock-adjust")
+def stock_adjust(
+    item_id: int,
+    payload: StockAdjustIn,
+    tech: KioskPin = Depends(get_inventory_admin),
+    db: Session = Depends(get_db),
+):
+    """Adjust on-hand at a location by a signed delta, recording the reason +
+    acting tech in the audit ledger. Admin only. Refuses an adjustment that
+    would drive the location negative. Returns the new on-hand at that location."""
+    part = db.get(Part, item_id)
+    if part is None or not part.active:
+        raise HTTPException(status_code=404, detail="item_not_found")
+    loc = db.get(Location, payload.location_id)
+    if loc is None or not loc.active or loc.archived:
+        raise HTTPException(status_code=404, detail={"error": "location_not_found",
+                                                     "location_id": payload.location_id})
+    delta = int(payload.delta)
+    if delta == 0:
+        raise HTTPException(status_code=400, detail={"error": "zero_delta"})
+    sl = orders_mod.ensure_stock_row(db, part.id, loc.id)
+    new_qty = sl.quantity + delta
+    if new_qty < 0:
+        raise HTTPException(status_code=409, detail={"error": "insufficient_stock",
+                                                     "available": int(sl.quantity)})
+    sl.quantity = new_qty
+    part.quantity_on_hand += delta
+    reason = (payload.reason or "").strip()[:200]
+    audit.record(db, {"username": _tech_username(tech)}, "part.stock_adjust", "part", part.id,
+                 f"{'+' if delta >= 0 else ''}{delta} @ {loc.name} (now {new_qty})"
+                 + (f" — {reason}" if reason else ""))
+    db.commit()
+    return {"new_qty": int(new_qty)}
 
 
 # ---- 3. customers: search / jobs / by-card ---------------------------------
@@ -568,6 +915,9 @@ class OrderIn(BaseModel):
     geo_lon: Optional[float] = None
     lines: List[OrderLineIn]
     note: Optional[str] = None
+    # Escape hatch for a deliberate no-charge order (warranty swap, free item).
+    # When false (default) a $0 total or a $0 client-supplied line is rejected.
+    allow_zero_total: bool = False
 
 
 class OrderOut(BaseModel):
@@ -695,6 +1045,30 @@ def create_order(
             raise HTTPException(status_code=422, detail={
                 "error": "unknown_receipt",
                 "receipt_ids": sorted(missing),
+            })
+
+    # Zero-total guard (#5) — server-side belt + suspenders. A catalog line's
+    # price is the server's stored default, so a $0 catalog item is allowed
+    # per-line; but a $0 *client-supplied* custom-line price, or a $0 order
+    # total, is rejected unless allow_zero_total is set (intentional no-charge).
+    if not payload.allow_zero_total:
+        total_cents = 0
+        for idx, ln in enumerate(payload.lines):
+            if line_types[idx] == "catalog":
+                part = catalog_parts[ln.item_id]
+                price_cents = int(round(float(part.unit_price or 0) * 100))
+            else:
+                price_cents = int(ln.unit_price_cents or 0)
+                if price_cents == 0:
+                    raise HTTPException(status_code=400, detail={
+                        "error": "zero_total",
+                        "detail": "A custom line priced at $0 is not allowed; set allow_zero_total to override.",
+                    })
+            total_cents += price_cents * int(ln.qty)
+        if total_cents == 0:
+            raise HTTPException(status_code=400, detail={
+                "error": "zero_total",
+                "detail": "Order total is $0; set allow_zero_total to override.",
             })
 
     # Geo sanitisation — same NaN/Infinity guard as /api/cart/scan.
@@ -846,6 +1220,34 @@ class RecentOrdersOut(BaseModel):
     next_before: Optional[str] = None
 
 
+def _lines_by_order(db: Session, order_ids: List[int]) -> dict:
+    """One batched query → {order_id: [non-voided Transaction, ...]}."""
+    out: dict = {}
+    if order_ids:
+        for ln in (db.query(Transaction)
+                   .filter(Transaction.order_id.in_(order_ids),
+                           Transaction.voided == False)  # noqa: E712
+                   .all()):
+            out.setdefault(ln.order_id, []).append(ln)
+    return out
+
+
+def _order_total_cents(lines) -> int:
+    return sum(int(round(float(ln.unit_price_at_time or 0) * 100)) * ln.quantity
+               for ln in lines)
+
+
+def _order_row(o: Order, lines) -> RecentOrderOut:
+    return RecentOrderOut(
+        order_id=o.id,
+        order_number=o.number or "",
+        customer_name=o.client.name if o.client else "",
+        created_at=_iso_utc(o.submitted_at or o.created_at) or "",
+        line_count=len(lines),
+        total_cents=_order_total_cents(lines),
+    )
+
+
 @router.get("/orders/recent", response_model=RecentOrdersOut)
 def recent_orders(
     limit: int = 20,
@@ -867,36 +1269,53 @@ def recent_orders(
     rows = q.options(selectinload(Order.client)).limit(limit + 1).all()
     has_more = len(rows) > limit
     rows = rows[:limit]
-
-    # Batch every order's lines into one query grouped by order_id, instead of
-    # a per-order SELECT (N+1).
-    order_ids = [o.id for o in rows]
-    lines_by_order: dict = {}
-    if order_ids:
-        for ln in (db.query(Transaction)
-                   .filter(Transaction.order_id.in_(order_ids),
-                           Transaction.voided == False)  # noqa: E712
-                   .all()):
-            lines_by_order.setdefault(ln.order_id, []).append(ln)
-
-    out: List[RecentOrderOut] = []
-    for o in rows:
-        lines = lines_by_order.get(o.id, [])
-        total_cents = sum(
-            int(round(float(ln.unit_price_at_time or 0) * 100)) * ln.quantity
-            for ln in lines
-        )
-        out.append(RecentOrderOut(
-            order_id=o.id,
-            order_number=o.number or "",
-            customer_name=o.client.name if o.client else "",
-            created_at=_iso_utc(o.submitted_at or o.created_at) or "",
-            line_count=len(lines),
-            total_cents=total_cents,
-        ))
+    lines_by_order = _lines_by_order(db, [o.id for o in rows])
+    out = [_order_row(o, lines_by_order.get(o.id, [])) for o in rows]
 
     next_before = None
     if has_more and rows:
         anchor = rows[-1].submitted_at or rows[-1].created_at
+        next_before = _iso_utc(anchor)
+    return RecentOrdersOut(orders=out, next_before=next_before)
+
+
+# ---- 8. GET /mobile/orders/zero-total (audit) ------------------------------
+
+# Cap how far back the zero-total scan reaches in one page. $0 orders are rare
+# (this is an audit list), so a generous cap keeps the endpoint bounded without
+# a stored total column.
+_ZERO_SCAN_CAP = 5000
+
+
+@router.get("/orders/zero-total", response_model=RecentOrdersOut)
+def zero_total_orders(
+    limit: int = 20,
+    before: Optional[str] = None,
+    tech: KioskPin = Depends(get_current_tech),
+    db: Session = Depends(get_db),
+):
+    """Audit list of this tech's submitted orders whose total is $0 — the ones
+    that slipped through before the client-side guard. Same shape + pagination
+    as /orders/recent."""
+    limit = max(1, min(100, int(limit or 20)))
+    tech_user = _tech_username(tech)
+    q = (db.query(Order)
+         .filter(Order.created_by == tech_user,
+                 Order.status == "submitted")
+         .order_by(desc(Order.submitted_at), desc(Order.id)))
+    cutoff = _parse_iso(before)
+    if cutoff is not None:
+        q = q.filter(Order.submitted_at < cutoff)
+    candidates = q.options(selectinload(Order.client)).limit(_ZERO_SCAN_CAP).all()
+    lines_by_order = _lines_by_order(db, [o.id for o in candidates])
+    zeros = [o for o in candidates
+             if _order_total_cents(lines_by_order.get(o.id, [])) == 0]
+    has_more = len(zeros) > limit
+    zeros = zeros[:limit]
+    out = [_order_row(o, lines_by_order.get(o.id, [])) for o in zeros]
+
+    next_before = None
+    if has_more and zeros:
+        anchor = zeros[-1].submitted_at or zeros[-1].created_at
         next_before = _iso_utc(anchor)
     return RecentOrdersOut(orders=out, next_before=next_before)

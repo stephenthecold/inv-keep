@@ -298,7 +298,7 @@
   <p class="muted"><i>No PINs configured yet. Add one below — you'll need at least one active PIN before the kiosk switch above lets sessions start.</i></p>
   {% else %}
   <table class="lines" style="margin-bottom:.75rem">
-    <thead><tr><th>Label</th><th>PIN</th><th>Username</th><th>Default location</th><th>Active</th><th></th></tr></thead>
+    <thead><tr><th>Label</th><th>PIN</th><th>Username</th><th>Default location</th><th>Active</th><th title="Can add/edit items + adjust stock from the mobile app">Inv&nbsp;admin</th><th></th></tr></thead>
     <tbody>
     {% for p in kiosk_pins %}
     <tr>
@@ -321,7 +321,10 @@
         </select>
       </td>
       <td style="text-align:center">
-        <input form="kp-{{ p.id }}" type="checkbox" name="active" {% if p.active %}checked{% endif %}>
+        <input form="kp-{{ p.id }}" type="checkbox" name="active" {% if p.active %}checked{% endif %} aria-label="Active">
+      </td>
+      <td style="text-align:center">
+        <input form="kp-{{ p.id }}" type="checkbox" name="is_inventory_admin" {% if p.is_inventory_admin %}checked{% endif %} aria-label="Inventory admin">
       </td>
       <td style="white-space:nowrap">
         <button form="kp-{{ p.id }}" type="submit">Save</button>
@@ -352,6 +355,9 @@
         <option value="">— first active location —</option>
         {% for l in kiosk_locations %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
       </select>
+    </label>
+    <label class="check"><input type="checkbox" name="is_inventory_admin"> Inventory admin
+      <small class="muted" style="display:block">Lets this PIN add/edit catalog items and adjust stock from the mobile app's Inventory screen.</small>
     </label>
     <button type="submit">Add PIN</button>
   </form>

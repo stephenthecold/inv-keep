@@ -947,6 +947,83 @@ jobs:
           assert c.post('/mobile/receipts', files={'image': ('r.png', io.BytesIO(PNG), 'image/png')}).status_code == 401
           print('mobile API extended OK')
           "
+      - name: Mobile companion v3 (categories/whitelabel/inventory/icons/zero-total)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_v3.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import io, os, re
+          from fastapi.testclient import TestClient
+          from app.main import app
+          from app.database import SessionLocal
+          from app.models import KioskPin, Location, Client, Part, Category
+          from app import settings_store as store
+          c = TestClient(app)
+          tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', c.get('/').text).group(1)
+          c.post('/clients/add', data={'_csrf': tok, 'name': 'Acme'})
+          c.post('/categories/add', data={'_csrf': tok, 'name': 'Cabling'})
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'Patch cable', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2.50', 'quantity_on_hand': '10'})
+          db = SessionLocal()
+          store.set(db, 'app_title', 'Connected Technologies'); store.set(db, 'brand_accent', '#0B5394'); store.set(db, 'brand_logo', '/uploads/logo.png?v=ab12')
+          loc = db.query(Location).first().id; cl = db.query(Client).first().id
+          cab = db.query(Category).filter(Category.name == 'Cabling').first().id
+          p = db.query(Part).first(); pid = p.id; p.category_id = cab
+          db.add(KioskPin(label='Normal', pin='1111', kiosk_username='norm', location_id=loc, active=True, is_inventory_admin=False))
+          db.add(KioskPin(label='InvAdmin', pin='2222', kiosk_username='boss', location_id=loc, active=True, is_inventory_admin=True))
+          db.commit(); db.close()
+          os.makedirs('data/uploads', exist_ok=True); open('data/uploads/logo.png', 'wb').write(b'\\x89PNG fake')
+          norm = c.post('/mobile/auth/token', json={'pin': '1111'}).json()
+          boss = c.post('/mobile/auth/token', json={'pin': '2222'}).json()
+          assert norm['tech']['is_inventory_admin'] is False and boss['tech']['is_inventory_admin'] is True
+          hn = {'Authorization': 'Bearer ' + norm['token']}; hb = {'Authorization': 'Bearer ' + boss['token']}
+          # #3 whitelabel is public (no bearer); brand logo serves
+          wl = c.get('/mobile/whitelabel').json()
+          assert wl['brand_name'] == 'Connected Technologies' and wl['primary_color_hex'] == '#0B5394' and wl['accent_color_hex'] is None, wl
+          assert '/mobile/brand/logo' in wl['logo_url'] and c.get('/mobile/brand/logo').status_code == 200
+          # #1 categories + search filter
+          assert c.get('/mobile/items/categories', headers=hn).json()['categories'] == [{'name': 'Cabling', 'count': 1}]
+          assert c.get('/mobile/items/search?category=cabling', headers=hn).json()['total'] == 1
+          assert c.get('/mobile/items/search?category=nope', headers=hn).json()['total'] == 0
+          # #2 icon_url null until uploaded
+          assert c.get('/mobile/items/search?q=Patch', headers=hn).json()['items'][0]['icon_url'] is None
+          # #4 admin gate + create/patch/stock-adjust
+          assert c.post('/mobile/items', json={'sku': 'X-1', 'name': 'Nope', 'default_price_cents': 100}, headers=hn).status_code == 403
+          cr = c.post('/mobile/items', json={'sku': 'KEY-WP-1P', 'name': '1-port keystone wall plate', 'category': 'Cabling', 'default_price_cents': 695, 'starting_stock_at_location_id': loc, 'starting_stock_qty': 25}, headers=hb)
+          assert cr.status_code == 201 and cr.json()['default_price_cents'] == 695 and cr.json()['in_stock_at_location'] == 25 and cr.json()['category'] == 'Cabling', cr.text
+          nid = cr.json()['id']
+          assert c.post('/mobile/items', json={'sku': 'KEY-WP-1P', 'name': 'dup', 'default_price_cents': 1}, headers=hb).status_code == 409
+          pr = c.patch('/mobile/items/' + str(nid), json={'default_price_cents': 750, 'category': 'Plates'}, headers=hb)
+          assert pr.status_code == 200 and pr.json()['default_price_cents'] == 750 and pr.json()['category'] == 'Plates'
+          assert c.patch('/mobile/items/' + str(nid), json={'name': 'x'}, headers=hn).status_code == 403
+          assert c.post('/mobile/items/' + str(nid) + '/stock-adjust', json={'delta': -5, 'location_id': loc, 'reason': 'damaged'}, headers=hb).json() == {'new_qty': 20}
+          assert c.post('/mobile/items/' + str(nid) + '/stock-adjust', json={'delta': -9999, 'location_id': loc}, headers=hb).status_code == 409
+          assert c.post('/mobile/items/' + str(nid) + '/stock-adjust', json={'delta': 1, 'location_id': loc}, headers=hn).status_code == 403
+          # #2/#4 SVG icon upload (admin) is served hardened (sandbox CSP + nosniff)
+          SVG = b'<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>'
+          iu = c.post('/mobile/items/' + str(nid) + '/icon', files={'image': ('i.svg', io.BytesIO(SVG), 'image/svg+xml')}, headers=hb)
+          assert iu.status_code == 201 and '/mobile/items/' + str(nid) + '/icon' in iu.json()['icon_url'], iu.text
+          assert '/icon?v=' in c.get('/mobile/items/by-barcode/KEY-WP-1P', headers=hn).json()['icon_url']
+          gr = c.get('/mobile/items/' + str(nid) + '/icon')
+          assert gr.status_code == 200 and gr.headers['content-type'] == 'image/svg+xml'
+          assert 'sandbox' in gr.headers.get('content-security-policy', '') and gr.headers.get('x-content-type-options') == 'nosniff', dict(gr.headers)
+          assert c.post('/mobile/items/' + str(nid) + '/icon', files={'image': ('x.gif', io.BytesIO(b'GIF89a'), 'image/gif')}, headers=hb).status_code == 415
+          assert c.post('/mobile/items/' + str(nid) + '/icon', files={'image': ('b.png', io.BytesIO(b'\\x00' * (256 * 1024 + 10)), 'image/png')}, headers=hb).status_code == 413
+          # #5 zero-total reject + override
+          z = c.post('/mobile/orders', json={'client_action_id': 'z1', 'customer_id': cl, 'location_id': loc, 'lines': [{'type': 'custom', 'name': 'free', 'qty': 1, 'unit_price_cents': 0}]}, headers=hb)
+          assert z.status_code == 400 and z.json()['detail']['error'] == 'zero_total', z.text
+          assert c.post('/mobile/orders', json={'client_action_id': 'z2', 'customer_id': cl, 'location_id': loc, 'allow_zero_total': True, 'lines': [{'type': 'custom', 'name': 'free', 'qty': 1, 'unit_price_cents': 0}]}, headers=hb).status_code == 201
+          assert c.post('/mobile/orders', json={'client_action_id': 'n1', 'customer_id': cl, 'location_id': loc, 'lines': [{'item_id': pid, 'qty': 1}]}, headers=hb).status_code == 201
+          # #6 zero-total audit list
+          zt = c.get('/mobile/orders/zero-total', headers=hb).json()
+          assert len(zt['orders']) == 1 and zt['orders'][0]['total_cents'] == 0, zt
+          assert len(c.get('/mobile/orders/recent', headers=hb).json()['orders']) == 2
+          # whitelabel + icon GET stay public (no bearer -> still 200, not 401)
+          assert c.get('/mobile/whitelabel').status_code == 200
+          assert c.get('/mobile/items/' + str(nid) + '/icon').status_code == 200
+          print('mobile companion v3 OK')
+          "
       - name: UI/UX regressions (popup money + table-scroll + a11y)
         env:
           DATABASE_URL: "sqlite:///./data/ci_ui.db"
