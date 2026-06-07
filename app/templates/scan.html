@@ -101,6 +101,16 @@
 
   <div class="cart-footer">
     <div class="cart-subtotal">Subtotal <strong id="cart-subtotal">{{ cfg.currency }}0.00</strong></div>
+    {% if show_tech_picker %}
+    <div class="cart-tech-row" id="cart-tech-row">
+      <label for="cart-tech">Technician <span aria-hidden="true" style="color:var(--bad)">*</span></label>
+      <select id="cart-tech" required aria-describedby="cart-tech-msg" data-required="1">
+        <option value="">— pick technician —</option>
+        {% for t in technicians %}<option value="{{ t.id }}" {% if last_tech_id and last_tech_id|string == t.id|string %}selected{% endif %}>{{ t.name }}</option>{% endfor %}
+      </select>
+      <small id="cart-tech-msg" class="muted">Pick the technician charging this out.</small>
+    </div>
+    {% endif %}
     <div class="cart-actions cart-actions-bottom">
       <button type="button" class="ghost" id="cart-cancel">Cancel</button>
       <button type="button" id="cart-submit">Submit Order</button>

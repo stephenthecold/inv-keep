@@ -369,6 +369,43 @@
 </section>
 {% endif %}
 
+<!-- ---------------- Technicians ---------------- -->
+{% if user.is_admin %}
+<section class="card settings-tab" id="tab-techs" data-tab-pane="techs" data-tab-title="Technicians">
+  <h2>Technicians</h2>
+  <p class="muted">People credited with a charge-out. On a <b>kiosk</b> charge-out the operator must pick the technician here — this is separate from which station (Kiosk PIN) they signed in on. Deactivate to drop someone from the picker without losing their history.</p>
+  {% if technicians %}
+  <div class="table-scroll">
+  <table class="lines" style="margin-bottom:.75rem">
+    <thead><tr><th>Name</th><th>Active</th><th></th></tr></thead>
+    <tbody>
+    {% for t in technicians %}
+    <tr>
+      <td>
+        <form id="tech-{{ t.id }}" method="post" action="/settings/techs/{{ t.id }}/save"></form>
+        <input form="tech-{{ t.id }}" type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <input form="tech-{{ t.id }}" name="name" value="{{ t.name }}" maxlength="100" required style="width:14rem" aria-label="Technician name">
+      </td>
+      <td style="text-align:center"><input form="tech-{{ t.id }}" type="checkbox" name="active" {% if t.active %}checked{% endif %} aria-label="Active"></td>
+      <td><span class="row-actions"><button form="tech-{{ t.id }}" type="submit">Save</button></span></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="muted"><i>No technicians yet. Add one below — until at least one exists, kiosk charge-out doesn't require a pick.</i></p>
+  {% endif %}
+
+  <h3 style="margin-top:1rem">Add a technician</h3>
+  <form method="post" action="/settings/techs/add" class="grid-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label>Name <input name="name" maxlength="100" placeholder="e.g. Jordan Lee" required></label>
+    <button type="submit">Add technician</button>
+  </form>
+</section>
+{% endif %}
+
 <!-- ---------------- Email ---------------- -->
 <section class="card settings-tab" id="tab-email" data-tab-pane="email" data-tab-title="Email">
   <h2>Email</h2>

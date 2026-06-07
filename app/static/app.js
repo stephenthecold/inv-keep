@@ -688,15 +688,34 @@ if (scan && cart) {
     if (d.ok) render(d.cart);
   });
 
+  const techSel = document.getElementById("cart-tech");
   submitBtn.addEventListener("click", async () => {
+    // Kiosk charge-out requires a technician (the picker is rendered only then).
+    let techId = null;
+    if (techSel) {
+      techId = techSel.value ? parseInt(techSel.value, 10) : null;
+      if (techSel.dataset.required && !techId) {
+        beep(false);
+        toast("Pick the technician charging this out", false);
+        const msg = document.getElementById("cart-tech-msg");
+        if (msg) { msg.textContent = "Pick the technician charging this out"; msg.classList.add("bad"); }
+        techSel.focus();
+        return;
+      }
+    }
     submitBtn.disabled = true;
-    const res = await fetch("/api/cart/submit", { method: "POST", headers: csrfHeaders() });
+    const res = await fetch("/api/cart/submit", {
+      method: "POST",
+      headers: csrfHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ tech_id: techId }),
+    });
     const d = await res.json();
     if (!d.ok) {
       submitBtn.disabled = false;
       beep(false);
       const msg = d.error === "no_client" ? "Pick a client first" :
                   d.error === "empty_cart" ? "Cart is empty" :
+                  d.error === "tech_required" ? "Pick the technician charging this out" :
                   "Could not submit";
       toast(msg, false);
       return;

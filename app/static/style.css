@@ -168,6 +168,12 @@ input.cat-top { font-weight: 600; }
    warranty / no-charge order) so those jump out to a reviewer. */
 .txn-note { font-size: .78rem; color: var(--muted); margin-top: .2rem; max-width: 24rem; word-break: break-word; }
 .txn-note-flag { color: var(--warn); background: rgba(210, 153, 34, .12); border: 1px solid rgba(210, 153, 34, .32); border-radius: 6px; padding: .1rem .4rem; font-weight: 600; }
+/* Technician credited on a charge-out (History "By" cell) + the required kiosk
+   technician picker above the Submit button. */
+.txn-tech { font-size: .78rem; margin-top: .15rem; }
+.cart-tech-row { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin: .35rem 0 .25rem; }
+.cart-tech-row select { min-width: 12rem; }
+#cart-tech-msg.bad { color: var(--bad); font-weight: 600; }
 .filter { display: flex; gap: .75rem; align-items: center; margin: 1rem 0; flex-wrap: wrap; }
 /* File inputs render the native "Choose File" button + filename, which has
    a wide intrinsic size that won't shrink in a flex row — on phones it blew

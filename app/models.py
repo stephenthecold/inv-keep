@@ -226,10 +226,28 @@ class Order(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     submitted_at = Column(DateTime, nullable=True)
     voided_at = Column(DateTime, nullable=True)
+    # v1.36: the technician credited with the charge-out. Set from the required
+    # kiosk-checkout picker (web). Nullable — historical rows + mobile orders
+    # (attributed via created_by) stay null.
+    tech_id = Column(Integer, ForeignKey("technicians.id"), nullable=True, index=True)
 
     client = relationship("Client", foreign_keys=[customer_id])
     job = relationship("Job", foreign_keys=[job_id])
     location = relationship("Location", foreign_keys=[location_id])
+    technician = relationship("Technician", foreign_keys=[tech_id])
+
+
+class Technician(Base):
+    """A person credited with a charge-out — distinct from a KioskPin (which is
+    a station/login). Picked on the web kiosk checkout; managed in
+    Settings → Access → Technicians."""
+
+    __tablename__ = "technicians"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class Transaction(Base):

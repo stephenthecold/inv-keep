@@ -83,7 +83,7 @@
       <td class="num">{{ t.quantity }}</td>
       <td class="num">{{ t.unit_price_at_time | money(cfg.currency) }}</td>
       <td class="num">{{ t.total_charge | money(cfg.currency) }}</td>
-      <td>{{ t.scanned_by }}</td>
+      <td>{{ t.scanned_by }}{% if t.order and t.order.technician %}<div class="txn-tech muted" title="Technician credited"><span aria-hidden="true">👷</span> {{ t.order.technician.name }}</div>{% endif %}</td>
       <td>
         {% if t.lat is not none and t.lng is not none %}
         <a href="https://www.openstreetmap.org/?mlat={{ t.lat }}&mlon={{ t.lng }}#map=17/{{ t.lat }}/{{ t.lng }}"
