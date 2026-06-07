@@ -79,6 +79,11 @@ ICON_CHOICES = [
 _SVG_OPEN = ('<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
             'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">')
 
+# Public alias so other modules (e.g. the mobile preset-icon route) can build a
+# standalone SVG document without reaching into a module-private name. Keeps
+# stroke="currentColor" so the Android client can tint it via ColorFilter.
+SVG_OPEN = _SVG_OPEN
+
 
 def render_html(value: str) -> str:
     if not value:
