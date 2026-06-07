@@ -731,6 +731,10 @@ jobs:
           assert r.status_code == 303 and 'differ' in unquote(r.headers['location']).lower()
           # Header now uses Inventory dropdown
           assert 'id=\"inventory-menu\"' in page and 'id=\"items-menu\"' not in page
+          # Stock modal is now a segmented switcher (Add / Move / Set count), not
+          # stacked <details> accordions.
+          assert 'class=\"ms-tabs\"' in page and 'data-ms-tab=\"add\"' in page and 'data-ms-tab=\"move\"' in page and 'data-ms-tab=\"set\"' in page
+          assert 'data-ms-pane=\"add\"' in page and 'ms-action' not in page
           print('per-item stock modal + header reorg OK')
           # --- Bulk item actions: re-home to category, set count, move stock ---
           c.post('/categories/add', data={'_csrf': tok, 'name': 'BulkCat'})
