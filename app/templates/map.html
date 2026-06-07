@@ -39,7 +39,7 @@
     if (p.order) row(p.order, {tag: 'b'});
     row(p.qty + '× ' + (p.part || '(item)'));
     if (p.client) row(p.client + (p.job ? ' / ' + p.job : ''));
-    row(currency + p.charge.toFixed(2));
+    row(currency + p.charge);
     row(p.when + (p.by ? ' · ' + p.by : ''), {tag: 'small', cls: 'muted'});
     return d;
   }

@@ -49,7 +49,7 @@
     if (p.order) row(p.order, {tag: 'b'});
     row(p.qty + '× ' + (p.part || '(item)'));
     if (p.client) row(p.client + (p.job ? ' / ' + p.job : ''));
-    row(currency + p.charge.toFixed(2));
+    row(currency + p.charge);
     row(p.when + (p.by ? ' · ' + p.by : ''), {tag: 'small', cls: 'muted'});
     return d;
   }
@@ -63,6 +63,7 @@
 </script>
 {% endif %}
 
+<div class="table-scroll">
 <table class="lines">
   <thead>
     <tr><th>When</th><th>Order</th><th>Part</th><th>From</th><th>Client</th><th>Job</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Charge</th><th>By</th><th>Map</th><th></th></tr>
@@ -83,7 +84,7 @@
       <td>
         {% if t.lat is not none and t.lng is not none %}
         <a href="https://www.openstreetmap.org/?mlat={{ t.lat }}&mlon={{ t.lng }}#map=17/{{ t.lat }}/{{ t.lng }}"
-           target="_blank" rel="noopener"
+           target="_blank" rel="noopener" aria-label="Open this charge-out's location in OpenStreetMap"
            title="{{ '%.5f'|format(t.lat) }}, {{ '%.5f'|format(t.lng) }}{% if t.geo_accuracy_m %} (±{{ '%.0f'|format(t.geo_accuracy_m) }}m){% endif %}">📍</a>
         {% else %}<span class="muted">—</span>{% endif %}
       </td>
@@ -98,4 +99,5 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% endblock %}

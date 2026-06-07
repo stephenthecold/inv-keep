@@ -3,6 +3,28 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.31.0] — 2026-06-07
+UI / accessibility polish (review batch 4).
+
+- **Wide tables scroll on phones instead of being clipped.** History,
+  Audit, Categories, Jobs, the Report tables, and the scan page's "Recent
+  activity" are now wrapped so their right-most columns (Charge, Void, …)
+  stay reachable on a narrow screen instead of being cut off by the page's
+  `overflow-x: hidden`.
+- **The scan-page search suggestions are keyboard-accessible.** Each
+  suggestion is now a real button (reachable by Tab, activatable with
+  Enter/Space, announced to screen readers); Arrow keys move through the
+  list and Escape closes it — previously the list was mouse-only.
+- **Map popups round money the same way as everything else.** The Leaflet
+  popups on History and the full-page Map showed the line charge with
+  plain rounding; they now use the app's ceiling-to-cent value so a pin
+  never disagrees with the table by a cent.
+- **Smaller fixes:** the kiosk-PINs table now uses the app's table style
+  (it was rendering unstyled); icon-only links (map pin, label print) and
+  the inline edit fields on Categories / Jobs got accessible labels; and a
+  stray `<span>` inside an `<option>` on the transfer form (invalid HTML)
+  was removed.
+
 ## [1.30.0] — 2026-06-07
 Performance (review batch 3) — faster history, reports, and listings as the
 data grows. No behaviour change; same pages, fewer/cheaper queries.

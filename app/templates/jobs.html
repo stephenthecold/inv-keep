@@ -32,6 +32,7 @@
   </form>
 </dialog>
 
+<div class="table-scroll">
 <table class="lines">
   <thead><tr><th>Client</th><th>Job</th><th>Ref</th><th>Active</th><th></th></tr></thead>
   <tbody>
@@ -39,13 +40,13 @@
     <tr {% if not j.active %}class="voided"{% endif %}>
       <td>
         <form id="job-{{ j.id }}" method="post" action="/jobs/{{ j.id }}/edit"><input type="hidden" name="_csrf" value="{{ csrf_token }}"></form>
-        <select form="job-{{ j.id }}" name="client_id">
+        <select form="job-{{ j.id }}" name="client_id" aria-label="Client">
           {% for c in clients %}<option value="{{ c.id }}" {% if c.id == j.client_id %}selected{% endif %}>{{ c.name }}</option>{% endfor %}
         </select>
       </td>
-      <td><input form="job-{{ j.id }}" name="name" value="{{ j.name }}"></td>
-      <td><input form="job-{{ j.id }}" name="reference" value="{{ j.reference }}" style="width:8rem"></td>
-      <td><input form="job-{{ j.id }}" type="checkbox" name="active" {% if j.active %}checked{% endif %}></td>
+      <td><input form="job-{{ j.id }}" name="name" value="{{ j.name }}" aria-label="Job name"></td>
+      <td><input form="job-{{ j.id }}" name="reference" value="{{ j.reference }}" style="width:8rem" aria-label="Ticket / work-order reference"></td>
+      <td><input form="job-{{ j.id }}" type="checkbox" name="active" {% if j.active %}checked{% endif %} aria-label="Job active"></td>
       <td><button form="job-{{ j.id }}" type="submit">Save</button></td>
     </tr>
     {% else %}
@@ -53,4 +54,5 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% endblock %}

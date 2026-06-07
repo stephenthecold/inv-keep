@@ -27,6 +27,7 @@
   </form>
 </dialog>
 
+<div class="table-scroll">
 <table class="lines">
   <thead><tr><th>Category</th><th class="num">Items</th><th>Description</th><th>Parent</th><th></th></tr></thead>
   <tbody>
@@ -36,12 +37,12 @@
       <td>
         <form id="cat-{{ cid }}" method="post" action="/categories/{{ cid }}/edit"><input type="hidden" name="_csrf" value="{{ csrf_token }}"></form>
         <span style="display:inline-block;width:{{ depth * 1.4 }}rem"></span>
-        <input form="cat-{{ cid }}" name="name" value="{{ c.name }}">
+        <input form="cat-{{ cid }}" name="name" value="{{ c.name }}" aria-label="Category name">
       </td>
       <td class="num">{% if n %}<a class="tag" href="/parts?cat={{ cid }}" title="View items in this category">{{ n }}</a>{% else %}<span class="muted">0</span>{% endif %}</td>
-      <td><input form="cat-{{ cid }}" name="description" value="{{ c.description }}" placeholder="—" style="width:16rem"></td>
+      <td><input form="cat-{{ cid }}" name="description" value="{{ c.description }}" placeholder="—" style="width:16rem" aria-label="Category description"></td>
       <td>
-        <select form="cat-{{ cid }}" name="parent_id">
+        <select form="cat-{{ cid }}" name="parent_id" aria-label="Parent category">
           <option value="">— top level —</option>
           {% for oid, olabel, odepth, oc in tree %}
           {% if oid != cid %}
@@ -63,4 +64,5 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% endblock %}

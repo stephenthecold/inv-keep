@@ -161,7 +161,7 @@
             <div class="item-name">{{ p.name }}{% if not p.active %} <span class="tag muted">inactive</span>{% endif %}</div>
             {% if p.description %}<div class="muted item-desc">{{ p.description }}</div>{% endif %}
           </td>
-          <td><code>{{ p.barcode }}</code> <a href="/parts/{{ p.id }}/label" title="Print label">🏷️</a></td>
+          <td><code>{{ p.barcode }}</code> <a href="/parts/{{ p.id }}/label" title="Print label" aria-label="Print label for {{ p.name }}">🏷️</a></td>
           {% if view == 'all' %}<td>{{ cat_names.get(p.category_id, '') }}</td>{% endif %}
           <td class="num {% if p.quantity_on_hand <= 0 %}low{% endif %}">
             {{ p.quantity_on_hand }}
