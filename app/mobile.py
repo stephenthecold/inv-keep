@@ -15,7 +15,6 @@ Routes live OUTSIDE the cookie auth middleware and outside CSRF — see the
 """
 
 import hmac
-import math
 import os
 import secrets
 import uuid
@@ -37,6 +36,7 @@ from .models import (
     Category, Client, Job, KioskPin, Location, MobileSession, Order, Part,
     Receipt, Transaction,
 )
+from .util import finite as _finite
 
 
 router = APIRouter(prefix="/mobile", tags=["mobile"])
@@ -74,15 +74,6 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
     if dt.tzinfo is not None:
         dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt
-
-
-def _finite(v) -> bool:
-    if v is None:
-        return False
-    try:
-        return math.isfinite(float(v))
-    except (TypeError, ValueError):
-        return False
 
 
 def _tech_username(pin: KioskPin) -> str:
@@ -734,7 +725,23 @@ def create_order(
     if captured is not None:
         order.created_at = captured
     db.add(order)
-    db.flush()
+    # The (client_action_id, created_by) unique constraint closes the race the
+    # SELECT-then-INSERT idempotency check above can't: two retries from a
+    # flaky-signal device arriving together. If the partner request already
+    # committed this action id, the flush raises — return its order as a
+    # replay instead of creating a duplicate charge-out.
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        existing = (db.query(Order)
+                    .filter(Order.client_action_id == cid,
+                            Order.created_by == tech_user)
+                    .first())
+        if existing is not None:
+            response.status_code = 200
+            return _serialize_order(existing, True)
+        raise
 
     note = (payload.note or "").strip()[:500]
     for idx, ln in enumerate(payload.lines):

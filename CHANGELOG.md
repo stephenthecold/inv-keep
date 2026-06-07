@@ -3,6 +3,27 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.29.0] — 2026-06-07
+Correctness hardening (review batch 2).
+
+- **Mobile orders can no longer double-charge under a retry race.** The
+  device's `client_action_id` idempotency was a check-then-insert that two
+  simultaneous retries (flaky signal) could both pass. A
+  `UNIQUE(client_action_id, created_by)` index now backs it, and the submit
+  handler returns the already-saved order as an idempotent replay if the race
+  is lost. The migration that adds the index is guarded so a pre-existing
+  duplicate can't crash startup.
+- **Deleting a kiosk PIN now revokes its mobile tokens.** Previously a deleted
+  station's bearer token kept working until its 12-hour expiry; the delete now
+  drops the matching `mobile_sessions` rows.
+- **Item creation rejects negative / non-finite money and quantity.** A
+  tampered `/parts/add` could seed a negative price (which would credit the
+  client) or a NaN cost; these are now refused.
+- **Plumbing:** the emailed monthly report now uses the same ceiling-to-cent
+  helper as the CSV and on-screen report (consistency with the currency
+  convention), and the NaN/Infinity geo guard is now a single shared helper
+  (`app/util.py`) instead of being duplicated across the web and mobile code.
+
 ## [1.28.0] — 2026-06-07
 Security & critical-correctness hardening (review batch 1).
 

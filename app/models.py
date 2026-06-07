@@ -200,6 +200,10 @@ class Order(Base):
     # Human-facing number, e.g. "ORD-202605-0001". Null while open; stamped
     # at submit time. Unique only across submitted orders.
     number = Column(String, unique=True, nullable=True, index=True)
+    # Idempotency: the UNIQUE(client_action_id, created_by) index that prevents
+    # duplicate mobile submissions is created in database._ensure_order_idempotency_index
+    # (guarded so a pre-existing duplicate can't crash boot). NULL client_action_id
+    # (web orders) never collide under SQLite's distinct-NULL rule.
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
     # Source location for every line scanned into this cart. May be changed

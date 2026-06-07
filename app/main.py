@@ -24,7 +24,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import audit, auth, csrf, emailer, icons, labels, mobile as mobile_api, orders, rbac, reports, throttle
+from . import audit, auth, csrf, emailer, icons, labels, mobile as mobile_api, orders, rbac, reports, throttle, util
 from . import settings_store as store
 from .config import settings
 
@@ -38,8 +38,8 @@ if (not settings.session_secret
     )
 from .database import Base, SessionLocal, engine, ensure_columns, get_db, seed_locations_and_stock
 from .models import (
-    AuditLog, Category, Client, Job, KioskPin, Location, Order, Part, Role,
-    StockLevel, Transaction, Transfer, TransferLine, User,
+    AuditLog, Category, Client, Job, KioskPin, Location, MobileSession, Order,
+    Part, Role, StockLevel, Transaction, Transfer, TransferLine, User,
 )
 from .version import __version__
 
@@ -986,15 +986,9 @@ class CartLineIn(BaseModel):
 
 
 def _finite(v):
-    """True if v is a finite real number. Guards against NaN / Infinity
-    sneaking in via JSON — every comparison against NaN returns False, so a
-    range check alone is bypassable."""
-    if v is None:
-        return False
-    try:
-        return math.isfinite(float(v))
-    except (TypeError, ValueError):
-        return False
+    """Shared finite-number guard (see app.util.finite). Kept as a thin alias
+    so the existing geo-sanitisation call sites read unchanged."""
+    return util.finite(v)
 
 
 def _sanitize_geo(payload):
@@ -2053,6 +2047,15 @@ async def parts_add(
         quantity_on_hand = max(quantity_on_hand, 1)
     pack_size = max(1, int(pack_size or 1))
     pack_unit = (pack_unit_label or "").strip()[:32]
+
+    # Reject negative / non-finite money + quantity so a tampered form can't
+    # seed a row with a negative price (would credit the client) or a NaN cost.
+    if not (util.finite(unit_cost) and unit_cost >= 0) or not (util.finite(unit_price) and unit_price >= 0):
+        return redirect("/parts", "Cost and price must be zero or a positive number.", ok=False)
+    if quantity_on_hand < 0:
+        return redirect("/parts", "Starting quantity can't be negative.", ok=False)
+    if threshold is not None and threshold < 0:
+        threshold = None  # a negative low-stock threshold would mute alerts forever
 
     if barcode:
         # Mirror the cap on /parts/edit and /labels/print so a stuck scanner
@@ -3816,9 +3819,15 @@ def settings_kiosk_delete(
     if row is None:
         return redirect("/settings", "Kiosk PIN not found.", ok=False)
     label = row.label or f"#{row.id}"
+    # Revoke any live mobile bearer tokens issued to this station — otherwise a
+    # deleted PIN's token keeps working until its 12h expiry (the FK is
+    # advisory under SQLite, so the rows would just dangle).
+    revoked = (db.query(MobileSession)
+               .filter(MobileSession.kiosk_pin_id == pin_id)
+               .delete(synchronize_session=False))
     db.delete(row)
     audit.record(db, user, "kiosk_pin.delete", "kiosk_pin", pin_id,
-                 f"Deleted kiosk PIN '{label}'")
+                 f"Deleted kiosk PIN '{label}'" + (f" (revoked {revoked} mobile token(s))" if revoked else ""))
     db.commit()
     return redirect("/settings", "Kiosk PIN deleted.")
 

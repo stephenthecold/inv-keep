@@ -100,6 +100,31 @@ def ensure_columns():
                 if col not in existing:
                     conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
         _relax_transactions_customer_id(conn)
+        _ensure_order_idempotency_index(conn)
+
+
+def _ensure_order_idempotency_index(conn):
+    """v1.29: add the UNIQUE(client_action_id, created_by) index that backs
+    mobile order idempotency on databases created before it existed. Skipped
+    if the orders table already holds a duplicate pair (a pre-existing dup from
+    the unguarded path) so startup never crashes — the admin can dedupe and it
+    takes effect next boot. NULL client_action_id (web orders) never collide."""
+    try:
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(orders)")}
+    except Exception:
+        return
+    if not {"client_action_id", "created_by"} <= cols:
+        return  # additive columns not present yet on a very old DB; next pass
+    dup = conn.exec_driver_sql(
+        "SELECT 1 FROM orders WHERE client_action_id IS NOT NULL "
+        "GROUP BY client_action_id, created_by HAVING COUNT(*) > 1 LIMIT 1"
+    ).fetchone()
+    if dup:
+        return
+    conn.exec_driver_sql(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_order_action "
+        "ON orders(client_action_id, created_by)"
+    )
 
 
 def seed_locations_and_stock():
