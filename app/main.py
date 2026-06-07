@@ -24,7 +24,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import audit, auth, csrf, emailer, icons, labels, mobile as mobile_api, orders, rbac, reports
+from . import audit, auth, csrf, emailer, icons, labels, mobile as mobile_api, orders, rbac, reports, throttle
 from . import settings_store as store
 from .config import settings
 
@@ -221,11 +221,8 @@ PUBLIC_PATHS = {"/welcome", "/login", "/auth/callback", "/logout", "/health", "/
 # token validated inside the router via ``mobile.get_current_tech``.
 PUBLIC_PREFIXES = ("/mobile/",)
 
-# In-memory PIN-attempt throttle keyed by client IP. Single-process app, so a
-# dict is fine; matches the rest of the codebase (no Redis dependency).
-# Maps ip -> (failure_count, locked_until_epoch).
-_KIOSK_PIN_FAILS = {}
-_KIOSK_PIN_MAX_FAILS = 5
+# PIN-attempt brute-force throttle (per-IP + global backstop) lives in
+# app/throttle.py and is shared with the mobile /auth/token endpoint.
 
 # Paths a default-perm kiosk-PIN session is allowed to reach. Used as a
 # *lockdown floor* when the Kiosk role still carries only its built-in
@@ -455,7 +452,48 @@ def current_user(request: Request):
     return getattr(request.state, "user", {"username": ""})
 
 
+def _can_see_cost(user) -> bool:
+    """True if this session may see our cost / margin (not just client price).
+    Default Kiosk + Operator roles lack ``see_cost``, so cost fields must stay
+    out of the JSON payloads they can reach (the cart bar and /api/search):
+    hiding the column in the template isn't enough — the number must not be in
+    the response at all, or it's readable in DevTools on a shared device."""
+    if not user:
+        return False
+    return bool(user.get("is_admin")) or "see_cost" in user.get("perms", set())
+
+
+def _safe_int(value):
+    """Parse a scalar ``str = Form(...)`` value to int, or None if blank /
+    non-numeric. Use for string-typed form fields so a tampered value (e.g.
+    ``category_id=abc``) yields a clean None rather than an unhandled
+    ValueError → 500."""
+    try:
+        s = (value or "").strip()
+        return int(s) if s else None
+    except (TypeError, ValueError):
+        return None
+
+
 # ---- category helpers ------------------------------------------------------
+def _would_cycle(db, cat_id, new_parent_id):
+    """True if re-parenting category ``cat_id`` under ``new_parent_id`` would
+    create a cycle — i.e. the proposed parent is the category itself or one of
+    its descendants. Walks the proposed parent's ancestor chain (cycle-safe via
+    a seen-set) looking for ``cat_id``."""
+    if new_parent_id == cat_id:
+        return True
+    parents = {c.id: c.parent_id for c in db.query(Category.id, Category.parent_id).all()}
+    seen = set()
+    cur = new_parent_id
+    while cur is not None and cur not in seen:
+        if cur == cat_id:
+            return True
+        seen.add(cur)
+        cur = parents.get(cur)
+    return False
+
+
 def category_choices(db):
     """Flat list of (id, indented_label, depth, category) ordered as a tree."""
     cats = db.query(Category).all()
@@ -748,12 +786,7 @@ async def logout(request: Request):
 
 
 def _client_ip(request: Request) -> str:
-    # X-Forwarded-For is fine to trust for rate-limit bucketing (worst case a
-    # spoofer just lengthens their own lockout). Falls back to direct client.
-    fwd = request.headers.get("x-forwarded-for", "")
-    if fwd:
-        return fwd.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    return throttle.client_ip(request)
 
 
 @app.post("/kiosk/login")
@@ -765,19 +798,16 @@ async def kiosk_login(
     """Validate the submitted PIN against every active KioskPin row and
     grant a locked-down Kiosk session for the matching station.
     CSRF-protected via the global middleware (the /welcome page issues
-    the token). Throttled per-IP after _KIOSK_PIN_MAX_FAILS bad attempts.
+    the token). Brute-force throttled via the shared per-IP + global backstop.
     """
-    import time as _time
     if not store.get_bool(db, "kiosk_enabled"):
         return RedirectResponse("/welcome", status_code=303)
     pins = db.query(KioskPin).filter(KioskPin.active == True).all()  # noqa: E712
     if not pins:
         return RedirectResponse("/welcome?err=Kiosk+is+enabled+but+no+PIN+is+set.", status_code=303)
     ip = _client_ip(request)
-    now = _time.time()
-    fails, locked_until = _KIOSK_PIN_FAILS.get(ip, (0, 0))
-    if locked_until and now < locked_until:
-        wait = int(locked_until - now)
+    wait = throttle.retry_after(ip)
+    if wait:
         return RedirectResponse(f"/welcome?err=Too+many+attempts.+Try+again+in+{wait}s.", status_code=303)
     submitted = (pin or "").strip()
     import hmac as _hmac
@@ -791,16 +821,11 @@ async def kiosk_login(
                 # Don't break early — keep comparing so total work is the
                 # same regardless of which PIN matched.
     if matched is None:
-        fails += 1
-        cooldown = 0
-        if fails >= _KIOSK_PIN_MAX_FAILS:
-            mins = store.get_int(db, "kiosk_lockout_minutes", 5) or 5
-            cooldown = int(now + mins * 60)
-            fails = 0  # reset after locking
-        _KIOSK_PIN_FAILS[ip] = (fails, cooldown)
+        mins = store.get_int(db, "kiosk_lockout_minutes", 5) or 5
+        throttle.record_failure(ip, mins * 60)
         return RedirectResponse("/welcome?err=Incorrect+PIN.", status_code=303)
     # Success — clear throttle, drop any stale OIDC session, install kiosk flag.
-    _KIOSK_PIN_FAILS.pop(ip, None)
+    throttle.clear(ip)
     request.session.pop("user", None)
     request.session.pop("impersonate_role", None)
     request.session["kiosk"] = True
@@ -892,8 +917,11 @@ def scan_page(request: Request, db: Session = Depends(get_db)):
 
 # -------------------- cart helpers (response serializer) --------------------
 
-def _cart_payload(db, cart):
-    """Build the JSON-able cart dict the frontend renders from."""
+def _cart_payload(db, cart, see_cost=False):
+    """Build the JSON-able cart dict the frontend renders from. Our cost /
+    margin are only included when ``see_cost`` is true — a Kiosk/Operator
+    session (no ``see_cost`` perm) gets client price only, so margin never
+    leaves the server to a shared front-desk device."""
     if cart is None:
         return {"open": False}
     lines = orders.cart_lines(db, cart)
@@ -923,7 +951,7 @@ def _cart_payload(db, cart):
                 "barcode": ln.part.barcode,
                 "type": ln.part.type,
                 "quantity": ln.quantity,
-                "unit_cost": float(ln.unit_cost_at_time),
+                "unit_cost": float(ln.unit_cost_at_time) if see_cost else 0.0,
                 "unit_price": float(ln.unit_price_at_time),
                 "charge": ln.total_charge,
                 "remaining_stock": ln.part.quantity_on_hand,
@@ -931,8 +959,8 @@ def _cart_payload(db, cart):
             for ln in lines
         ],
         "subtotal": charge,
-        "cost": cost,
-        "margin": margin,
+        "cost": cost if see_cost else 0,
+        "margin": margin if see_cost else 0,
     }
 
 
@@ -986,7 +1014,7 @@ def _sanitize_geo(payload):
 def api_cart_get(request: Request, db: Session = Depends(get_db)):
     user = current_user(request)
     cart = orders.open_cart_for(db, user.get("username", ""))
-    return {"ok": True, "cart": _cart_payload(db, cart)}
+    return {"ok": True, "cart": _cart_payload(db, cart, see_cost=_can_see_cost(user))}
 
 
 @app.post("/api/cart/scan")
@@ -1045,7 +1073,7 @@ def api_cart_scan(payload: CartScanIn, request: Request, db: Session = Depends(g
     db.flush()
     emailer.maybe_low_stock_alert(db, part)
     db.commit()
-    return {"ok": True, "cart": _cart_payload(db, cart), "fresh": fresh}
+    return {"ok": True, "cart": _cart_payload(db, cart, see_cost=_can_see_cost(user)), "fresh": fresh}
 
 
 @app.post("/api/cart/custom")
@@ -1133,7 +1161,7 @@ async def api_cart_custom(
     audit.record(db, user, "order.custom", "transaction", txn.id,
                  f"Custom item: {name} × {qty}")
     db.commit()
-    return {"ok": True, "cart": _cart_payload(db, cart), "fresh": fresh}
+    return {"ok": True, "cart": _cart_payload(db, cart, see_cost=_can_see_cost(user)), "fresh": fresh}
 
 
 @app.post("/api/cart/set")
@@ -1177,7 +1205,7 @@ def api_cart_set(payload: CartSetIn, request: Request, db: Session = Depends(get
             Transaction.voided == False,  # noqa: E712
         ).update(line_updates)
     db.commit()
-    return {"ok": True, "cart": _cart_payload(db, cart)}
+    return {"ok": True, "cart": _cart_payload(db, cart, see_cost=_can_see_cost(user))}
 
 
 class CartWalkinIn(BaseModel):
@@ -1218,7 +1246,7 @@ def api_cart_walkin(payload: CartWalkinIn, request: Request, db: Session = Depen
     audit.record(db, user, "client.walkin", "client", client.id,
                  f"Created walk-in client: {name}")
     db.commit()
-    return {"ok": True, "cart": _cart_payload(db, cart), "fresh_cart": fresh_cart}
+    return {"ok": True, "cart": _cart_payload(db, cart, see_cost=_can_see_cost(user)), "fresh_cart": fresh_cart}
 
 
 class CartJobIn(BaseModel):
@@ -1257,7 +1285,7 @@ def api_cart_job_new(payload: CartJobIn, request: Request, db: Session = Depends
     db.commit()
     return {
         "ok": True,
-        "cart": _cart_payload(db, cart),
+        "cart": _cart_payload(db, cart, see_cost=_can_see_cost(user)),
         "job": {"id": job.id, "name": job.name, "reference": job.reference, "client_id": client.id},
     }
 
@@ -1290,7 +1318,7 @@ def api_cart_line_update(line_id: int, payload: CartLineIn, request: Request, db
     line.part.quantity_on_hand -= delta
     line.quantity = new_qty
     db.commit()
-    return {"ok": True, "cart": _cart_payload(db, cart)}
+    return {"ok": True, "cart": _cart_payload(db, cart, see_cost=_can_see_cost(user))}
 
 
 @app.post("/api/cart/line/{line_id}/remove")
@@ -1309,7 +1337,7 @@ def api_cart_line_remove(line_id: int, request: Request, db: Session = Depends(g
     line.part.quantity_on_hand += line.quantity
     line.voided = True
     db.commit()
-    return {"ok": True, "cart": _cart_payload(db, cart)}
+    return {"ok": True, "cart": _cart_payload(db, cart, see_cost=_can_see_cost(user))}
 
 
 @app.post("/api/cart/submit")
@@ -1379,10 +1407,11 @@ def api_cart_cancel(request: Request, db: Session = Depends(get_db)):
 
 
 @app.get("/api/search")
-def api_search(q: str = "", db: Session = Depends(get_db)):
+def api_search(q: str = "", request: Request = None, db: Session = Depends(get_db)):
     """Cart-bar autocomplete. Excludes archived parts — walk-in / one-time
     custom items are flagged archived so they don't pollute the suggestion
     list on the scan page after the order they were created for is done."""
+    see_cost = _can_see_cost(current_user(request)) if request is not None else False
     q = (q or "").strip()
     if not q:
         return {"results": []}
@@ -1409,7 +1438,7 @@ def api_search(q: str = "", db: Session = Depends(get_db)):
                 "barcode": p.barcode,
                 "type": p.type,
                 "qty": p.quantity_on_hand,
-                "unit_cost": float(p.unit_cost),
+                "unit_cost": float(p.unit_cost) if see_cost else 0.0,
                 "unit_price": float(p.unit_price),
             }
             for p in rows
@@ -2018,8 +2047,8 @@ async def parts_add(
     db: Session = Depends(get_db),
 ):
     barcode = barcode.strip()
-    cat_id = int(category_id) if category_id else None
-    threshold = int(low_stock_threshold) if low_stock_threshold.strip() else None
+    cat_id = _safe_int(category_id)
+    threshold = _safe_int(low_stock_threshold)
     if type == "unique":
         quantity_on_hand = max(quantity_on_hand, 1)
     pack_size = max(1, int(pack_size or 1))
@@ -2097,8 +2126,8 @@ async def parts_edit(
         part.description = description.strip()
         part.unit_cost = unit_cost
         part.unit_price = unit_price
-        part.category_id = int(category_id) if category_id else None
-        part.low_stock_threshold = int(low_stock_threshold) if low_stock_threshold.strip() else None
+        part.category_id = _safe_int(category_id)
+        part.low_stock_threshold = _safe_int(low_stock_threshold)
         part.active = active == "on"
         part.pack_size = max(1, int(pack_size or 1))
         part.pack_unit_label = (pack_unit_label or "").strip()[:32]
@@ -2138,6 +2167,11 @@ def parts_restock(part_id: int, request: Request, amount: int = Form(...),
     part = db.get(Part, part_id)
     if not part:
         return redirect("/parts", "Part not found.", ok=False)
+    # Restock only adds stock — reject a zero/negative amount that would
+    # silently drive the on-hand count negative (every other stock route
+    # validates; this one used to not).
+    if amount <= 0:
+        return redirect("/parts", "Restock amount must be a positive number.", ok=False)
     # Resolve target location: explicit -> first active.
     loc_id = None
     if location_id.strip():
@@ -2541,7 +2575,7 @@ def categories_page(request: Request, db: Session = Depends(get_db)):
 
 @app.post("/categories/add")
 def categories_add(request: Request, name: str = Form(...), description: str = Form(""), parent_id: str = Form(""), db: Session = Depends(get_db)):
-    cat = Category(name=name.strip(), description=description.strip(), parent_id=int(parent_id) if parent_id else None)
+    cat = Category(name=name.strip(), description=description.strip(), parent_id=_safe_int(parent_id))
     db.add(cat)
     db.flush()
     audit.record(db, current_user(request), "category.create", "category", cat.id, f"Created {cat.name}")
@@ -2553,9 +2587,13 @@ def categories_add(request: Request, name: str = Form(...), description: str = F
 def categories_edit(cat_id: int, request: Request, name: str = Form(...), description: str = Form(""), parent_id: str = Form(""), db: Session = Depends(get_db)):
     cat = db.get(Category, cat_id)
     if cat:
-        new_parent = int(parent_id) if parent_id else None
-        if new_parent != cat.id:
-            cat.parent_id = new_parent
+        new_parent = _safe_int(parent_id)
+        # Reject moving a category under itself OR under one of its own
+        # descendants — a cycle orphans the subtree from the root browse and
+        # can RecursionError the (unguarded) category-count walk.
+        if new_parent is not None and _would_cycle(db, cat.id, new_parent):
+            return redirect("/categories", "Can't move a category under itself or its own sub-category.", ok=False)
+        cat.parent_id = new_parent
         cat.name = name.strip()
         cat.description = description.strip()
         audit.record(db, current_user(request), "category.edit", "category", cat.id, f"Edited {cat.name}")
@@ -3087,7 +3125,7 @@ def report_csv(request: Request, db: Session = Depends(get_db)):
     loc_id = _selected_location_id(qp)
     report, totals = reports.build_report_range(db, start, end, client_ids=client_ids or None,
                                                  location_id=loc_id)
-    csv_text = reports.report_csv_for(report, totals)
+    csv_text = reports.report_csv_for(report, totals, see_cost=_can_see_cost(current_user(request)))
     if month_str:
         filename = f"charge-out-{month_str}.csv"
     else:
@@ -3307,7 +3345,17 @@ async def settings_restore(request: Request, bundle: UploadFile = File(...), db:
                     target = os.path.normpath(os.path.join(workdir, m.name))
                     if not target.startswith(os.path.normpath(workdir) + os.sep) and target != os.path.normpath(workdir):
                         return redirect("/settings", f"Refusing path traversal in bundle: {m.name}", ok=False)
-                tf.extractall(workdir)
+                    # Reject symlinks/hardlinks + special files outright — the
+                    # name check above doesn't cover a link *target* escaping
+                    # the workdir (a member written through a planted symlink).
+                    if not (m.isfile() or m.isdir()):
+                        return redirect("/settings", f"Refusing non-regular file in bundle: {m.name}", ok=False)
+                # filter="data" (Python 3.12+) is the hardened extractor:
+                # strips setuid/owner bits and re-checks traversal/links.
+                try:
+                    tf.extractall(workdir, filter="data")
+                except TypeError:
+                    tf.extractall(workdir)  # older Python without the filter kwarg
         except _tarfile.TarError as e:
             return redirect("/settings", f"Not a valid backup tar.gz: {html.escape(str(e))}", ok=False)
 

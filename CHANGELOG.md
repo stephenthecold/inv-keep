@@ -3,6 +3,33 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.28.0] — 2026-06-07
+Security & critical-correctness hardening (review batch 1).
+
+- **Charge-out now actually requires the `checkout` permission.** The real cart
+  endpoints (`POST /api/cart/*`) were gated only by `view`, so a read-only
+  Viewer role could scan, decrement stock, and submit orders. They now require
+  `checkout` like the permission's description always implied.
+- **Our cost / margin no longer leak to client-price-only sessions.** The cart
+  payload and `/api/search` shipped `unit_cost`/`cost`/`margin` to every
+  session — readable in DevTools on a shared Kiosk device even though the column
+  was hidden. These fields are now zeroed unless the session has `see_cost`.
+  `/report` and `/report.csv` likewise hide the cost/margin columns from roles
+  (e.g. Operator) that lack `see_cost`.
+- **Mobile PIN login is brute-force throttled.** `POST /mobile/auth/token` had
+  no lockout (the web kiosk login did), leaving short PINs guessable. Both now
+  share a per-IP throttle **plus a global backstop** so rotating
+  `X-Forwarded-For` can't bypass the lockout.
+- **Fixed a startup crash / history loss on upgrades from pre-v1.9 databases.**
+  The `transactions` table rebuild omitted `location_id` + `receipt_id`, so the
+  copy-back referenced columns the new table lacked. It now declares them and
+  copies only the columns common to both tables.
+- **Stock-integrity & input guards.** Restock now rejects zero/negative
+  amounts; moving a category under its own descendant (a tree cycle) is
+  rejected; and non-numeric `category_id` / `parent_id` / threshold form values
+  no longer 500. Backup-restore extraction is hardened (`filter="data"`,
+  symlink/special-file rejection).
+
 ## [1.27.0] — 2026-06-05
 - **Scan-page polish for the charge-out flow.**
   - The search/scan box now sits **above** the location · client · job

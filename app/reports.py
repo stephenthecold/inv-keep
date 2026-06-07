@@ -123,24 +123,43 @@ def report_csv(db, year: int, month: int, client_ids=None) -> str:
     return report_csv_for(report, totals)
 
 
-def report_csv_for(report, totals) -> str:
-    """Render the CSV for an already-built (report, totals) tuple."""
+def report_csv_for(report, totals, see_cost=True) -> str:
+    """Render the CSV for an already-built (report, totals) tuple. When
+    ``see_cost`` is false (a role without the see_cost perm, e.g. Operator),
+    the Cost / Margin columns are omitted entirely so margin never leaves the
+    server — the client-price columns stay."""
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["Client", "Account Ref", "Job", "Job Ref", "Part", "Barcode", "Quantity",
-                "Unit Cost", "Unit Charge", "Line Cost", "Line Charge", "Line Margin"])
-    for c in report:
-        for job in c["jobs"]:
-            for ln in job["lines"]:
-                w.writerow([c["name"], c["reference"], job["name"], job["reference"],
-                            ln["part"], ln["barcode"], ln["quantity"],
-                            _c(ln["unit_cost"]), _c(ln["unit_price"]),
-                            _c(ln["cost"]), _c(ln["charge"]), _c(ln["charge"] - ln["cost"])])
-            w.writerow([c["name"], c["reference"], job["name"], job["reference"], "", "", "",
-                        "", "Job subtotal", _c(job["cost"]), _c(job["charge"]), _c(job["margin"])])
-        w.writerow([c["name"], c["reference"], "", "", "", "", "",
-                    "", "Client total", _c(c["cost"]), _c(c["charge"]), _c(c["margin"])])
-        w.writerow([])
-    w.writerow(["", "", "", "", "", "", "", "", "GRAND TOTAL",
-                _c(totals["cost"]), _c(totals["charge"]), _c(totals["margin"])])
+    if see_cost:
+        w.writerow(["Client", "Account Ref", "Job", "Job Ref", "Part", "Barcode", "Quantity",
+                    "Unit Cost", "Unit Charge", "Line Cost", "Line Charge", "Line Margin"])
+        for c in report:
+            for job in c["jobs"]:
+                for ln in job["lines"]:
+                    w.writerow([c["name"], c["reference"], job["name"], job["reference"],
+                                ln["part"], ln["barcode"], ln["quantity"],
+                                _c(ln["unit_cost"]), _c(ln["unit_price"]),
+                                _c(ln["cost"]), _c(ln["charge"]), _c(ln["charge"] - ln["cost"])])
+                w.writerow([c["name"], c["reference"], job["name"], job["reference"], "", "", "",
+                            "", "Job subtotal", _c(job["cost"]), _c(job["charge"]), _c(job["margin"])])
+            w.writerow([c["name"], c["reference"], "", "", "", "", "",
+                        "", "Client total", _c(c["cost"]), _c(c["charge"]), _c(c["margin"])])
+            w.writerow([])
+        w.writerow(["", "", "", "", "", "", "", "", "GRAND TOTAL",
+                    _c(totals["cost"]), _c(totals["charge"]), _c(totals["margin"])])
+    else:
+        w.writerow(["Client", "Account Ref", "Job", "Job Ref", "Part", "Barcode", "Quantity",
+                    "Unit Charge", "Line Charge"])
+        for c in report:
+            for job in c["jobs"]:
+                for ln in job["lines"]:
+                    w.writerow([c["name"], c["reference"], job["name"], job["reference"],
+                                ln["part"], ln["barcode"], ln["quantity"],
+                                _c(ln["unit_price"]), _c(ln["charge"])])
+                w.writerow([c["name"], c["reference"], job["name"], job["reference"], "", "", "",
+                            "Job subtotal", _c(job["charge"])])
+            w.writerow([c["name"], c["reference"], "", "", "", "", "",
+                        "Client total", _c(c["charge"])])
+            w.writerow([])
+        w.writerow(["", "", "", "", "", "", "", "GRAND TOTAL", _c(totals["charge"])])
     return buf.getvalue()

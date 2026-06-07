@@ -22,7 +22,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, or_
 from sqlalchemy.exc import IntegrityError
@@ -30,6 +30,8 @@ from sqlalchemy.orm import Session
 
 from . import audit
 from . import orders as orders_mod
+from . import settings_store as store
+from . import throttle
 from .database import get_db
 from .models import (
     Category, Client, Job, KioskPin, Location, MobileSession, Order, Part,
@@ -143,11 +145,20 @@ class AuthTokenOut(BaseModel):
 
 
 @router.post("/auth/token", response_model=AuthTokenOut)
-def auth_token(payload: AuthTokenIn, db: Session = Depends(get_db)):
+def auth_token(payload: AuthTokenIn, request: Request, db: Session = Depends(get_db)):
     pin_val = (payload.pin or "").strip()
     badge_val = (payload.badge_uid or "").strip()
     if not pin_val and not badge_val:
         raise HTTPException(status_code=401, detail="missing_credentials")
+
+    # Brute-force throttle (shared with the web kiosk login). Without this the
+    # mobile endpoint — outside the cookie-auth middleware and CSRF — let a
+    # short PIN be guessed unboundedly.
+    ip = throttle.client_ip(request)
+    wait = throttle.retry_after(ip)
+    if wait:
+        raise HTTPException(status_code=429, detail="too_many_attempts",
+                            headers={"Retry-After": str(wait)})
 
     matched: Optional[KioskPin] = None
     if pin_val:
@@ -164,7 +175,10 @@ def auth_token(payload: AuthTokenIn, db: Session = Depends(get_db)):
                    .first())
 
     if matched is None:
+        lockout_min = store.get_int(db, "kiosk_lockout_minutes", 5) or 5
+        throttle.record_failure(ip, lockout_min * 60)
         raise HTTPException(status_code=401, detail="invalid_credentials")
+    throttle.clear(ip)
 
     token = secrets.token_urlsafe(32)
     expires_at = datetime.utcnow() + TOKEN_LIFETIME

@@ -159,6 +159,13 @@ def resolve_login(db, username, email, groups):
 def required_perm(path, method):
     if path.startswith("/api/checkout") or path.startswith("/api/void"):
         return "checkout"
+    # The actual charge-out flow is POST /api/cart/* (scan / submit / custom /
+    # walk-in / job-new / line edits). These mutate stock and create orders, so
+    # they require `checkout`, not the bare `view` they used to fall through to
+    # — otherwise a read-only Viewer role could charge out inventory. GET
+    # /api/cart (read the open cart) stays at `view`.
+    if method == "POST" and path.startswith("/api/cart"):
+        return "checkout"
     if path.startswith("/users"):
         return "manage_users"
     if path.startswith("/settings"):
