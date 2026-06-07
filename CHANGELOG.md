@@ -3,6 +3,11 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.32.2] — 2026-06-07
+- **Settings → Kiosk PINs:** the PINs table overflowed its card once the new
+  "Inv admin" column widened the row — it now sits in a `.table-scroll`
+  wrapper so it scrolls inside the card instead of bleeding over the edge.
+
 ## [1.32.1] — 2026-06-07
 - **Settings → Kiosk PINs:** the new "Inventory admin" checkbox's help text on
   the *Add a kiosk PIN* form rendered inline (it sat in a flex-row `.check`
