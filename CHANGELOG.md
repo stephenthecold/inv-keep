@@ -3,6 +3,16 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.39.0] — 2026-06-07
+Cleaner per-item Stock modal.
+
+- **The Stock pop-up is now a segmented switcher** instead of three stacked
+  accordions. *Add*, *Move* and *Set count* sit in a single pill group at the
+  top of the modal, and only the chosen action's form is shown — so the dialog
+  reads as one compact card rather than a long scroll of half-open sections.
+  Opens on *Add* every time; the Move tab is hidden when there's only one
+  location. No change to what each action does or to the underlying endpoints.
+
 ## [1.38.0] — 2026-06-07
 Order comment threads on the web + a Settings control refresh.
 

@@ -350,9 +350,16 @@
     <tbody id="ms-body"></tbody>
   </table>
 
-  <details class="ms-action">
-    <summary>+ Add stock at a location</summary>
-    <form method="post" id="ms-add-form" action="" class="grid-form" style="margin-top:.75rem">
+  <!-- Segmented control: one action panel at a time, so the modal stays a
+       compact card instead of three stacked accordions. -->
+  <div class="ms-tabs" role="tablist" aria-label="Stock actions">
+    <button type="button" class="ms-tab is-active" data-ms-tab="add" role="tab" aria-selected="true">➕ Add</button>
+    {% if locations | length > 1 %}<button type="button" class="ms-tab" data-ms-tab="move" role="tab" aria-selected="false">↔ Move</button>{% endif %}
+    <button type="button" class="ms-tab" data-ms-tab="set" role="tab" aria-selected="false">🎯 Set count</button>
+  </div>
+
+  <div class="ms-pane is-active" data-ms-pane="add" role="tabpanel">
+    <form method="post" id="ms-add-form" action="" class="grid-form">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <label>Location
         <select name="location_id" required>
@@ -364,12 +371,11 @@
       </label>
       <button type="submit">+ Add stock</button>
     </form>
-  </details>
+  </div>
 
   {% if locations | length > 1 %}
-  <details class="ms-action">
-    <summary>↔ Move stock between locations</summary>
-    <form method="post" id="ms-move-form" action="" class="grid-form" style="margin-top:.75rem">
+  <div class="ms-pane" data-ms-pane="move" role="tabpanel" hidden>
+    <form method="post" id="ms-move-form" action="" class="grid-form">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <label>From
         <select name="from_location_id" required>
@@ -387,12 +393,11 @@
       <label class="wide">Notes <input name="notes" placeholder="optional"></label>
       <button type="submit">Move</button>
     </form>
-  </details>
+  </div>
   {% endif %}
 
-  <details class="ms-action">
-    <summary>Set absolute count (stocktake)</summary>
-    <form method="post" id="ms-set-form" action="" class="grid-form" style="margin-top:.75rem">
+  <div class="ms-pane" data-ms-pane="set" role="tabpanel" hidden>
+    <form method="post" id="ms-set-form" action="" class="grid-form">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <label>Location
         <select name="location_id" required>
@@ -408,7 +413,7 @@
       <button type="submit">Set count</button>
       <small class="muted">Records the prior count in the audit log so corrections are traceable.</small>
     </form>
-  </details>
+  </div>
   {% endif %}
 
   <menu class="modal-actions" style="margin-top:1rem">
@@ -618,10 +623,27 @@ document.querySelectorAll('.cat-rename-btn').forEach(function(b){
       if (moveForm) moveForm.action = '/parts/' + id + '/stock/move';
       if (setForm) setForm.action = '/parts/' + id + '/stock/set';
 
-      // Open all three actions collapsed so the table is the focus.
-      dlg.querySelectorAll('details.ms-action').forEach(function(d){ d.open = false; });
+      // Reset to the first action (Add) each time the modal opens.
+      setStockTab('add');
       dlg.showModal();
     });
+  });
+
+  // Segmented-control switching: show only the selected action panel.
+  function setStockTab(name){
+    dlg.querySelectorAll('.ms-tab').forEach(function(t){
+      var on = t.dataset.msTab === name;
+      t.classList.toggle('is-active', on);
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    dlg.querySelectorAll('.ms-pane').forEach(function(p){
+      var on = p.dataset.msPane === name;
+      p.classList.toggle('is-active', on);
+      p.hidden = !on;
+    });
+  }
+  dlg.querySelectorAll('.ms-tab').forEach(function(t){
+    t.addEventListener('click', function(){ setStockTab(t.dataset.msTab); });
   });
 })();
 </script>
