@@ -39,7 +39,8 @@ if (not settings.session_secret
 from .database import Base, SessionLocal, engine, ensure_columns, get_db, seed_locations_and_stock
 from .models import (
     AuditLog, Category, Client, Job, KioskPin, Location, MobileSession, Order,
-    Part, Role, StockLevel, Technician, Transaction, Transfer, TransferLine, User,
+    OrderComment, Part, Role, StockLevel, Technician, Transaction, Transfer,
+    TransferLine, User,
 )
 from .version import __version__
 
@@ -2964,6 +2965,144 @@ def transactions_page(request: Request, db: Session = Depends(get_db)):
             filter_locations=filter_locs,
             selected_location_id=selected_loc if selected_loc is not None else ""),
     )
+
+
+# -------------------- order comment thread --------------------
+
+_COMMENT_MAX = 2000  # generous; a note/justification, not an essay
+
+
+def _order_justification(db, order_id) -> Optional[str]:
+    """Recover the order's app justification note from its line notes (mobile
+    stamps the payload note onto every line, custom lines with a ``| custom``
+    marker). Returns the first meaningful note, or None. Mirrors
+    mobile._order_note so the web thread shows the same origin text."""
+    rows = (db.query(Transaction.note)
+            .filter(Transaction.order_id == order_id)
+            .order_by(Transaction.id).all())
+    for (raw,) in rows:
+        n = (raw or "").strip()
+        if n.endswith("| custom"):
+            n = n[: -len("| custom")].strip()
+        if n and n != "custom":
+            return n
+    return None
+
+
+def _comment_dto(c, tz_name):
+    return {
+        "id": c.id,
+        "author": c.author or "—",
+        "body": c.body or "",
+        "created_at": local_dt_filter(c.created_at, tz_name) if c.created_at else "",
+        "edited": c.edited_at is not None,
+        "edited_at": local_dt_filter(c.edited_at, tz_name) if c.edited_at else "",
+        "edited_by": c.edited_by or "",
+    }
+
+
+def _load_order_or_404(db, order_id):
+    order = db.get(Order, order_id)
+    if order is None:
+        return None
+    return order
+
+
+@app.get("/orders/{order_id}/comments")
+def order_comments_get(order_id: int, request: Request, db: Session = Depends(get_db)):
+    """Thread for one order: the app justification note (origin entry, if any)
+    plus every web comment, oldest-first. Readable by any signed-in user (the
+    /orders prefix falls through to the `view` perm); kiosk sessions can't reach
+    it (not in the lockdown allowlist) since their comments couldn't be
+    attributed."""
+    order = _load_order_or_404(db, order_id)
+    if order is None:
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    tz_name = store.get(db, "timezone") or "UTC"
+    justification = _order_justification(db, order_id)
+    comments = (db.query(OrderComment)
+                .filter(OrderComment.order_id == order_id)
+                .order_by(OrderComment.created_at, OrderComment.id).all())
+    return {
+        "ok": True,
+        "order_number": order.number or "",
+        "justification": justification,
+        "comments": [_comment_dto(c, tz_name) for c in comments],
+    }
+
+
+@app.post("/orders/{order_id}/comments")
+async def order_comments_add(order_id: int, request: Request, db: Session = Depends(get_db)):
+    """Append a comment to the order thread. Any signed-in (non-kiosk) user;
+    audited as order.comment so the full trail is kept."""
+    user = current_user(request)
+    if user.get("is_kiosk"):
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
+    order = _load_order_or_404(db, order_id)
+    if order is None:
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    body = await _comment_body(request)
+    if not body:
+        return JSONResponse({"ok": False, "error": "empty"}, status_code=400)
+    author = (user.get("username") or user.get("email") or "user").strip()
+    c = OrderComment(order_id=order_id, author=author, body=body)
+    db.add(c)
+    db.flush()
+    audit.record(db, user, "order.comment", "order", order_id,
+                 f"Comment on {order.number or ('#' + str(order_id))}: {body[:120]}")
+    db.commit()
+    tz_name = store.get(db, "timezone") or "UTC"
+    return {"ok": True, "comment": _comment_dto(c, tz_name)}
+
+
+@app.post("/orders/{order_id}/comments/{comment_id}/edit")
+async def order_comments_edit(order_id: int, comment_id: int, request: Request,
+                              db: Session = Depends(get_db)):
+    """Edit a comment's body in place. Any signed-in (non-kiosk) user may edit
+    any comment — every change is audited (order.comment_edit, old → new) so the
+    history is preserved even though the row is updated in place."""
+    user = current_user(request)
+    if user.get("is_kiosk"):
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
+    c = db.get(OrderComment, comment_id)
+    if c is None or c.order_id != order_id:
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    body = await _comment_body(request)
+    if not body:
+        return JSONResponse({"ok": False, "error": "empty"}, status_code=400)
+    old = c.body or ""
+    if body == old:
+        tz_name = store.get(db, "timezone") or "UTC"
+        return {"ok": True, "comment": _comment_dto(c, tz_name)}
+    editor = (user.get("username") or user.get("email") or "user").strip()
+    c.body = body
+    c.edited_at = datetime.utcnow()
+    c.edited_by = editor
+    order = db.get(Order, order_id)
+    audit.record(db, user, "order.comment_edit", "order", order_id,
+                 f"Edited comment #{comment_id} on {(order.number if order else None) or ('#' + str(order_id))}: "
+                 f"'{old[:80]}' → '{body[:80]}'")
+    db.commit()
+    tz_name = store.get(db, "timezone") or "UTC"
+    return {"ok": True, "comment": _comment_dto(c, tz_name)}
+
+
+async def _comment_body(request: Request) -> str:
+    """Pull + sanitize the comment body from a JSON or form POST: strip control
+    chars except newline/tab, collapse to the length cap."""
+    body = ""
+    ctype = request.headers.get("content-type", "")
+    if "application/json" in ctype:
+        try:
+            data = await request.json()
+            body = (data or {}).get("body", "") if isinstance(data, dict) else ""
+        except Exception:
+            body = ""
+    else:
+        form = await request.form()
+        body = form.get("body", "")
+    body = "".join(ch for ch in (body or "") if ch in "\n\t" or ch >= " ")
+    return body.strip()[:_COMMENT_MAX]
 
 
 @app.get("/map", response_class=HTMLResponse)

@@ -970,6 +970,156 @@ document.addEventListener("click", async (e) => {
   }
 });
 
+// ---- order comment thread (History) ----
+(function () {
+  const dlg = document.getElementById("order-comments");
+  if (!dlg) return;
+  const threadEl = document.getElementById("oc-thread");
+  const form = document.getElementById("oc-form");
+  const input = document.getElementById("oc-input");
+  const numEl = document.getElementById("oc-order-number");
+  let currentOrderId = null;
+
+  function metaText(c) {
+    let s = c.author + " · " + c.created_at;
+    if (c.edited) {
+      s += " (edited";
+      if (c.edited_by) s += " by " + c.edited_by;
+      if (c.edited_at) s += " " + c.edited_at;
+      s += ")";
+    }
+    return s;
+  }
+
+  // All user-controlled text goes through textContent — never innerHTML — so a
+  // comment body can't inject markup (the cart-XSS rule, applied here too).
+  function commentNode(c) {
+    const wrap = document.createElement("div");
+    wrap.className = "oc-item";
+    wrap.dataset.id = c.id;
+    const meta = document.createElement("div");
+    meta.className = "oc-meta";
+    meta.textContent = metaText(c);
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "oc-edit-link";
+    edit.textContent = "Edit";
+    edit.addEventListener("click", () => startEdit(wrap, c));
+    meta.appendChild(document.createTextNode(" "));
+    meta.appendChild(edit);
+    const body = document.createElement("div");
+    body.className = "oc-body";
+    body.textContent = c.body;
+    wrap.appendChild(meta);
+    wrap.appendChild(body);
+    return wrap;
+  }
+
+  function originNode(text) {
+    const wrap = document.createElement("div");
+    wrap.className = "oc-item oc-origin";
+    const meta = document.createElement("div");
+    meta.className = "oc-meta";
+    meta.textContent = "📱 Justification (from app)";
+    const body = document.createElement("div");
+    body.className = "oc-body";
+    body.textContent = text;
+    wrap.appendChild(meta);
+    wrap.appendChild(body);
+    return wrap;
+  }
+
+  function startEdit(wrap, c) {
+    if (wrap.querySelector("textarea")) return;
+    const bodyEl = wrap.querySelector(".oc-body");
+    const ta = document.createElement("textarea");
+    ta.className = "oc-edit-input";
+    ta.rows = 2;
+    ta.maxLength = 2000;
+    ta.value = c.body;
+    const bar = document.createElement("div");
+    bar.className = "oc-edit-bar";
+    const save = document.createElement("button");
+    save.type = "button"; save.textContent = "Save";
+    const cancel = document.createElement("button");
+    cancel.type = "button"; cancel.textContent = "Cancel"; cancel.className = "ghost";
+    bar.appendChild(save); bar.appendChild(cancel);
+    bodyEl.replaceWith(ta);
+    ta.after(bar);
+    ta.focus();
+    cancel.addEventListener("click", () => { ta.replaceWith(bodyEl); bar.remove(); });
+    save.addEventListener("click", async () => {
+      const text = ta.value.trim();
+      if (!text) return;
+      save.disabled = true;
+      const res = await fetch("/orders/" + currentOrderId + "/comments/" + c.id + "/edit", {
+        method: "POST", headers: csrfHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ body: text }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.ok) { wrap.replaceWith(commentNode(d.comment)); toast("Comment updated", true); }
+      else { save.disabled = false; toast("Couldn't save", false); }
+    });
+  }
+
+  async function load(orderId) {
+    threadEl.textContent = "Loading…";
+    let d = {};
+    try { const res = await fetch("/orders/" + orderId + "/comments"); d = await res.json(); }
+    catch (e) { d = {}; }
+    threadEl.textContent = "";
+    if (!d.ok) { threadEl.textContent = "Couldn't load comments."; return; }
+    if (d.justification) threadEl.appendChild(originNode(d.justification));
+    (d.comments || []).forEach((c) => threadEl.appendChild(commentNode(c)));
+    if (!d.justification && !(d.comments || []).length) {
+      const empty = document.createElement("div");
+      empty.className = "oc-empty muted";
+      empty.textContent = "No notes yet — add the first one below.";
+      threadEl.appendChild(empty);
+    }
+    threadEl.scrollTop = threadEl.scrollHeight;
+  }
+
+  function open(orderId, orderNumber) {
+    currentOrderId = orderId;
+    numEl.textContent = orderNumber || ("#" + orderId);
+    input.value = "";
+    load(orderId);
+    if (typeof dlg.showModal === "function") dlg.showModal(); else dlg.setAttribute("open", "");
+  }
+
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".comment-btn");
+    if (btn) { open(btn.dataset.orderId, btn.dataset.orderNumber); return; }
+    if (e.target.closest(".oc-close")) dlg.close();
+  });
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text || currentOrderId == null) return;
+    const btn = form.querySelector("button[type=submit]");
+    btn.disabled = true;
+    let d = {};
+    try {
+      const res = await fetch("/orders/" + currentOrderId + "/comments", {
+        method: "POST", headers: csrfHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ body: text }),
+      });
+      d = await res.json();
+    } catch (err) { d = {}; }
+    btn.disabled = false;
+    if (d.ok) {
+      const empty = threadEl.querySelector(".oc-empty");
+      if (empty) empty.remove();
+      threadEl.appendChild(commentNode(d.comment));
+      threadEl.scrollTop = threadEl.scrollHeight;
+      input.value = "";
+      toast("Comment added", true);
+    } else { toast("Couldn't add comment", false); }
+  });
+})();
+
 // ---- mobile nav drawer (hamburger) ----
 (function () {
   const toggle = document.querySelector(".nav-toggle");

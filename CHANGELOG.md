@@ -3,6 +3,25 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.38.0] — 2026-06-07
+Order comment threads on the web + a Settings control refresh.
+
+- **Leave comments on an order from the web History page.** Each order row now
+  has a 💬 button that opens a thread for that order. The original justification
+  note sent from the mobile app is pinned at the top of the thread as its origin
+  entry, so the app's reason and any follow-up web comments live in one place.
+  Any signed-in user can add comments (stamped with who + when); comments can be
+  edited in place, and **every add and edit is written to the audit log**
+  (old → new), so the history is preserved even though the thread reads cleanly.
+  Kiosk (shared/anonymous PIN) sessions don't see the thread — a comment
+  couldn't be attributed to a person. Comment text is rendered via the DOM
+  (never as HTML), so a pasted `<script>`/`<img onerror>` stays inert.
+- **Settings & Users control refresh.** The dated native checkboxes and default
+  `<select>` arrows in the settings shell now match the rest of the app — custom
+  accent-filled checkboxes with a crisp checkmark and a consistent dropdown
+  caret, border, hover and focus treatment. Scoped to the settings/users pages
+  so controls elsewhere are untouched.
+
 ## [1.37.0] — 2026-06-07
 Hardware-verified technician identity at the kiosk.
 
