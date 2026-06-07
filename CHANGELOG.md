@@ -3,6 +3,17 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.33.1] — 2026-06-07
+- **Items → Manage mode: the category buttons actually work now.** "+ Add
+  sub-category", "Rename / move", and the per-card Rename / + Sub buttons did
+  nothing when clicked. Their inline `onclick` passed the category name through
+  the `tojson` filter, which emits double quotes — and those collided with the
+  double-quoted `onclick="…"` attribute, producing a malformed handler. Rewired
+  them as data-attribute buttons with event listeners (the pattern the rest of
+  the app uses), so they open the add/rename dialogs reliably regardless of
+  characters in the category name. (The v1.33.0 redirect fix was real but
+  unrelated — these buttons were never opening their dialogs to begin with.)
+
 ## [1.33.0] — 2026-06-07
 Items "Manage mode" + category readability fixes.
 

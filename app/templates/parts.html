@@ -63,10 +63,10 @@
 <div class="manage-bar">
   <span class="muted">Manage mode</span>
   {% if view == 'root' %}
-    <button type="button" class="btn small" onclick="openCatAdd(null, '')">+ Add top-level category</button>
+    <button type="button" class="btn small cat-add-btn" data-parent-id="" data-parent-name="">+ Add top-level category</button>
   {% elif view == 'detail' %}
-    <button type="button" class="btn small" onclick="openCatAdd({{ current_cat.id }}, {{ current_cat.name|tojson }})">+ Add sub-category</button>
-    <button type="button" class="btn small ghost" onclick="openCatRename({{ current_cat.id }}, {{ current_cat.name|tojson }}, {{ (current_cat.description or '')|tojson }}, {{ (current_cat.parent_id if current_cat.parent_id is not none else '')|tojson }})">Rename / move</button>
+    <button type="button" class="btn small cat-add-btn" data-parent-id="{{ current_cat.id }}" data-parent-name="{{ current_cat.name }}">+ Add sub-category</button>
+    <button type="button" class="btn small ghost cat-rename-btn" data-id="{{ current_cat.id }}" data-name="{{ current_cat.name }}" data-desc="{{ current_cat.description or '' }}" data-parent="{{ current_cat.parent_id if current_cat.parent_id is not none else '' }}">Rename / move</button>
     <form method="post" action="/categories/{{ current_cat.id }}/delete" class="inline" onsubmit="return confirm('Delete this category? Items and sub-categories will be re-homed to its parent.')">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <input type="hidden" name="next" value="/parts{{ qs(cat=(current_cat.parent_id if current_cat.parent_id is not none else '')) }}">
@@ -93,8 +93,8 @@
       </a>
       {% if manage and can('manage_items') %}
       <div class="cat-card-admin">
-        <button type="button" class="ghost small" onclick="openCatRename({{ c.id }}, {{ c.name|tojson }}, {{ (c.description or '')|tojson }}, {{ (c.parent_id if c.parent_id is not none else '')|tojson }})">Rename</button>
-        <button type="button" class="ghost small" onclick="openCatAdd({{ c.id }}, {{ c.name|tojson }})">+ Sub</button>
+        <button type="button" class="ghost small cat-rename-btn" data-id="{{ c.id }}" data-name="{{ c.name }}" data-desc="{{ c.description or '' }}" data-parent="{{ c.parent_id if c.parent_id is not none else '' }}">Rename</button>
+        <button type="button" class="ghost small cat-add-btn" data-parent-id="{{ c.id }}" data-parent-name="{{ c.name }}">+ Sub</button>
         <form method="post" action="/categories/{{ c.id }}/delete" class="inline" onsubmit="return confirm('Delete this category? Items and sub-categories will be re-homed to its parent.')">
           <input type="hidden" name="_csrf" value="{{ csrf_token }}">
           <input type="hidden" name="next" value="{{ parts_url }}">
@@ -544,6 +544,21 @@ function openCatRename(id, name, desc, parentId){
   });
   document.getElementById('rename-cat').showModal();
 }
+// Wire the manage-mode buttons via data-* attributes + listeners rather than
+// inline onclick — a category name passed through the tojson filter emits
+// double quotes that break a double-quoted onclick attribute (so clicks did
+// nothing). Jinja auto-escapes plain template values inside the data-* attrs.
+document.querySelectorAll('.cat-add-btn').forEach(function(b){
+  b.addEventListener('click', function(){
+    var pid = b.dataset.parentId;
+    openCatAdd(pid === '' || pid == null ? null : pid, b.dataset.parentName || '');
+  });
+});
+document.querySelectorAll('.cat-rename-btn').forEach(function(b){
+  b.addEventListener('click', function(){
+    openCatRename(b.dataset.id, b.dataset.name || '', b.dataset.desc || '', b.dataset.parent || '');
+  });
+});
 </script>
 {% endif %}
 

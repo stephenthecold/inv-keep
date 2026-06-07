@@ -197,6 +197,13 @@ jobs:
           # The /parts manage view embeds next= in the category admin forms.
           mv = c.get('/parts?manage=1&cat=' + str(wid)).text
           assert ('name=\"next\" value=\"/parts?cat=' + str(wid) + '&amp;manage=1\"') in mv, 'manage forms missing next='
+          # The manage-mode category buttons must NOT use inline onclick with a
+          # tojson'd name (double quotes break a double-quoted onclick attr, so
+          # clicks did nothing). They're data-attribute buttons + listeners now.
+          c.post('/categories/add', data={'_csrf': tok, 'name': 'Router/Gateway', 'parent_id': str(wid)})
+          mv = c.get('/parts?manage=1&cat=' + str(wid)).text
+          assert 'onclick=\"openCatAdd' not in mv and 'onclick=\"openCatRename' not in mv, 'broken inline onclick present'
+          assert 'cat-add-btn' in mv and 'cat-rename-btn' in mv and \"querySelectorAll('.cat-add-btn')\" in mv
           # add-sub / rename / delete driven from /parts return to that /parts view.
           r = c.post('/categories/add', data={'_csrf': tok, 'name': 'Ethernet', 'parent_id': str(wid), 'next': nxt}, follow_redirects=False)
           assert r.headers['location'].startswith(nxt), r.headers['location']
