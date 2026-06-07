@@ -18,6 +18,9 @@
 {% endmacro %}
 
 {% block content %}
+{# Where the inline category admin (rename / + Sub / delete) returns to, so the
+   operator stays in this manage view instead of being bounced to /categories. #}
+{% set parts_url = '/parts' ~ qs() %}
 
 {# ===== Page header ===== #}
 <div class="page-head">
@@ -66,6 +69,7 @@
     <button type="button" class="btn small ghost" onclick="openCatRename({{ current_cat.id }}, {{ current_cat.name|tojson }}, {{ (current_cat.description or '')|tojson }}, {{ (current_cat.parent_id if current_cat.parent_id is not none else '')|tojson }})">Rename / move</button>
     <form method="post" action="/categories/{{ current_cat.id }}/delete" class="inline" onsubmit="return confirm('Delete this category? Items and sub-categories will be re-homed to its parent.')">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="next" value="/parts{{ qs(cat=(current_cat.parent_id if current_cat.parent_id is not none else '')) }}">
       <button type="submit" class="btn small danger">Delete category</button>
     </form>
   {% endif %}
@@ -93,6 +97,7 @@
         <button type="button" class="ghost small" onclick="openCatAdd({{ c.id }}, {{ c.name|tojson }})">+ Sub</button>
         <form method="post" action="/categories/{{ c.id }}/delete" class="inline" onsubmit="return confirm('Delete this category? Items and sub-categories will be re-homed to its parent.')">
           <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <input type="hidden" name="next" value="{{ parts_url }}">
           <button type="submit" class="danger small">Delete</button>
         </form>
       </div>
@@ -297,6 +302,7 @@
   <h2>Add category <span class="muted" id="ca-parent-hint"></span></h2>
   <form method="post" action="/categories/add" class="grid-form">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="next" value="{{ parts_url }}">
     <input type="hidden" name="parent_id" id="ca-parent-id" value="">
     <label>Name <input name="name" id="ca-name" required></label>
     <label class="wide">Description <textarea name="description" rows="2" placeholder="optional"></textarea></label>
@@ -312,6 +318,7 @@
   <h2>Rename category</h2>
   <form id="rc-form" method="post" action="" class="grid-form">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="next" value="{{ parts_url }}">
     <label>Name <input name="name" id="rc-name" required></label>
     <label class="wide">Description <textarea name="description" id="rc-desc" rows="2"></textarea></label>
     <label class="wide">Move under
