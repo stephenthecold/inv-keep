@@ -172,7 +172,8 @@ input.cat-top { font-weight: 600; }
    technician picker above the Submit button. */
 .txn-tech { font-size: .78rem; margin-top: .15rem; }
 .cart-tech-row { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin: .35rem 0 .25rem; }
-.cart-tech-row select { min-width: 12rem; }
+.cart-tech-row select, .cart-tech-row #cart-tech-scan { min-width: 12rem; }
+.tech-verified { font-weight: 600; color: var(--good, #2e7d32); }
 #cart-tech-msg.bad { color: var(--bad); font-weight: 600; }
 .filter { display: flex; gap: .75rem; align-items: center; margin: 1rem 0; flex-wrap: wrap; }
 /* File inputs render the native "Choose File" button + filename, which has

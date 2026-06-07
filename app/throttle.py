@@ -21,6 +21,8 @@ _LOCK = threading.Lock()
 
 # ip -> (fail_count, locked_until_epoch)
 _FAILS: dict = {}
+# Generic sliding-window hit log for rate_limited(): key -> [hit_epochs].
+_HITS: dict = {}
 # Across all IPs: rolling fail counter + a cooldown deadline.
 _GLOBAL = {"fails": 0, "until": 0.0, "last": 0.0}
 
@@ -80,3 +82,26 @@ def clear(ip) -> None:
     """Drop the per-IP failure record after a successful auth."""
     with _LOCK:
         _FAILS.pop(ip, None)
+
+
+def rate_limited(key: str, max_hits: int, window: float) -> bool:
+    """Generic sliding-window limiter, distinct from the PIN brute-force lock.
+
+    Returns True (and records nothing) when ``key`` has already had
+    ``max_hits`` hits within the trailing ``window`` seconds — i.e. THIS hit
+    should be rejected. Otherwise records the hit and returns False. Used by the
+    kiosk technician-verify endpoint (~10/min/IP) where every probe is a
+    legitimate-looking lookup, so the hard PIN lockout would be too blunt."""
+    now = time.time()
+    with _LOCK:
+        hits = [t for t in _HITS.get(key, ()) if now - t < window]
+        if len(hits) >= max_hits:
+            _HITS[key] = hits
+            return True
+        hits.append(now)
+        _HITS[key] = hits
+        # Opportunistic prune so the map can't grow without bound.
+        if len(_HITS) > 4096:
+            for k in [k for k, v in _HITS.items() if not v or now - v[-1] >= window]:
+                _HITS.pop(k, None)
+        return False

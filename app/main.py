@@ -234,7 +234,7 @@ PUBLIC_PREFIXES = ("/mobile/",)
 # Kiosk role (manage_items, view_audit, manage_settings, …), the
 # lockdown lifts and standard rbac takes over. See
 # _kiosk_lockdown_active().
-_KIOSK_ALLOWED_EXACT = {"/", "/transactions", "/logout"}
+_KIOSK_ALLOWED_EXACT = {"/", "/transactions", "/logout", "/kiosk/verify-tech"}
 _KIOSK_ALLOWED_PREFIXES = (
     "/api/cart", "/api/search", "/api/checkout", "/api/void",
     "/parts", "/categories", "/clients", "/jobs",
@@ -916,21 +916,25 @@ def scan_page(request: Request, db: Session = Depends(get_db)):
     # so back-to-back charge-outs don't re-prompt.
     technicians = []
     last_tech_id = ""
+    tech_hardware_verify = False
     if user.get("is_kiosk"):
         default_loc = user.get("kiosk_location_id") or store.get(db, "kiosk_location_id") or ""
         technicians = (db.query(Technician)
                        .filter(Technician.active == True)  # noqa: E712
                        .order_by(Technician.name).all())
         last_tech_id = request.session.get("kiosk_last_tech") or ""
+        tech_hardware_verify = store.get_bool(db, "require_hardware_tech_verification")
     # Show + require the picker only when a kiosk session has techs to pick from,
-    # so a freshly-upgraded kiosk with none configured yet isn't bricked.
+    # so a freshly-upgraded kiosk with none configured yet isn't bricked. When
+    # hardware verification is on the dropdown is replaced by a scan/tap prompt
+    # (same hidden #cart-tech field, so submit-time enforcement is unchanged).
     show_tech_picker = bool(user.get("is_kiosk")) and bool(technicians)
     return templates.TemplateResponse(
         "scan.html",
         ctx(request, db, clients=clients, jobs=jobs, recent=recent,
             locations=locations, default_location_id=default_loc,
             technicians=technicians, show_tech_picker=show_tech_picker,
-            last_tech_id=last_tech_id),
+            last_tech_id=last_tech_id, tech_hardware_verify=tech_hardware_verify),
     )
 
 
@@ -3904,17 +3908,55 @@ def settings_kiosk_delete(
 
 
 # ---- Technicians (people credited with charge-outs) ----
+
+def _norm_credential(v: str) -> Optional[str]:
+    """Normalize a scanned/typed hardware credential: strip surrounding
+    whitespace + control chars; blank becomes None so it stores as NULL (and
+    distinct NULLs don't trip the UNIQUE index). Capped so a garbage long scan
+    can't bloat the row."""
+    s = "".join(ch for ch in (v or "") if ch >= " ").strip()
+    return s[:128] or None
+
+
+@app.post("/settings/techs/verification")
+def settings_tech_verification(request: Request, require_hw: str = Form(""),
+                               db: Session = Depends(get_db)):
+    """Admin-only: toggle the kiosk hardware-verification requirement. When on,
+    the kiosk checkout replaces the technician dropdown with a scan-badge /
+    tap-card prompt resolved via POST /kiosk/verify-tech."""
+    user = current_user(request)
+    if not user.get("is_admin"):
+        return JSONResponse({"detail": "Admin only"}, status_code=403)
+    on = "1" if require_hw == "on" else "0"
+    store.set(db, "require_hardware_tech_verification", on)
+    audit.record(db, user, "settings.tech_verification", "settings", None,
+                 f"Hardware technician verification {'required' if on == '1' else 'optional'}")
+    db.commit()
+    return redirect("/settings",
+                    "Hardware verification " + ("required." if on == "1" else "turned off."))
+
+
 @app.post("/settings/techs/add")
-def settings_tech_add(request: Request, name: str = Form(""), db: Session = Depends(get_db)):
+def settings_tech_add(request: Request, name: str = Form(""),
+                      barcode_value: str = Form(""), nfc_uid: str = Form(""),
+                      db: Session = Depends(get_db)):
     user = current_user(request)
     if not user.get("is_admin"):
         return JSONResponse({"detail": "Admin only"}, status_code=403)
     nm = (name or "").strip()
     if not nm:
         return redirect("/settings", "Technician name is required.", ok=False)
-    row = Technician(name=nm[:100], active=True)
+    row = Technician(name=nm[:100], active=True,
+                     barcode_value=_norm_credential(barcode_value),
+                     nfc_uid=_norm_credential(nfc_uid))
     db.add(row)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        return redirect("/settings",
+                        "That badge / card is already enrolled to another technician.",
+                        ok=False)
     audit.record(db, user, "tech.create", "technician", row.id, f"Added technician '{row.name}'")
     db.commit()
     return redirect("/settings", "Technician added.")
@@ -3922,10 +3964,11 @@ def settings_tech_add(request: Request, name: str = Form(""), db: Session = Depe
 
 @app.post("/settings/techs/{tech_id}/save")
 def settings_tech_save(tech_id: int, request: Request, name: str = Form(""),
-                       active: str = Form(""), db: Session = Depends(get_db)):
-    """Rename / activate-deactivate a technician. No hard delete — orders
-    reference techs, so deactivating keeps history intact while removing them
-    from the kiosk picker."""
+                       active: str = Form(""), barcode_value: str = Form(""),
+                       nfc_uid: str = Form(""), db: Session = Depends(get_db)):
+    """Rename / activate-deactivate a technician + manage their hardware-verify
+    credentials. No hard delete — orders reference techs, so deactivating keeps
+    history intact while removing them from the kiosk picker."""
     user = current_user(request)
     if not user.get("is_admin"):
         return JSONResponse({"detail": "Admin only"}, status_code=403)
@@ -3936,9 +3979,45 @@ def settings_tech_save(tech_id: int, request: Request, name: str = Form(""),
     if nm:
         row.name = nm[:100]
     row.active = active == "on"
+    row.barcode_value = _norm_credential(barcode_value)
+    row.nfc_uid = _norm_credential(nfc_uid)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        return redirect("/settings",
+                        "That badge / card is already enrolled to another technician.",
+                        ok=False)
     audit.record(db, user, "tech.edit", "technician", row.id, f"Edited technician '{row.name}'")
     db.commit()
     return redirect("/settings", "Technician saved.")
+
+
+@app.post("/kiosk/verify-tech")
+async def kiosk_verify_tech(request: Request, db: Session = Depends(get_db)):
+    """Resolve a scanned badge barcode / tapped NFC UID to an active technician
+    for the kiosk hardware-verification checkout. Rate-limited ~10/min/IP since
+    every probe looks legitimate (so the hard PIN lockout would be too blunt).
+    Returns {ok, tech_id, tech_name} on a hit, 404 unknown_credential on a miss.
+    Reachable by kiosk sessions (in the lockdown allowlist) and signed-in staff;
+    CSRF-protected by the global middleware like every other POST."""
+    ip = throttle.client_ip(request)
+    if throttle.rate_limited(f"verify-tech:{ip}", 10, 60.0):
+        return JSONResponse({"ok": False, "error": "rate_limited"}, status_code=429)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    cred = _norm_credential(body.get("credential") if isinstance(body, dict) else "")
+    if not cred:
+        return JSONResponse({"ok": False, "error": "unknown_credential"}, status_code=404)
+    tech = (db.query(Technician)
+            .filter(Technician.active == True,  # noqa: E712
+                    or_(Technician.barcode_value == cred, Technician.nfc_uid == cred))
+            .first())
+    if tech is None:
+        return JSONResponse({"ok": False, "error": "unknown_credential"}, status_code=404)
+    return {"ok": True, "tech_id": tech.id, "tech_name": tech.name}
 
 
 @app.post("/settings/email")

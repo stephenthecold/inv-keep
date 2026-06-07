@@ -1213,6 +1213,106 @@ jobs:
           assert ('value=\"' + str(tid) + '\" selected') in c.get('/').text
           print('kiosk technician requirement OK')
           "
+      - name: Technician hardware verification (admin enrol + verify-tech + rate-limit)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_techhw.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import re
+          from app.main import app
+          from app.database import SessionLocal
+          from app import settings_store as store
+          from app.models import Technician
+          from fastapi.testclient import TestClient
+          c = TestClient(app)
+          tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', c.get('/').text).group(1)
+          H = {'X-CSRF-Token': tok}
+          # Whitelabel default: flag absent/false until an admin turns it on.
+          assert c.get('/mobile/whitelabel').json()['require_hardware_tech_verification'] is False
+          # Admin enrols two techs with badge + NFC credentials.
+          assert c.post('/settings/techs/add', data={'_csrf': tok, 'name': 'Jordan Lee', 'barcode_value': 'BADGE-001', 'nfc_uid': '04AABBCC'}, follow_redirects=False).status_code == 303
+          assert c.post('/settings/techs/add', data={'_csrf': tok, 'name': 'Sam Rivera', 'barcode_value': 'BADGE-002', 'nfc_uid': ''}, follow_redirects=False).status_code == 303
+          db = SessionLocal(); techs = {t.name: t for t in db.query(Technician).all()}
+          j, s = techs['Jordan Lee'], techs['Sam Rivera']
+          assert j.barcode_value == 'BADGE-001' and j.nfc_uid == '04AABBCC'
+          assert s.barcode_value == 'BADGE-002' and s.nfc_uid is None; db.close()
+          # Settings UI surfaces the credential inputs + the policy toggle.
+          stext = c.get('/settings').text
+          assert 'name=\"barcode_value\"' in stext and 'name=\"nfc_uid\"' in stext and 'name=\"require_hw\"' in stext
+          # SEC: a duplicate credential is refused (friendly redirect, no row created, no 500).
+          r = c.post('/settings/techs/add', data={'_csrf': tok, 'name': 'Dupe', 'barcode_value': 'BADGE-001'}, follow_redirects=False)
+          assert r.status_code == 303
+          db = SessionLocal(); assert db.query(Technician).filter(Technician.name == 'Dupe').count() == 0; db.close()
+          # verify-tech resolves badge + NFC to the same tech; unknown / blank -> 404 unknown_credential.
+          assert c.post('/kiosk/verify-tech', json={'credential': 'BADGE-001'}, headers=H).json()['tech_id'] == j.id
+          assert c.post('/kiosk/verify-tech', json={'credential': '04AABBCC'}, headers=H).json()['tech_id'] == j.id
+          r = c.post('/kiosk/verify-tech', json={'credential': 'NOPE'}, headers=H); assert r.status_code == 404 and r.json()['error'] == 'unknown_credential'
+          assert c.post('/kiosk/verify-tech', json={'credential': '   '}, headers=H).status_code == 404
+          # Deactivated tech's credential no longer resolves.
+          c.post('/settings/techs/' + str(s.id) + '/save', data={'_csrf': tok, 'name': 'Sam Rivera', 'active': '', 'barcode_value': 'BADGE-002'})
+          assert c.post('/kiosk/verify-tech', json={'credential': 'BADGE-002'}, headers=H).status_code == 404
+          # Rate-limit ~10/min/IP: the 11th probe from one IP within the window is 429.
+          hd = dict(H); hd['X-Forwarded-For'] = '203.0.113.7'
+          codes = [c.post('/kiosk/verify-tech', json={'credential': 'x'}, headers=hd).status_code for _ in range(12)]
+          assert codes.count(429) >= 1 and codes[:10].count(429) == 0, codes
+          # Editing a tech can clear one credential (blank -> NULL) and keep the other.
+          c.post('/settings/techs/' + str(j.id) + '/save', data={'_csrf': tok, 'name': 'Jordan Lee', 'active': 'on', 'barcode_value': '', 'nfc_uid': '04AABBCC'})
+          db = SessionLocal(); jr = db.get(Technician, j.id); assert jr.barcode_value is None and jr.nfc_uid == '04AABBCC'; db.close()
+          # Policy toggle flips the setting + is mirrored to the companion app.
+          assert c.post('/settings/techs/verification', data={'_csrf': tok, 'require_hw': 'on'}, follow_redirects=False).status_code == 303
+          assert store.get_bool(SessionLocal(), 'require_hardware_tech_verification') is True
+          assert c.get('/mobile/whitelabel').json()['require_hardware_tech_verification'] is True
+          print('technician hardware verification OK')
+          "
+      - name: Kiosk hardware-verify checkout (scan prompt + lockdown reach + end-to-end)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_techhwk.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+        run: |
+          python -c "
+          import re
+          from app.main import app, _KIOSK_ALLOWED_EXACT
+          from app.database import SessionLocal
+          from app import settings_store as store
+          from app.models import KioskPin, Technician, Client, Part, Location, StockLevel, Order
+          # The verify endpoint must be in the kiosk lockdown floor or a locked kiosk can't reach it.
+          assert '/kiosk/verify-tech' in _KIOSK_ALLOWED_EXACT
+          db = SessionLocal()
+          for k, v in [('auth_mode', 'oidc'), ('oidc_discovery_url', 'https://x/.well-known/openid-configuration'), ('oidc_client_id', 'x'), ('kiosk_enabled', '1'), ('require_hardware_tech_verification', '1')]:
+              store.set(db, k, v)
+          db.add(KioskPin(label='Front', pin='1234', kiosk_username='front', active=True))
+          loc = db.query(Location).first()
+          if not loc:
+              loc = Location(name='Main', active=True, archived=False); db.add(loc); db.flush()
+          db.add(Technician(name='Jordan Lee', active=True, barcode_value='BADGE-001', nfc_uid='04AABBCC'))
+          db.add(Client(name='Acme', active=True, archived=False))
+          p = Part(name='Cable', type='bulk', unit_cost=1, unit_price=2, quantity_on_hand=10, barcode='BC-HW1', active=True, archived=False); db.add(p); db.flush()
+          db.add(StockLevel(part_id=p.id, location_id=loc.id, quantity=10)); db.commit()
+          tid = db.query(Technician).first().id; clid = db.query(Client).first().id; db.close()
+          from fastapi.testclient import TestClient
+          c = TestClient(app, base_url='https://testserver')
+          tok = re.search(r'name=\"_csrf\" value=\"([^\"]+)\"', c.get('/welcome').text).group(1)
+          assert c.post('/kiosk/login', data={'_csrf': tok, 'pin': '1234'}, follow_redirects=False).headers['location'] == '/'
+          page = c.get('/').text
+          # Dropdown is replaced by the scan/tap prompt; the hidden required field stays for submit-time enforcement.
+          assert 'id=\"cart-tech-scan\"' in page and 'data-verify=\"1\"' in page
+          assert 'id=\"cart-tech\"' in page and 'data-required=\"1\"' in page
+          assert '<select id=\"cart-tech\"' not in page and 'Scan your badge' in page  # dropdown replaced by the scan prompt
+          tok2 = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', page).group(1)
+          h = {'X-CSRF-Token': tok2, 'Content-Type': 'application/json'}
+          # Locked kiosk session can reach verify-tech and resolve the badge.
+          assert c.post('/kiosk/verify-tech', json={'credential': 'BADGE-001'}, headers=h).json()['tech_id'] == tid
+          assert c.post('/kiosk/verify-tech', json={'credential': 'WRONG'}, headers=h).status_code == 404
+          # End-to-end: scan an item, set client, submit with the verified tech id.
+          assert c.post('/api/cart/scan', json={'barcode': 'BC-HW1', 'quantity': 1}, headers=h).json()['ok']
+          assert c.post('/api/cart/set', json={'client_id': clid, 'job_id': None}, headers=h).json()['ok']
+          assert c.post('/api/cart/submit', json={'tech_id': None}, headers=h).json() == {'ok': False, 'error': 'tech_required'}
+          assert c.post('/api/cart/submit', json={'tech_id': tid}, headers=h).json()['ok']
+          db = SessionLocal(); assert db.query(Order).filter(Order.status == 'submitted').first().tech_id == tid; db.close()
+          print('kiosk hardware-verify checkout OK')
+          "
       - name: UI/UX regressions (popup money + table-scroll + a11y)
         env:
           DATABASE_URL: "sqlite:///./data/ci_ui.db"

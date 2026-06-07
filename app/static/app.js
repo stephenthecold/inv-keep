@@ -689,6 +689,56 @@ if (scan && cart) {
   });
 
   const techSel = document.getElementById("cart-tech");
+  // Hardware-verify mode: a keyboard-wedge badge scan / NFC tap lands in
+  // #cart-tech-scan; resolve it to a technician id via /kiosk/verify-tech and
+  // stash it on the hidden #cart-tech the submit handler already reads. Absent
+  // (null) in plain-dropdown mode.
+  const techScan = document.getElementById("cart-tech-scan");
+  if (techScan && techSel) {
+    const techName = document.getElementById("cart-tech-name");
+    const techMsg  = document.getElementById("cart-tech-msg");
+    let verifying = false;
+    async function verifyTech(raw) {
+      const cred = (raw || "").trim();
+      if (!cred || verifying) return;
+      verifying = true;
+      try {
+        const res = await fetch(techScan.dataset.verifyUrl || "/kiosk/verify-tech", {
+          method: "POST",
+          headers: csrfHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ credential: cred }),
+        });
+        const d = await res.json().catch(() => ({}));
+        if (res.ok && d.ok) {
+          techSel.value = String(d.tech_id);
+          if (techName) { techName.textContent = "✓ " + d.tech_name; techName.hidden = false; }
+          if (techMsg) { techMsg.textContent = "Verified — ready to submit."; techMsg.classList.remove("bad"); }
+          beep(true);
+        } else {
+          techSel.value = "";
+          if (techName) { techName.hidden = true; techName.textContent = ""; }
+          if (techMsg) {
+            techMsg.textContent = res.status === 429
+              ? "Too many attempts — wait a moment and rescan."
+              : "Badge not recognised — try again or see an admin.";
+            techMsg.classList.add("bad");
+          }
+          beep(false);
+        }
+      } catch (e) {
+        if (techMsg) { techMsg.textContent = "Couldn't verify — check the connection."; techMsg.classList.add("bad"); }
+      } finally {
+        verifying = false;
+        techScan.value = "";
+      }
+    }
+    // Keyboard-wedge scanners emit the value then Enter; also support manual
+    // type + Enter and a blur/change fallback if the wedge omits Enter.
+    techScan.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); verifyTech(techScan.value); }
+    });
+    techScan.addEventListener("change", () => { if (techScan.value.trim()) verifyTech(techScan.value); });
+  }
   submitBtn.addEventListener("click", async () => {
     // Kiosk charge-out requires a technician (the picker is rendered only then).
     let techId = null;
@@ -696,10 +746,12 @@ if (scan && cart) {
       techId = techSel.value ? parseInt(techSel.value, 10) : null;
       if (techSel.dataset.required && !techId) {
         beep(false);
-        toast("Pick the technician charging this out", false);
+        const m = techScan ? "Scan your badge to verify the technician"
+                           : "Pick the technician charging this out";
+        toast(m, false);
         const msg = document.getElementById("cart-tech-msg");
-        if (msg) { msg.textContent = "Pick the technician charging this out"; msg.classList.add("bad"); }
-        techSel.focus();
+        if (msg) { msg.textContent = m; msg.classList.add("bad"); }
+        (techScan || techSel).focus();
         return;
       }
     }

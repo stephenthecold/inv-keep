@@ -105,6 +105,12 @@ DEFAULTS = {
     # cart card (operator can still override via the dropdown). Empty falls
     # back to the first active location.
     "kiosk_location_id": "",
+    # v1.37: when "1", a kiosk charge-out can't pick a technician from a plain
+    # dropdown — the operator must scan their badge barcode or tap their NFC
+    # card, resolved server-side via POST /kiosk/verify-tech against the
+    # technician's enrolled credential. Default off (dropdown). Surfaced to the
+    # companion app via /mobile/whitelabel so it can mirror the requirement.
+    "require_hardware_tech_verification": "0",
 }
 
 SECRET_KEYS = {

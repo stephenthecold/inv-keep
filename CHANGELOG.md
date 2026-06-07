@@ -3,6 +3,25 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.37.0] — 2026-06-07
+Hardware-verified technician identity at the kiosk.
+
+- **Optional badge / NFC verification of the charging technician.** A new
+  Settings → Technicians toggle, *"Require hardware verification at kiosk
+  charge-out"*, swaps the technician dropdown for a **scan-badge / tap-card**
+  prompt on kiosk sessions — so a tech can't be picked from a list, only proven
+  by their own credential. Off by default; existing installs keep the dropdown.
+- **Per-technician credentials.** Each technician can be enrolled with a badge
+  barcode and/or an NFC card UID (both managed inline on the Technicians page,
+  each unique to one person). A scanned/tapped value is resolved server-side via
+  `POST /kiosk/verify-tech` to the matching active technician — rate-limited to
+  ~10 lookups/min per IP, and returning a clean "badge not recognised" rather
+  than leaking who's enrolled. Deactivating a tech immediately stops their
+  credential from resolving.
+- **Companion app awareness.** `GET /mobile/whitelabel` now reports
+  `require_hardware_tech_verification` so the mobile app can mirror the same
+  scan/tap requirement on its own charge-outs.
+
 ## [1.36.0] — 2026-06-07
 Technician attribution on web kiosk charge-out.
 

@@ -374,18 +374,34 @@
 <section class="card settings-tab" id="tab-techs" data-tab-pane="techs" data-tab-title="Technicians">
   <h2>Technicians</h2>
   <p class="muted">People credited with a charge-out. On a <b>kiosk</b> charge-out the operator must pick the technician here — this is separate from which station (Kiosk PIN) they signed in on. Deactivate to drop someone from the picker without losing their history.</p>
+
+  <!-- Hardware-verified identity policy -->
+  <form method="post" action="/settings/techs/verification" class="grid-form" style="margin-bottom:1rem">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label class="wide">
+      <span style="display:inline-flex; align-items:center; gap:.4rem">
+        <input type="checkbox" name="require_hw" onchange="this.form.submit()" {% if cfg.require_hardware_tech_verification == '1' %}checked{% endif %}>
+        Require hardware verification at kiosk charge-out
+      </span>
+      <small class="muted">When on, the kiosk replaces the technician dropdown with a <b>scan badge / tap card</b> prompt — the operator can't pick a tech without their enrolled barcode or NFC card. Enrol each tech's credential in the table below.</small>
+    </label>
+    <noscript><button type="submit">Save</button></noscript>
+  </form>
+
   {% if technicians %}
   <div class="table-scroll">
   <table class="lines" style="margin-bottom:.75rem">
-    <thead><tr><th>Name</th><th>Active</th><th></th></tr></thead>
+    <thead><tr><th>Name</th><th title="Badge barcode scanned at the kiosk">Badge barcode</th><th title="NFC card UID tapped at the kiosk">NFC card UID</th><th>Active</th><th></th></tr></thead>
     <tbody>
     {% for t in technicians %}
     <tr>
       <td>
         <form id="tech-{{ t.id }}" method="post" action="/settings/techs/{{ t.id }}/save"></form>
         <input form="tech-{{ t.id }}" type="hidden" name="_csrf" value="{{ csrf_token }}">
-        <input form="tech-{{ t.id }}" name="name" value="{{ t.name }}" maxlength="100" required style="width:14rem" aria-label="Technician name">
+        <input form="tech-{{ t.id }}" name="name" value="{{ t.name }}" maxlength="100" required style="width:11rem" aria-label="Technician name">
       </td>
+      <td><input form="tech-{{ t.id }}" name="barcode_value" value="{{ t.barcode_value or '' }}" maxlength="128" placeholder="scan to set" style="width:10rem" aria-label="Badge barcode" autocomplete="off"></td>
+      <td><input form="tech-{{ t.id }}" name="nfc_uid" value="{{ t.nfc_uid or '' }}" maxlength="128" placeholder="tap to set" style="width:10rem" aria-label="NFC card UID" autocomplete="off"></td>
       <td style="text-align:center"><input form="tech-{{ t.id }}" type="checkbox" name="active" {% if t.active %}checked{% endif %} aria-label="Active"></td>
       <td><span class="row-actions"><button form="tech-{{ t.id }}" type="submit">Save</button></span></td>
     </tr>
@@ -401,6 +417,8 @@
   <form method="post" action="/settings/techs/add" class="grid-form">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label>Name <input name="name" maxlength="100" placeholder="e.g. Jordan Lee" required></label>
+    <label>Badge barcode <input name="barcode_value" maxlength="128" placeholder="scan to set (optional)" autocomplete="off"></label>
+    <label>NFC card UID <input name="nfc_uid" maxlength="128" placeholder="tap to set (optional)" autocomplete="off"></label>
     <button type="submit">Add technician</button>
   </form>
 </section>
