@@ -356,8 +356,9 @@
         {% for l in kiosk_locations %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
       </select>
     </label>
-    <label class="check"><input type="checkbox" name="is_inventory_admin"> Inventory admin
-      <small class="muted" style="display:block">Lets this PIN add/edit catalog items and adjust stock from the mobile app's Inventory screen.</small>
+    <label class="wide">
+      <span style="display:inline-flex; align-items:center; gap:.4rem"><input type="checkbox" name="is_inventory_admin"> Inventory admin</span>
+      <small class="muted">Lets this PIN add/edit catalog items and adjust stock from the mobile app's Inventory screen.</small>
     </label>
     <button type="submit">Add PIN</button>
   </form>

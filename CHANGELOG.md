@@ -3,6 +3,12 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.32.1] — 2026-06-07
+- **Settings → Kiosk PINs:** the new "Inventory admin" checkbox's help text on
+  the *Add a kiosk PIN* form rendered inline (it sat in a flex-row `.check`
+  label), crowding the row against the Add PIN button. It now sits on its own
+  line under the checkbox.
+
 ## [1.32.0] — 2026-06-07
 Mobile companion app v3 — six additive capabilities on the `/mobile/*` API.
 No breaking changes to existing endpoints.
