@@ -142,7 +142,10 @@
     <tr {% if t.voided %}class="voided"{% endif %}>
       <td>{{ t.created_at | local_dt(cfg.timezone) }}</td>
       <td>{% if t.order and t.order.number %}<code>{{ t.order.number }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>
-      <td>{{ t.part.name }}</td>
+      <td>{{ t.part.name }}
+        {% set nt = (t.note or '').replace(' | custom', '').strip() %}
+        {% if nt and nt != 'custom' %}<div class="txn-note{% if t.total_charge == 0 %} txn-note-flag{% endif %}" title="Order note / reason"><span aria-hidden="true">💬</span> {{ nt }}</div>{% endif %}
+      </td>
       <td>{{ t.client.name if t.client else '' }}</td>
       <td>{{ t.job.name if t.job else '' }}</td>
       <td class="num">{{ t.quantity }}</td>

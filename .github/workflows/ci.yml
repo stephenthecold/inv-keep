@@ -1063,6 +1063,41 @@ jobs:
           assert c.get('/mobile/items/' + str(nid) + '/icon').status_code == 200
           print('mobile companion v3 OK')
           "
+      - name: Order note surfacing (mobile responses + web History)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_ordernote.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import re
+          from fastapi.testclient import TestClient
+          from app.main import app
+          from app.database import SessionLocal
+          from app.models import KioskPin, Location, Client, Part
+          c = TestClient(app)
+          tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', c.get('/').text).group(1)
+          c.post('/clients/add', data={'_csrf': tok, 'name': 'Acme'})
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'Cable', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2.50', 'quantity_on_hand': '10'})
+          db = SessionLocal(); loc = db.query(Location).first().id; cl = db.query(Client).first().id; pid = db.query(Part).first().id
+          db.add(KioskPin(label='T', pin='9876', kiosk_username='alice', location_id=loc, active=True)); db.commit(); db.close()
+          bh = {'Authorization': 'Bearer ' + c.post('/mobile/auth/token', json={'pin': '9876'}).json()['token']}
+          # \$0 warranty (custom line + note + override), a normal noted order, and a no-note order.
+          assert c.post('/mobile/orders', json={'client_action_id': 'w1', 'customer_id': cl, 'location_id': loc, 'allow_zero_total': True, 'note': 'warranty replacement for unit #ABC123', 'lines': [{'type': 'custom', 'name': 'Replacement', 'qty': 1, 'unit_price_cents': 0}]}, headers=bh).status_code == 201
+          assert c.post('/mobile/orders', json={'client_action_id': 'n1', 'customer_id': cl, 'location_id': loc, 'note': 'left at front desk', 'lines': [{'item_id': pid, 'qty': 1}]}, headers=bh).status_code == 201
+          assert c.post('/mobile/orders', json={'client_action_id': 'x1', 'customer_id': cl, 'location_id': loc, 'lines': [{'item_id': pid, 'qty': 1}]}, headers=bh).status_code == 201
+          # /orders/recent: note returned (marker stripped); no-note order is null.
+          notes = sorted([o.get('note') for o in c.get('/mobile/orders/recent', headers=bh).json()['orders']], key=lambda x: (x is None, x))
+          assert 'warranty replacement for unit #ABC123' in notes and 'left at front desk' in notes and None in notes, notes
+          # /orders/zero-total carries the note too.
+          zt = c.get('/mobile/orders/zero-total', headers=bh).json()['orders']
+          assert len(zt) == 1 and zt[0]['total_cents'] == 0 and zt[0]['note'] == 'warranty replacement for unit #ABC123', zt
+          # Web History surfaces the note, flags the \$0 one, and strips the '| custom' marker.
+          html = c.get('/transactions').text
+          assert 'warranty replacement for unit #ABC123' in html and 'txn-note-flag' in html
+          assert 'left at front desk' in html and '| custom' not in html
+          print('order note surfacing OK')
+          "
       - name: Mobile preset icons (icon_url fallback to the built-in SVG library)
         env:
           DATABASE_URL: "sqlite:///./data/ci_preseticons.db"

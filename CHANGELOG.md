@@ -3,6 +3,18 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.35.0] — 2026-06-07
+- **Order note / reason is now visible where orders are reviewed.** The mobile
+  app sends a required note as the justification for a $0 warranty / no-charge
+  order. The web **History** page (and the scan page's "Recent activity") now
+  shows that note under the part name — tinted like a warning callout when the
+  line is $0, so warranty/NCR cases jump out, and neutral otherwise. (This app
+  has no separate per-order detail page; History is where orders are reviewed.)
+- **Mobile responses carry the note.** `GET /mobile/orders/recent` and
+  `GET /mobile/orders/zero-total` now include a `note` field per order (the
+  device-supplied reason, with the internal `| custom` marker stripped), so the
+  Android Recent-orders screen can badge annotated rows.
+
 ## [1.34.0] — 2026-06-07
 - **Mobile app: catalog items now show their real icon, not a generic glyph.**
   The web "Edit item" dropdown sets a preset icon (`svg:network-cable`, …) for
