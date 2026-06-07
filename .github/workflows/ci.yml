@@ -1098,6 +1098,43 @@ jobs:
           assert 'left at front desk' in html and '| custom' not in html
           print('order note surfacing OK')
           "
+      - name: Mobile preset icons (icon_url fallback to the built-in SVG library)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_preseticons.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import io, re
+          from fastapi.testclient import TestClient
+          from app.main import app
+          from app.database import SessionLocal
+          from app.models import KioskPin, Location, Part
+          c = TestClient(app)
+          tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', c.get('/').text).group(1)
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'Cat6 cable', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2', 'quantity_on_hand': '5', 'icon': 'svg:network-cable'})
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'Widget', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2', 'quantity_on_hand': '5', 'icon': '\U0001F4E6'})
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'Plain', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2', 'quantity_on_hand': '5'})
+          db = SessionLocal(); loc = db.query(Location).first().id
+          db.add(KioskPin(label='T', pin='9876', kiosk_username='alice', location_id=loc, active=True, is_inventory_admin=True)); db.commit()
+          pid = db.query(Part).filter(Part.name == 'Cat6 cable').first().id; db.close()
+          # Preset route: public, hardened, real SVG; unknown slug -> 404.
+          r = c.get('/mobile/icons/network-cable')
+          assert r.status_code == 200 and r.headers['content-type'] == 'image/svg+xml'
+          assert 'sandbox' in r.headers.get('content-security-policy', '') and r.headers.get('x-content-type-options') == 'nosniff'
+          assert 'max-age=31536000' in r.headers.get('cache-control', '')
+          assert r.text.startswith('<svg') and 'currentColor' in r.text and '</svg>' in r.text and '<path' in r.text
+          assert c.get('/mobile/icons/nope').status_code == 404
+          # _item_dto fallback: preset -> /mobile/icons/<slug>; emoji/none -> null.
+          bh = {'Authorization': 'Bearer ' + c.post('/mobile/auth/token', json={'pin': '9876'}).json()['token']}
+          items = {i['name']: i for i in c.get('/mobile/items/search?q=&limit=20', headers=bh).json()['items']}
+          assert items['Cat6 cable']['icon_url'].endswith('/mobile/icons/network-cable'), items['Cat6 cable']
+          assert items['Widget']['icon_url'] is None and items['Plain']['icon_url'] is None
+          # A per-item upload still wins over the preset.
+          assert c.post('/mobile/items/' + str(pid) + '/icon', files={'image': ('i.svg', io.BytesIO(b'<svg></svg>'), 'image/svg+xml')}, headers=bh).status_code == 201
+          assert '/mobile/items/' + str(pid) + '/icon' in c.get('/mobile/items/search?q=Cat6', headers=bh).json()['items'][0]['icon_url']
+          print('mobile preset icons OK')
+          "
       - name: UI/UX regressions (popup money + table-scroll + a11y)
         env:
           DATABASE_URL: "sqlite:///./data/ci_ui.db"

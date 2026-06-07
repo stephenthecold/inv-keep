@@ -36,6 +36,7 @@ from . import orders as orders_mod
 from . import settings_store as store
 from . import throttle
 from .database import get_db
+from .icons import ICON_SET, SVG_OPEN
 from .models import (
     Category, Client, Job, KioskPin, Location, MobileSession, Order, Part,
     Receipt, Transaction,
@@ -71,6 +72,14 @@ _ICON_HEADERS = {
     "Cache-Control": "public, max-age=2592000, immutable",
 }
 _ICON_MEDIA = {".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg"}
+
+# Preset icons are static (baked into icons.ICON_SET), so they get a 1-year
+# immutable cache on top of the same SVG-sandbox hardening as uploads.
+_PRESET_ICON_HEADERS = {
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "public, max-age=31536000, immutable",
+}
 
 # ---- helpers ---------------------------------------------------------------
 
@@ -275,7 +284,16 @@ def _item_dto(db: Session, tech: KioskPin, part: Part, request: Request) -> Item
         qty = orders_mod.stock_at(db, part.id, loc_id)
     else:
         qty = int(part.quantity_on_hand or 0)
-    icon_url = _abs_url(request, part.icon_image) if (part.icon_image or "") else None
+    # Icon precedence: a per-item upload wins; otherwise fall back to the
+    # preset chosen in the web "Edit item" dropdown (svg:<slug> -> the shared
+    # preset SVG route); otherwise null (the app shows a generic glyph).
+    icon_url = None
+    if part.icon_image:
+        icon_url = _abs_url(request, part.icon_image)
+    elif part.icon and part.icon.startswith("svg:"):
+        slug = part.icon[4:]
+        if slug in ICON_SET:
+            icon_url = _abs_url(request, f"/mobile/icons/{slug}")
     return ItemOut(
         id=part.id,
         sku=part.barcode,
@@ -484,6 +502,22 @@ def brand_logo_file(db: Session = Depends(get_db)):
              ".webp": "image/webp", ".gif": "image/gif"}.get(ext, "application/octet-stream")
     return FileResponse(path, media_type=media,
                         headers={"Cache-Control": "public, max-age=86400"})
+
+
+# ---- 1c2. preset icons: serve the built-in SVG library (public) ------------
+
+@router.get("/icons/{slug}")
+def preset_icon(slug: str):
+    """Serve one of the built-in preset icons (icons.ICON_SET) as a standalone
+    SVG so the mobile app can render the same glyph the web 'Edit item' dropdown
+    uses for ``part.icon = 'svg:<slug>'``. PUBLIC + hardened (sandbox CSP +
+    nosniff). The SVG keeps stroke='currentColor' so the Android client tints it
+    via ColorFilter to the theme colour."""
+    inner = ICON_SET.get(slug)
+    if inner is None:
+        raise HTTPException(status_code=404, detail="no_icon")
+    body = f"{SVG_OPEN}{inner}</svg>".encode("utf-8")
+    return Response(content=body, media_type="image/svg+xml", headers=dict(_PRESET_ICON_HEADERS))
 
 
 # ---- 1d. item icons: serve (public) + upload (admin) -----------------------

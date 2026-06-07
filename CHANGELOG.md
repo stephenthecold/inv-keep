@@ -15,6 +15,16 @@ All notable changes to Inv-Keep are recorded here. Versions are tagged in git
   device-supplied reason, with the internal `| custom` marker stripped), so the
   Android Recent-orders screen can badge annotated rows.
 
+## [1.34.0] — 2026-06-07
+- **Mobile app: catalog items now show their real icon, not a generic glyph.**
+  The web "Edit item" dropdown sets a preset icon (`svg:network-cable`, …) for
+  the vast majority of items, but the mobile API only ever exposed *uploaded*
+  icons, so every preset item returned `icon_url: null` and the Android app
+  fell back to a placeholder. Added `GET /mobile/icons/{slug}` that serves the
+  built-in preset SVGs (public, sandboxed, year-long immutable cache, keeps
+  `stroke="currentColor"` so the client tints to the theme), and `ItemDto.icon_url`
+  now falls back upload → preset → null. Per-item uploads still take priority.
+
 ## [1.33.1] — 2026-06-07
 - **Items → Manage mode: the category buttons actually work now.** "+ Add
   sub-category", "Rename / move", and the per-card Rename / + Sub buttons did
