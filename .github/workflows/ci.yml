@@ -947,6 +947,43 @@ jobs:
           assert c.post('/mobile/receipts', files={'image': ('r.png', io.BytesIO(PNG), 'image/png')}).status_code == 401
           print('mobile API extended OK')
           "
+      - name: UI/UX regressions (popup money + table-scroll + a11y)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_ui.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import re, pathlib
+          from fastapi.testclient import TestClient
+          from app.main import app
+          c = TestClient(app)
+          tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', c.get('/').text).group(1)
+          h = {'X-CSRF-Token': tok}
+          c.post('/clients/add', data={'_csrf': tok, 'name': 'Acme'})
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'Widget', 'type': 'bulk', 'unit_cost': '0.5', 'unit_price': '1.50', 'quantity_on_hand': '5'})
+          bc = c.get('/api/search?q=Widget').json()['results'][0]['barcode']
+          assert c.post('/api/cart/scan', json={'barcode': bc, 'quantity': 3, 'lat': 40.0, 'lng': -105.0, 'geo_accuracy_m': 5}, headers=h).json()['ok']
+          assert c.post('/api/cart/set', json={'client_id': 1, 'job_id': None}, headers=h).json()['ok']
+          assert c.post('/api/cart/submit', headers=h).json()['ok']
+          # Wide tables are wrapped in .table-scroll so phones can reach every column.
+          for p in ['/transactions', '/audit', '/categories', '/jobs', '/report', '/']:
+              assert 'table-scroll' in c.get(p).text, p
+          # The kiosk-PINs table uses the real .lines class, not the styleless .table.
+          assert 'class=\"table\"' not in c.get('/settings').text
+          # Leaflet popup charge is the ceil-cents string from the server (3 * 1.50),
+          # and the old half-to-even .toFixed(2) is gone from both map renderers.
+          mp = c.get('/map').text
+          m = re.search(r'\"charge\":\s*\"([0-9.]+)\"', mp)
+          assert m and m.group(1) == '4.50', (m.group(0) if m else mp[:200])
+          assert '.toFixed(2)' not in mp and '.toFixed(2)' not in c.get('/transactions').text
+          # Icon-only links carry an aria-label.
+          assert 'aria-label=\"Open this charge-out' in c.get('/transactions').text
+          # Scan-page suggestions are keyboard-focusable <button>s, not <div onclick>.
+          js = pathlib.Path('app/static/app.js').read_text()
+          assert 'createElement(\"button\")' in js and 'sg-row' in js and 'role\", \"listbox' in js
+          print('UI/UX regressions OK')
+          "
       - name: Check JavaScript syntax
         run: node --check app/static/app.js
       - name: Lint shell installer

@@ -2831,7 +2831,11 @@ def _txn_markers(txns, tz_name):
             "order": t.order.number if t.order and t.order.number else "",
             "part": t.part.name if t.part else "",
             "qty": t.quantity,
-            "charge": t.total_charge,
+            # Pre-format with the ceil-to-cent money filter so the Leaflet popup
+            # matches the table/report (the popup used to .toFixed(2), which
+            # rounds half-to-even and could show a cent less). Symbol is added
+            # client-side from the `currency` var.
+            "charge": money_filter(t.total_charge, ""),
             "client": t.client.name if t.client else "",
             "job": t.job.name if t.job else "",
             "when": local_dt_filter(t.created_at, tz_name),

@@ -34,6 +34,7 @@
   <h2>{{ c.name }}{% if c.reference %} <small>— {{ c.reference }}</small>{% endif %}</h2>
   {% for job in c.jobs %}
   <h3 class="report-job">{{ job.name }}{% if job.reference %} <small>— {{ job.reference }}</small>{% endif %}</h3>
+  <div class="table-scroll">
   <table class="lines">
     <thead>
       <tr><th>Part</th><th>Barcode</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Line charge</th></tr>
@@ -53,6 +54,7 @@
       <tr><td colspan="4">Job subtotal</td><td class="num">{{ job.charge | money(cfg.currency) }}</td></tr>
     </tfoot>
   </table>
+  </div>
   {% endfor %}
   <div class="client-subtotal">
     {{ c.name }} total: {{ c.charge | money(cfg.currency) }}
@@ -66,6 +68,7 @@
 {% if report and totals.by_location and totals.by_location|length > 1 %}
 <div class="card report-by-location">
   <h2>By location</h2>
+  <div class="table-scroll">
   <table class="lines">
     <thead><tr><th>Location</th><th class="num">Lines</th>{% if can('see_cost') %}<th class="num">Cost</th>{% endif %}<th class="num">Charge</th>{% if can('see_cost') %}<th class="num">Margin</th>{% endif %}</tr></thead>
     <tbody>
@@ -80,6 +83,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
 </div>
 {% endif %}
 

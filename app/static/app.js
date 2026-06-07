@@ -513,9 +513,16 @@ if (scan && cart) {
   }
   function renderSuggest(results) {
     if (!results.length) { hideSuggest(); return; }
+    suggest.setAttribute("role", "listbox");
+    suggest.setAttribute("aria-label", "Search suggestions");
     suggest.innerHTML = "";
     results.forEach((p) => {
-      const row = document.createElement("div");
+      // A real <button> so the row is reachable by keyboard (Tab / arrows) and
+      // announced to screen readers, not a mouse-only <div onclick>.
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "sg-row";
+      row.setAttribute("role", "option");
       const oos = (p.qty || 0) <= 0;
       if (oos) row.classList.add("oos");
       // image / icon (server-controlled or trusted icon set)
@@ -553,6 +560,33 @@ if (scan && cart) {
     suggest.hidden = false;
   }
   function hideSuggest() { suggest.hidden = true; suggest.innerHTML = ""; }
+
+  // Keyboard navigation for the suggestion list: ArrowDown from the input
+  // enters the list; ArrowUp/Down move between options; Escape closes and
+  // returns focus to the scan input. Click/Enter/Space activate natively
+  // (the rows are <button>s).
+  scan.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" && !suggest.hidden) {
+      const first = suggest.querySelector(".sg-row");
+      if (first) { e.preventDefault(); first.focus(); }
+    }
+  });
+  suggest.addEventListener("keydown", (e) => {
+    const rows = Array.from(suggest.querySelectorAll(".sg-row"));
+    if (!rows.length) return;
+    const i = rows.indexOf(document.activeElement);
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      (rows[i + 1] || rows[0]).focus();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (i <= 0) { scan.focus(); } else { rows[i - 1].focus(); }
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      hideSuggest();
+      scan.focus();
+    }
+  });
 
   // Enter / scanner submit: resolve exact barcode → add to cart; else search.
   scan.addEventListener("keydown", async (e) => {

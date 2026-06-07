@@ -35,7 +35,7 @@
         <td>
           <select name="part_id">
             <option value="">— pick a part —</option>
-            {% for p in parts %}<option value="{{ p.id }}">{{ p.name }} <span class="muted">({{ p.barcode }})</span></option>{% endfor %}
+            {% for p in parts %}<option value="{{ p.id }}">{{ p.name }} ({{ p.barcode }})</option>{% endfor %}
           </select>
         </td>
         <td class="num"><input name="quantity" type="number" min="1" value="1" style="width:6rem"></td>
