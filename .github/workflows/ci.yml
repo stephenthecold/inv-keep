@@ -320,6 +320,42 @@ jobs:
           assert c.get('/mobile/locations', headers=bh).status_code == 401
           print('mobile idempotency + token revocation OK')
           "
+      - name: Mobile technician picker (GET /mobile/techs)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_mtechs.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+        run: |
+          python -c "
+          from fastapi.testclient import TestClient
+          from app.main import app
+          from app.database import SessionLocal
+          from app.models import KioskPin, Technician
+          db = SessionLocal()
+          db.add(KioskPin(label='PDA', pin='9876', kiosk_username='pda', active=True))
+          db.add(Technician(name='Zoe Adams', active=True, barcode_value='BADGE-Z', nfc_uid=None))
+          db.add(Technician(name='Aaron Bell', active=True, barcode_value=None, nfc_uid='04AABBCC'))
+          db.add(Technician(name='Old Hand', active=False, barcode_value='BADGE-OLD', nfc_uid='NFC-OLD'))
+          db.commit(); db.close()
+          c = TestClient(app)
+          # No bearer -> 401 with the documented shape.
+          r = c.get('/mobile/techs'); assert r.status_code == 401 and r.json() == {'detail': 'missing_bearer_token'}, (r.status_code, r.json())
+          tok = c.post('/mobile/auth/token', json={'pin': '9876'}).json()['token']
+          bh = {'Authorization': 'Bearer ' + tok}
+          r = c.get('/mobile/techs', headers=bh); assert r.status_code == 200, r.text
+          data = r.json()
+          # Active only, sorted by name; inactive 'Old Hand' excluded.
+          assert [t['name'] for t in data['techs']] == ['Aaron Bell', 'Zoe Adams'], data
+          assert data['techs'][0]['has_nfc'] is True and data['techs'][0]['has_barcode'] is False
+          assert data['techs'][1]['has_barcode'] is True and data['techs'][1]['has_nfc'] is False
+          # SECURITY: raw credential values must never appear in the response.
+          for secret in ('BADGE-Z', '04AABBCC', 'BADGE-OLD', 'NFC-OLD'):
+              assert secret not in r.text, 'leaked credential ' + secret
+          # Deactivating a tech drops them from the next call.
+          db = SessionLocal(); db.query(Technician).filter(Technician.name == 'Zoe Adams').first().active = False; db.commit(); db.close()
+          assert [t['name'] for t in c.get('/mobile/techs', headers=bh).json()['techs']] == ['Aaron Bell']
+          assert c.get('/mobile/techs', headers={'Authorization': 'Bearer nope'}).status_code == 401
+          print('mobile technician picker OK')
+          "
       - name: parts_add input validation + emailer rounding (regression)
         env:
           DATABASE_URL: "sqlite:///./data/ci_inval.db"
