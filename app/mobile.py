@@ -39,7 +39,7 @@ from .database import get_db
 from .icons import ICON_SET, SVG_OPEN
 from .models import (
     Category, Client, Job, KioskPin, Location, MobileSession, Order, Part,
-    Receipt, Transaction,
+    Receipt, Technician, Transaction,
 )
 from .util import finite as _finite
 
@@ -450,6 +450,46 @@ def items_categories(
             .all())
     out = sorted(((name, int(n)) for name, n in rows), key=lambda r: (-r[1], r[0].lower()))
     return CategoriesOut(categories=[CategoryCountOut(name=name, count=n) for name, n in out])
+
+
+# ---- 1b2. technician picker (bearer) ---------------------------------------
+
+class TechSummary(BaseModel):
+    id: int
+    name: str
+    # Booleans ONLY — never the raw barcode_value / nfc_uid, which are
+    # credentials. The app uses these to hint "badge auth available" with a
+    # small icon; the actual lookup is the admin-gated POST /kiosk/verify-tech.
+    has_barcode: bool
+    has_nfc: bool
+
+
+class TechListOut(BaseModel):
+    techs: List[TechSummary]
+
+
+@router.get("/techs", response_model=TechListOut)
+def list_techs(
+    tech: KioskPin = Depends(get_current_tech),
+    db: Session = Depends(get_db),
+):
+    """Active technicians for the mobile "who's charging this out?" picker —
+    mirrors the v1.36 web-kiosk dropdown for shared-device PDA installs. Any
+    signed-in tech may list (it's just names); deactivated techs are excluded
+    so they never appear in the picker. Sorted by name."""
+    rows = (db.query(Technician)
+            .filter(Technician.active == True)  # noqa: E712
+            .order_by(Technician.name, Technician.id)
+            .all())
+    return TechListOut(techs=[
+        TechSummary(
+            id=r.id,
+            name=r.name,
+            has_barcode=bool(r.barcode_value),
+            has_nfc=bool(r.nfc_uid),
+        )
+        for r in rows
+    ])
 
 
 # ---- 1c. white-labeling (public — no bearer) -------------------------------

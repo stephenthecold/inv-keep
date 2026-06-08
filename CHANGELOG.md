@@ -3,6 +3,18 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.41.0] — 2026-06-07
+Mobile technician picker endpoint.
+
+- **`GET /mobile/techs`** lets the Android companion app list active technicians
+  for its "who's charging this out?" picker — the mobile counterpart to the web
+  kiosk's technician dropdown. Bearer-authed (any signed-in tech), sorted by
+  name, deactivated techs excluded. Returns only `id` + `name` plus boolean
+  `has_barcode` / `has_nfc` hints — the raw badge/NFC credential values are
+  never included, so the picker can show a "badge auth available" icon without
+  leaking the credential. The app sends the chosen `tech_id` on
+  `POST /mobile/orders` to attribute the order.
+
 ## [1.40.0] — 2026-06-07
 Mobile graphical fixes + report attribution.
 
