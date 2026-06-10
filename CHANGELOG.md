@@ -3,6 +3,23 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.41.1] — 2026-06-10
+Completes the v1.41.0 mobile technician picker.
+
+- **`POST /mobile/orders` now actually accepts the picker's `tech_id`.** v1.41.0
+  shipped `GET /mobile/techs` and documented that the app sends the chosen
+  `tech_id` on order submit — but the order endpoint never read the field, so
+  the attribution was silently dropped (unknown JSON fields are ignored) and
+  mobile charge-outs showed no credited technician on History or the report.
+  The field is now stamped onto `Order.tech_id` — the same column the web kiosk
+  uses (v1.36) — so the v1.40 *Charged by / Technician* report columns work for
+  mobile orders too. An unknown or deactivated `tech_id` is rejected with
+  `422 {"error": "tech_not_found"}`: this API errors explicitly (like
+  `customer_not_found` / `job_mismatch`) rather than mirroring the web cart's
+  silent null, so a bad pick can't masquerade as "no tech picked". `tech_id`
+  stays optional — older app builds that omit it keep working, attributed by
+  the bearer session's username as before.
+
 ## [1.41.0] — 2026-06-07
 Mobile technician picker endpoint.
 

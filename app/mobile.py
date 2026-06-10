@@ -990,6 +990,9 @@ class OrderIn(BaseModel):
     location_id: int
     # Optional: when supplied, must belong to the order's customer_id.
     job_id: Optional[int] = None
+    # Optional: technician credited with the charge-out — the pick from
+    # GET /mobile/techs. Unknown / inactive ids are rejected, never dropped.
+    tech_id: Optional[int] = None
     captured_at: Optional[str] = None
     geo_lat: Optional[float] = None
     geo_lon: Optional[float] = None
@@ -1096,6 +1099,21 @@ def create_order(
                 "customer_id": client.id,
             })
 
+    # Technician (optional) — the pick from GET /mobile/techs, credited on the
+    # charge-out report via Order.tech_id. Unlike the web cart (which silently
+    # nulls a bad pick), unknown/inactive ids are rejected: this API's contract
+    # is explicit errors (customer_not_found, job_mismatch), and a silent drop
+    # would tell the office no tech was picked when one was. NB ``tech`` is the
+    # bearer session (a KioskPin), so the credited Technician gets its own name.
+    technician: Optional[Technician] = None
+    if payload.tech_id is not None:
+        technician = db.get(Technician, payload.tech_id)
+        if technician is None or not technician.active:
+            raise HTTPException(status_code=422, detail={
+                "error": "tech_not_found",
+                "tech_id": payload.tech_id,
+            })
+
     # Pre-validate every line so we don't half-commit on a bad payload.
     line_types: List[str] = []
     catalog_parts: dict = {}
@@ -1172,6 +1190,7 @@ def create_order(
         submitted_by=tech_user,
         customer_id=client.id,
         job_id=job.id if job else None,
+        tech_id=technician.id if technician else None,
         location_id=location.id,
         client_action_id=cid,
         submitted_at=datetime.utcnow(),
