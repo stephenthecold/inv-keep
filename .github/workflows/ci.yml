@@ -356,6 +356,52 @@ jobs:
           assert c.get('/mobile/techs', headers={'Authorization': 'Bearer nope'}).status_code == 401
           print('mobile technician picker OK')
           "
+      - name: Mobile order technician attribution (tech_id on POST /mobile/orders)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_mtechid.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import re
+          from fastapi.testclient import TestClient
+          from app.main import app
+          from app.database import SessionLocal
+          from app.models import KioskPin, Location, Client, Part, Order, Technician
+          c = TestClient(app)
+          tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', c.get('/').text).group(1)
+          c.post('/clients/add', data={'_csrf': tok, 'name': 'Acme'})
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'Cable', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2', 'quantity_on_hand': '10'})
+          db = SessionLocal(); loc = db.query(Location).first().id; cl = db.query(Client).first().id; pid = db.query(Part).first().id
+          db.add(KioskPin(label='PDA', pin='9876', kiosk_username='alice', location_id=loc, active=True))
+          db.add(Technician(name='Jordan Lee', active=True, barcode_value=None, nfc_uid=None))
+          db.add(Technician(name='Old Hand', active=False, barcode_value=None, nfc_uid=None))
+          db.commit()
+          tid = db.query(Technician).filter(Technician.name == 'Jordan Lee').first().id
+          old_id = db.query(Technician).filter(Technician.name == 'Old Hand').first().id
+          db.close()
+          tkn = c.post('/mobile/auth/token', json={'pin': '9876'}).json()['token']
+          bh = {'Authorization': 'Bearer ' + tkn}
+          base = {'customer_id': cl, 'location_id': loc, 'lines': [{'item_id': pid, 'qty': 1}]}
+          # Active tech_id -> 201 and the pick lands on Order.tech_id (feeds the report's Technician column).
+          r = c.post('/mobile/orders', json={**base, 'client_action_id': 'tid-1', 'tech_id': tid}, headers=bh)
+          assert r.status_code == 201, (r.status_code, r.text)
+          db = SessionLocal(); assert db.get(Order, r.json()['order_id']).tech_id == tid; db.close()
+          # Unknown tech_id -> explicit 422, never a silent drop.
+          r = c.post('/mobile/orders', json={**base, 'client_action_id': 'tid-2', 'tech_id': 99999}, headers=bh)
+          assert r.status_code == 422 and r.json()['detail'] == {'error': 'tech_not_found', 'tech_id': 99999}, (r.status_code, r.json())
+          # Deactivated tech -> 422 too (mirrors the picker's exclusion).
+          r = c.post('/mobile/orders', json={**base, 'client_action_id': 'tid-3', 'tech_id': old_id}, headers=bh)
+          assert r.status_code == 422 and r.json()['detail']['error'] == 'tech_not_found', (r.status_code, r.json())
+          # Omitted tech_id keeps working (old app builds) -> 201 with NULL attribution.
+          r = c.post('/mobile/orders', json={**base, 'client_action_id': 'tid-4'}, headers=bh)
+          assert r.status_code == 201, (r.status_code, r.text)
+          db = SessionLocal(); assert db.get(Order, r.json()['order_id']).tech_id is None; db.close()
+          # A rejected tech_id must not have burned the action id (no half-commit).
+          r = c.post('/mobile/orders', json={**base, 'client_action_id': 'tid-2', 'tech_id': tid}, headers=bh)
+          assert r.status_code == 201 and r.json()['idempotent_replay'] is False, (r.status_code, r.json())
+          print('mobile order tech attribution OK')
+          "
       - name: parts_add input validation + emailer rounding (regression)
         env:
           DATABASE_URL: "sqlite:///./data/ci_inval.db"

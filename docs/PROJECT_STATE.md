@@ -3,7 +3,7 @@
 **Read this first.** It is the durable substitute for the build chat. Reading this +
 [CONFIGURATION.md](../CONFIGURATION.md) + [CHANGELOG.md](../CHANGELOG.md) reconstructs
 the whole project; you do **not** need the original conversation. Current version:
-**v1.21.x** (tags `v1.0.0` … `v1.21.0`, one per release).
+**v1.41.x** (tags `v1.0.0` … `v1.41.0`, one per release).
 
 ## What it is
 A small, self-hosted, MSP-oriented inventory **charge-out** app. Scan an item →
@@ -39,10 +39,13 @@ app/
   main.py            ALL routes + middleware (auth + RBAC enforcement) + PWA + labels +
                      cart API + report query helpers + map endpoint
   models.py          ORM: Setting, Category (self-referential parent_id),
-                     Part(=Item, w/ archived flag), Client(table "customers"),
-                     Job, Location, StockLevel (per-part/per-loc qty),
-                     Transfer + TransferLine, Order, Transaction (w/ order_id +
-                     location_id + geo cols), Role, User, AuditLog
+                     Part(=Item, w/ archived flag), Client(table "customers",
+                     w/ card_uid), Job, Location, StockLevel (per-part/per-loc
+                     qty), Transfer + TransferLine, Order (w/ tech_id +
+                     client_action_id), OrderComment, Technician, Transaction
+                     (w/ order_id + location_id + geo + receipt_id cols), Role,
+                     User, KioskPin (multi-station, v1.22), MobileSession,
+                     Receipt, AuditLog
   database.py        engine + ensure_columns() additive migrations + a SQLite
                      table-rebuild migration that relaxed transactions.customer_id
                      to nullable (needed for open-cart lines pre-client-pick)
@@ -71,6 +74,12 @@ app/
   emailer.py         SMTP + OAuth2(MS/Google) send; low-stock + daily/weekly/monthly
                      schedules (run_due_jobs, nth_weekday_date); hourly scheduler thread
   audit.py           audit.record() helper; strips ASCII control chars on store
+  mobile.py          /mobile/* bearer-token REST API for the Android companion
+                     (v1.26+): PIN/badge auth, item lookup/search, orders,
+                     receipts, icons, whitelabel, technician picker
+  throttle.py        shared per-IP lockout (web kiosk PIN, mobile PIN,
+                     badge-verify rate limit)
+  util.py            shared finite() NaN/Infinity geo guard
   version.py         __version__ (footer + Settings)
   templates/*.html   base (header + mobile drawer + favicon link),
                      scan (cart card UI; cart-lines hide Barcode/Unit on phones),
@@ -129,25 +138,37 @@ scripts/make_icons.py  regenerate PWA icons (needs Pillow; results committed)
   (decrement source + increment destination + one audit row). Used by the
   `/transfers/new` multi-line page and by the per-item `Stock → Move` action.
 - **Client** — UI label "Clients"; **table is still `customers`** (preserves data
-  through the Customer→Client rename). Full contact record. `archived=True` is
-  reserved for one-off walk-in clients created from the cart card.
+  through the Customer→Client rename). Full contact record. `archived` hides a
+  client (walk-ins are created archived; explicit archive/restore/delete since
+  v1.22.1 — delete refused while orders/txns/jobs reference it). `card_uid`
+  (v1.26) lets the mobile app pick the customer by NFC tap.
 - **Job** — belongs to a Client (ticket/WO ref).
 - **Order** — bundles transactions into a single billable unit. Fields: number
   (ORD-YYYYMM-NNNN, null while open), customer_id, job_id, **location_id**
   (source location for every line scanned in), status
-  (open|submitted|cancelled|voided), created_by, submitted_by/_at, voided_by/_at.
+  (open|submitted|cancelled|voided), created_by, submitted_by/_at, voided_by/_at,
+  **tech_id** (credited technician — v1.36 web kiosk, v1.41.1 mobile),
+  **client_action_id** (mobile idempotency key, UNIQUE with created_by).
   One **open** cart per username at a time.
 - **Transaction** — a charge-out line: customer_id (nullable for open-cart lines
   pre-client-pick), job_id, part_id, **order_id** (nullable FK to Order; legacy
   pre-cart rows are NULL), **location_id** (source location), qty, **snapshots**
   of cost & price at the time, **lat / lng / geo_accuracy_m** (optional, captured
-  best-effort from the browser), scanned_by, voided. Props
-  `total_charge/total_cost/margin`.
+  best-effort from the browser), scanned_by, **receipt_id** (mobile custom-line
+  receipt image, v1.26.2), voided. Props `total_charge/total_cost/margin`.
 - **Role / User** — RBAC (below). **AuditLog** — every sale/void/order
   open/submit/cancel/stocktake/transfer/config change.
+- **Technician** (v1.36) — the person credited on a charge-out (`Order.tech_id`);
+  optional badge-barcode / NFC-UID credentials (v1.37) resolved via
+  `POST /kiosk/verify-tech`. **KioskPin** (v1.22) — per-station PIN row (label,
+  default location, audit username, badge_uid, is_inventory_admin) that doubles
+  as the mobile app's identity. **MobileSession** — opaque 12-hour bearer
+  tokens for `/mobile/*` (revoked when the PIN is deleted). **Receipt** —
+  mobile-uploaded receipt images for custom lines. **OrderComment** (v1.38) —
+  per-order web comment thread (adds/edits audit-logged).
 - **Setting** — key/value for all UI-configurable settings (see CONFIGURATION.md).
 
-## Cart-based charge-out (v1.9+, the only flow)
+## Cart-based charge-out (v1.9+ — the web flow; mobile submits whole orders, below)
 - Scanning a known barcode on `/` posts `/api/cart/scan`. If the user has no
   open cart, one is created (`status=open`, `created_by=username`). The line
   is written as a real Transaction immediately so stock decrements right then
@@ -167,6 +188,12 @@ scripts/make_icons.py  regenerate PWA icons (needs Pillow; results committed)
   `cancelled`. Audit-logged.
 - Reports + `/transactions` outerjoin Order and filter `status='submitted' OR
   order_id IS NULL` so open / cancelled carts never pollute history.
+- Since v1.36 `/api/cart/submit` takes an optional `tech_id`; kiosk sessions
+  must pick one when active technicians exist (`{"ok": false, "error":
+  "tech_required"}`). The mobile app doesn't use the cart at all — it submits
+  a complete order via `POST /mobile/orders` (idempotent on `client_action_id`;
+  optional `tech_id` validated with an explicit `422 tech_not_found`) — see
+  `app/mobile.py`.
 
 ## Auth + RBAC (important)
 - Modes (UI-managed, stored in DB): `none` (everyone = local Admin), `oidc`
@@ -191,8 +218,11 @@ scripts/make_icons.py  regenerate PWA icons (needs Pillow; results committed)
 - **Enforcement**: middleware maps each path→permission via `rbac.required_perm()` and
   403s if lacking; nav links/actions are hidden via the `can(perm)` template helper.
 - **Kiosk PIN mode** (v1.10+ feature, v1.20.1+ semantics):
-  - Operators authenticate via a numeric PIN on `/welcome` (configured under
-    Settings → Kiosk PIN). The session carries `is_kiosk=True`.
+  - Operators authenticate via a numeric PIN on `/welcome` — one row per
+    station in the `kiosk_pins` table since v1.22 (label, PIN, default
+    location, audit username; Settings → Kiosk PINs). The same rows are the
+    mobile app's identities (bearer tokens in `mobile_sessions`, v1.26).
+    The session carries `is_kiosk=True`.
   - `auth._kiosk_user(db)` loads the **live** perm set from the Kiosk role
     row in the DB, so edits under `/users#roles` take effect immediately.
   - The middleware enforces a hardcoded path **allowlist** only while
@@ -228,8 +258,8 @@ scripts/make_icons.py  regenerate PWA icons (needs Pillow; results committed)
   cents)`), never $1.66.
 - **Default markup %** (Settings → General, admin-only field). Drives the
   client-price autofill on the Add-Item form and the Custom-Item modal via
-  `window.DEFAULT_MARKUP_PCT`. The value is in the rendered HTML for everyone
-  (no server-side compute path yet) — UI hides it from non-admins.
+  `window.DEFAULT_MARKUP_PCT` — emitted only for admin sessions
+  (`{% if user.is_admin %}` in base.html; pinned by CLAUDE.md's don't-break list).
 - **Timezone** (Settings → General, IANA name). Stored as UTC, displayed via
   the `local_dt` Jinja filter (uses Python `zoneinfo` + the `tzdata` pip
   package). Audit log, transactions, scan-page Recent activity all honour it.
@@ -332,6 +362,49 @@ returns no spaces after colons — grep with that in mind. **Never commit** `.en
   SVG. The `/labels` sheet got an `?all=1` toggle that includes
   items whose code was scanned in off a manufacturer barcode.
 
+## What changed v1.22 → v1.41 (one line per arc; details in CHANGELOG.md)
+- **Multi-station kiosk PINs** (v1.22): `kiosk_pins` table — per-station
+  label / PIN / default location / audit username; built-in role edits
+  persist via a `customized` flag.
+- **Client lifecycle** (v1.22.1): explicit archive/restore/delete on clients,
+  mirroring the v1.21 item lifecycle.
+- **Scan page redesign** (v1.23): pill-summary targets header, tile cart
+  lines, sticky submit bar; kiosk nav links gated per-`can()`.
+- **Bulk item edits + merged Users & roles** (v1.24): bulk bar on `?cat=all`
+  (recategorize / set count / move as one Transfer); `/users` became one
+  nested roles-with-members view.
+- **Mobile companion API** (v1.26–v1.26.2): self-contained `/mobile/*` bearer
+  surface (`app/mobile.py`, `mobile_sessions`) — PIN/badge auth, item
+  lookup/search, customer/job browse + create, locations, receipt uploads,
+  idempotent `POST /mobile/orders` incl. custom store-bought lines.
+- **Mid-checkout job creation** (v1.27): `POST /api/cart/job/new` from the
+  scan page.
+- **Hardening batches** (v1.28–v1.30): `/api/cart/*` requires `checkout`;
+  cart/search payloads zero cost/margin without `see_cost`; mobile PIN
+  throttle; `UNIQUE(client_action_id, created_by)`; PIN delete revokes
+  tokens; hot-path indexes + N+1 removal.
+- **Mobile v3** (v1.32 + v1.34): category browse, item icons (uploads +
+  preset SVGs), public `GET /mobile/whitelabel`, per-PIN Inventory-admin
+  item/stock management, $0 orders rejected unless `allow_zero_total`
+  (+ $0 audit list).
+- **Order notes surfaced** (v1.35): the mobile justification note shows on
+  History / Recent activity (warning-tinted at $0) and in the mobile feeds.
+- **Technicians** (v1.36–v1.37): `technicians` table + Settings admin; kiosk
+  charge-out requires a pick (`Order.tech_id`, `tech_required`); optional
+  hardware badge/NFC verification (`POST /kiosk/verify-tech`, mirrored to
+  the app via `/mobile/whitelabel`).
+- **Order comment threads** (v1.38): per-order thread on History
+  (`order_comments`), origin note pinned, adds/edits audit-logged; hidden
+  from kiosk sessions.
+- **UI/a11y refreshes** (v1.31, v1.33, v1.38–v1.40): phone table scrolling,
+  keyboard-accessible search, Manage-mode fixes, settings controls, segmented
+  Stock modal, Leaflet stacking fix; the report gained *Charged by* +
+  *Technician* columns (screen + CSV).
+- **Mobile technician picker** (v1.41 + v1.41.1): `GET /mobile/techs` (names +
+  `has_barcode`/`has_nfc` booleans only) and `POST /mobile/orders` accepting
+  `tech_id` onto `Order.tech_id` (`422 tech_not_found` on unknown/inactive;
+  optional so old builds keep working).
+
 ## Known limitations / good next tasks
 - **Email OAuth** (MS/Google) implemented but only the **SMTP** path was live-tested.
 - **Printing** uses the OS print dialog — no silent printing or raw ZPL/ESC-P. Item
@@ -339,10 +412,6 @@ returns no spaces after colons — grep with that in mind. **Never commit** `.en
 - **APK** must be built with Android tooling (local Bubblewrap or the CI workflow).
 - **Scheduler** is in-process (fine for one container; not multi-replica). Hour-level
   precision (no minutes).
-- **Markup % leakage**: `window.DEFAULT_MARKUP_PCT` is emitted in the rendered
-  HTML for every authenticated user; only the UI hides it from non-admins. A
-  view-source-curious manager can still read the percentage. Server-side compute
-  would close this. (`see_cost` gates the cost column but not the markup default.)
 - **Map tiles** load from the public `tile.openstreetmap.org` — works offline-
   ish (no tiles past your cached zoom) but not strictly self-hosted. Swap for a
   self-hosted tileserver if that matters.
@@ -373,5 +442,8 @@ returns no spaces after colons — grep with that in mind. **Never commit** `.en
   zeroes body/main padding (v1.20).
 - **Label barcode left-anchored** — `.label-barcode svg` scales by
   height with `margin: 0 auto` (v1.21).
+- **Markup % leakage** — `window.DEFAULT_MARKUP_PCT` renders admin-only in
+  `base.html`, and cart/search payloads zero cost/margin without `see_cost`
+  (v1.28).
 - The instance is branded "Connected Technologies". After any update users
   must reload once (network-first SW then keeps assets current).
