@@ -62,8 +62,38 @@ CI assertions too** — that's how every CI failure since v1.17 has played out.
   type the version into "Choose a tag" → click **"+ Create new tag:
   vX.Y.Z on publish"** → Publish. Editing the *title* of an existing
   release does nothing — the workflow doesn't fire and `:latest` on GHCR
-  stays put. Verify the tag actually exists with
-  `git ls-remote --tags origin "v*"`.
+  stays put.
+- **The tag name is typed by hand into a text box, and nothing validates
+  it.** Every release mishap in this repo so far has been a typo in that
+  box, and each fails differently:
+
+  | Typed | What happened |
+  |---|---|
+  | `v,1.40.0` | stray comma — still matched `v*`, so it published under a junk tag |
+  | `v1.14.1` | transposed digits for what the CHANGELOG calls v1.41.1 — published under the wrong version |
+  | `V1.42.0` | **capital V** — `tags: ['v*']` is case-sensitive, so the pipeline never fired at all |
+
+  Lowercase `v`, then the exact version from `app/version.py`. Nothing
+  downstream will correct you.
+- **Verify the release actually published — two checks, both needed.**
+  1. The tag exists *and* has the right case. Grep case-insensitively so a
+     wrong-case tag shows up instead of looking absent:
+     `git ls-remote --tags origin | grep -i 'X\.Y\.Z'`
+  2. The **Release image** workflow ran with event `push` (not
+     `workflow_dispatch`) on that tag, and its "Derive image tags" step
+     lists `:vX.Y.Z` + `:vX.Y` + `:latest`.
+- **A manual `workflow_dispatch` run is NOT a substitute for the tag
+  push.** It's tempting when you notice the pipeline didn't fire, and it
+  looks like it worked — the run goes green and `:latest` does get
+  updated. But `docker/metadata-action` derives tags from `github.ref`,
+  not from the `ref` input, so a dispatch on `main` produces only
+  `:main`, `:latest` and `:sha-<short>`. The `type=semver` patterns never
+  match, so **`:vX.Y.Z` and `:vX.Y` are never created** and the image is
+  mislabelled `org.opencontainers.image.version=main`. Hosts on the
+  default `:latest` are fine; anyone pinning `INV_KEEP_VERSION=vX.Y.Z` in
+  `docker-compose.yml` gets a pull failure. The fix is always to delete
+  the bad tag + release and re-publish with the correct lowercase tag —
+  that fires the real pipeline. (v1.42.0 hit exactly this.)
 - **"docker compose pull" silently no-ops when the registry hasn't
   changed.** Tells: `Pulled` finishes in <1s AND `up -d` reports
   `Container inv-keep Running` (not `Recreated`/`Started`). Means GHCR's
