@@ -108,7 +108,7 @@
          it to /kiosk/verify-tech and fills the hidden #cart-tech with the
          resolved id. No dropdown, so a tech can't be picked without the badge. -->
     <div class="cart-tech-row" id="cart-tech-row" data-verify="1">
-      <label for="cart-tech-scan">Technician <span aria-hidden="true" style="color:var(--bad)">*</span></label>
+      <label for="cart-tech-scan">Technician <span class="req" aria-hidden="true">*</span></label>
       <input type="text" id="cart-tech-scan" autocomplete="off" inputmode="none"
              placeholder="Scan badge or tap card…" aria-describedby="cart-tech-msg"
              data-verify-url="/kiosk/verify-tech">
@@ -118,7 +118,7 @@
     </div>
     {% else %}
     <div class="cart-tech-row" id="cart-tech-row">
-      <label for="cart-tech">Technician <span aria-hidden="true" style="color:var(--bad)">*</span></label>
+      <label for="cart-tech">Technician <span class="req" aria-hidden="true">*</span></label>
       <select id="cart-tech" required aria-describedby="cart-tech-msg" data-required="1">
         <option value="">— pick technician —</option>
         {% for t in technicians %}<option value="{{ t.id }}" {% if last_tech_id and last_tech_id|string == t.id|string %}selected{% endif %}>{{ t.name }}</option>{% endfor %}
@@ -131,6 +131,10 @@
       <button type="button" class="ghost" id="cart-cancel">Cancel</button>
       <button type="button" id="cart-submit">Submit Order</button>
     </div>
+    <!-- Goal-Gradient: while Submit is disabled, say which of the two
+         prerequisites (an item, a client) is still outstanding. Filled by
+         updateSubmitHint() in app.js on every cart render. -->
+    <small id="cart-submit-hint" class="cart-submit-hint" role="status" hidden></small>
   </div>
 </section>
 
@@ -144,7 +148,7 @@
       <label class="wide">Name <input name="name" required></label>
       <label class="wide">Description <textarea name="description" rows="2" placeholder="optional"></textarea></label>
       <label>Photo (optional) <input type="file" name="image" accept="image/png,image/jpeg,image/webp,image/gif"></label>
-      <label>Quantity <input name="quantity" type="number" min="1" value="1" style="width:6rem"></label>
+      <label>Quantity <input name="quantity" type="number" min="1" value="1" class="w-num"></label>
       {% if can('see_cost') %}<label>Our cost <input name="unit_cost" type="number" step="0.01" value="0" id="custom-cost"></label>{% else %}<input type="hidden" name="unit_cost" value="0" id="custom-cost">{% endif %}
       <label>Client price <input name="unit_price" type="number" step="0.01" value="0" id="custom-price">
         {% if user.is_admin and cfg.default_markup_pct and cfg.default_markup_pct != '0' %}<small class="muted">auto = cost + {{ cfg.default_markup_pct }}% (edit to override)</small>{% endif %}

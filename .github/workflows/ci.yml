@@ -1534,6 +1534,70 @@ jobs:
           assert 'createElement(\"button\")' in js and 'sg-row' in js and 'role\", \"listbox' in js
           print('UI/UX regressions OK')
           "
+      - name: Design principles (control chrome + tap targets + save state)
+        env:
+          DATABASE_URL: "sqlite:///./data/ci_design.db"
+          SESSION_SECRET: "ci-only-secret-not-for-production-padded-out-to-meet-min-length-64"
+          DISABLE_AUTH: "1"
+        run: |
+          python -c "
+          import re, pathlib
+          from fastapi.testclient import TestClient
+          from app.main import app
+          c = TestClient(app)
+          css = pathlib.Path('app/static/style.css').read_text()
+          js  = pathlib.Path('app/static/app.js').read_text()
+
+          # --- Law of Similarity ------------------------------------------------
+          # Checkbox + select chrome must stay APP-WIDE. Scoping it to
+          # .settings-shell is what once left /parts, /jobs, /clients and the scan
+          # page on raw OS controls while /settings looked modern.
+          assert 'input[type=\"checkbox\"] {' in css
+          assert '.settings-shell input[type=\"checkbox\"]' not in css
+          assert '\nselect,\n' in css, 'app-wide select rule missing'
+          # The select caret is a background-image; the \`background\` shorthand
+          # silently wipes it, so every rule that repaints a select uses
+          # background-color.
+          assert '.grid-form textarea, .grid-form input, .grid-form select { background-color:' in css
+          assert '.lines select { background-color:' in css
+          for m in re.finditer(r'([^{}\n]*select[^{}\n]*)\{([^}]*)\}', css):
+              assert not re.search(r'(^|;)\s*background:\s', m.group(2)), m.group(1).strip()
+
+          # --- Fitts's Law ------------------------------------------------------
+          assert '@media (pointer: coarse)' in css and 'min-height: 44px' in css
+          assert '.icon-link' in css, 'icon-only controls need a real hit box'
+
+          # --- Zeigarnik + Doherty ---------------------------------------------
+          # The delegated submit handler must skip JS-handled forms, or
+          # #custom-form / #oc-form freeze in a Saving... state forever.
+          assert 'if (e.defaultPrevented) return;' in js
+          # Disabling must be deferred, else a formaction submitter's value is
+          # dropped from the POST body (Archive / Delete / Restore).
+          assert 'setTimeout(() => submitControls(form).forEach' in js
+          assert 'is-busy' in js and 'button.is-busy' in css
+          assert 'dirty-flag' in js and '.dirty-flag' in css
+          # form.submit() bypasses the submit event and therefore the busy state.
+          for t in pathlib.Path('app/templates').glob('*.html'):
+              assert 'this.form.submit()' not in t.read_text(), t.name
+
+          # --- Aesthetic-Usability: no ad-hoc inline styling --------------------
+          # Named classes only. The single exception is the per-row computed
+          # indent width on the /categories tree.
+          allowed = {'categories.html': 1}
+          for t in sorted(pathlib.Path('app/templates').glob('*.html')):
+              n = t.read_text().count('style=\"')
+              assert n == allowed.get(t.name, 0), (t.name, n, 'use a named class')
+
+          # --- Rendered output --------------------------------------------------
+          tok = re.search(r'name=\"csrf-token\" content=\"([^\"]+)\"', c.get('/').text).group(1)
+          c.post('/parts/add', data={'_csrf': tok, 'name': 'Design Widget', 'type': 'bulk', 'unit_cost': '1', 'unit_price': '2', 'quantity_on_hand': '4'})
+          assert 'class=\"icon-link\"' in c.get('/parts?cat=all').text, 'label link lost its hit box'
+          st = c.get('/settings').text
+          assert st.count('subgroup-fold') >= 3, 'alert schedules must stay collapsible (Hick/Miller)'
+          assert 'fold-state' in st, 'a collapsed group must still report on/off'
+          assert 'cart-submit-hint' in c.get('/').text, 'disabled Submit must name the next step'
+          print('design principle regressions OK')
+          "
       - name: Check JavaScript syntax
         run: node --check app/static/app.js
       - name: Lint shell installer

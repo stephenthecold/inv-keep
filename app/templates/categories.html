@@ -40,7 +40,7 @@
         <input form="cat-{{ cid }}" name="name" value="{{ c.name }}" aria-label="Category name"{% if not depth %} class="cat-top"{% endif %}>
       </td>
       <td class="num">{% if n %}<a class="tag" href="/parts?cat={{ cid }}" title="View items in this category">{{ n }}</a>{% else %}<span class="muted">0</span>{% endif %}</td>
-      <td><input form="cat-{{ cid }}" name="description" value="{{ c.description }}" placeholder="—" style="width:16rem" aria-label="Category description"></td>
+      <td><input form="cat-{{ cid }}" name="description" value="{{ c.description }}" placeholder="—" class="w-desc" aria-label="Category description"></td>
       <td>
         <select form="cat-{{ cid }}" name="parent_id" aria-label="Parent category">
           <option value="">— top level —</option>

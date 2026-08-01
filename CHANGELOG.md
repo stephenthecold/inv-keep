@@ -3,6 +3,47 @@
 All notable changes to Inv-Keep are recorded here. Versions are tagged in git
 (`vX.Y.Z`) and the running version is shown in the app footer and Settings.
 
+## [1.42.0] — 2026-08-01
+Design principles written down, then enforced against the UI.
+
+- **Every checkbox and dropdown now looks the same on every page.** The custom
+  checkbox and `<select>` chrome was scoped to the settings shell, so `/settings`
+  and `/users` rendered the modern accent-filled controls while `/parts`,
+  `/jobs`, `/clients`, `/categories` and the scan page fell back to raw OS
+  widgets — two visual languages for the same control, side by side. The rules
+  are app-wide now. (The per-page select rules had to stop using the CSS
+  `background` shorthand to get there: it was silently wiping the caret.)
+- **Tap targets meet a 44px floor on phones and tablets.** A new
+  `@media (pointer: coarse)` block lifts the compact variants — bulk-bar and
+  manage-mode buttons, the stock modal's Add/Move/Set tabs, the cart's remove ✕,
+  the category card's Rename/+Sub/Delete row — up to a full finger target, while
+  leaving them dense for mouse users. The 💬 order-comments button was a ~20px
+  target even with a mouse and is now properly sized, and the 🏷️ print-label
+  glyph on the items table got a real hit box instead of being bare text.
+- **Saving something now looks like it's saving.** Any form POST that navigates
+  puts a spinner and "Saving…" into the button you actually pressed and blocks a
+  second click, so a slow round-trip on a loaded database no longer reads as a
+  dead button. Settings forms additionally flag "Not saved yet" once you edit a
+  field, so a half-finished tab can't be mistaken for a saved one.
+- **The Alerts tab stopped showing 20 controls at once.** Daily, weekly and
+  monthly schedules are collapsible groups that open only when that report is
+  enabled. Each keeps an on/off chip in its header — folding away the detail must
+  never fold away the state.
+- **A disabled Submit on the scan page now says what unblocks it** — "Scan or
+  search an item to start this order", then "Pick a client (or a walk-in) to
+  enable Submit" — rather than sitting greyed out with no explanation.
+- **`CLAUDE.md` gained a design-principles section.** Ten usability laws
+  (Aesthetic-Usability, Hick's, Jakob's, Fitts's, Proximity, Zeigarnik,
+  Goal-Gradient, Similarity, Miller's, Doherty) written as concrete rules against
+  this codebase's actual classes and files, with a translation table for the
+  WordPress/Gutenberg/Tailwind vocabulary the brief was written in — none of
+  which exists here — plus a seven-point review checklist.
+- Plumbing: 70 one-off inline `style=` attributes across eleven templates were
+  replaced with named classes (only the computed per-row indent on `/categories`
+  remains), and `this.form.submit()` was swapped for `requestSubmit()` everywhere
+  so those auto-submitting selects and toggles run validation and inherit the
+  save state. New CI step `Design principles` locks all of the above in.
+
 ## [1.41.1] — 2026-06-10
 Completes the v1.41.0 mobile technician picker.
 

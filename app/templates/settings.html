@@ -34,7 +34,7 @@
     </label>
     {% if user.is_admin %}
     <label>Default client markup %
-      <input name="default_markup_pct" type="number" min="0" max="1000" step="0.1" value="{{ cfg.default_markup_pct }}" style="width:6rem">
+      <input name="default_markup_pct" type="number" min="0" max="1000" step="0.1" value="{{ cfg.default_markup_pct }}" class="w-num">
       <small class="muted">Adds this % on top of our cost to suggest the client price when adding a new item. 0 = no autofill. <b>Admin only.</b></small>
     </label>
     {% endif %}
@@ -47,8 +47,8 @@
   <h2>White-label / Branding</h2>
   <form method="post" action="/settings/branding" class="grid-form">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <label>Brand emoji (used when no logo) <input name="brand_emoji" value="{{ cfg.brand_emoji }}" maxlength="8" style="width:5rem"></label>
-    <label>Accent colour <input name="brand_accent" type="color" value="{{ cfg.brand_accent or '#2f81f7' }}" style="width:4rem;padding:.2rem"></label>
+    <label>Brand emoji (used when no logo) <input name="brand_emoji" value="{{ cfg.brand_emoji }}" maxlength="8" class="w-tiny"></label>
+    <label>Accent colour <input name="brand_accent" type="color" value="{{ cfg.brand_accent or '#2f81f7' }}" class="color-input"></label>
     <label class="check">Show title text next to logo <input type="checkbox" name="brand_show_title" {% if cfg.brand_show_title == '1' %}checked{% endif %}></label>
     <label class="wide">Footer text <input name="brand_footer" value="{{ cfg.brand_footer }}" placeholder="e.g. © Your Company"></label>
     <button type="submit">Save branding</button>
@@ -57,7 +57,7 @@
   <div class="subgroup">
     <div>
       <div class="muted">Logo</div>
-      {% if cfg.brand_logo %}<img src="{{ cfg.brand_logo }}" alt="logo" style="max-height:48px;background:#fff;border-radius:6px;padding:4px">{% else %}<span class="muted">none — the brand emoji is shown</span>{% endif %}
+      {% if cfg.brand_logo %}<img src="{{ cfg.brand_logo }}" alt="logo" class="brand-preview">{% else %}<span class="muted">none — the brand emoji is shown</span>{% endif %}
     </div>
     <form method="post" action="/settings/branding/logo" enctype="multipart/form-data" class="filter">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -72,7 +72,7 @@
   <div class="subgroup">
     <div>
       <div class="muted">Favicon (browser tab + bookmark icon)</div>
-      {% if cfg.brand_favicon %}<img src="{{ cfg.brand_favicon }}" alt="favicon" style="height:32px;width:32px;background:#fff;border-radius:6px;padding:2px;object-fit:contain">{% else %}<span class="muted">none — the default app icon is used</span>{% endif %}
+      {% if cfg.brand_favicon %}<img src="{{ cfg.brand_favicon }}" alt="favicon" class="brand-preview is-favicon">{% else %}<span class="muted">none — the default app icon is used</span>{% endif %}
     </div>
     <form method="post" action="/settings/branding/favicon" enctype="multipart/form-data" class="filter">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -278,27 +278,27 @@
 <section class="card settings-tab" id="tab-kiosk" data-tab-pane="kiosk" data-tab-title="Kiosk PINs">
   <h2>Kiosk PIN charge-out</h2>
   <p class="muted">When enabled, the sign-in screen shows a numeric PIN entry below the Sign-in button. Entering any active PIN starts a locked-down "Kiosk" session for that station — scan and charge out, plus the last 24 hours of <i>that station's</i> activity.</p>
-  <div class="notice" style="background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:.65rem .85rem;margin:.5rem 0">
+  <div class="notice info">
     <b>One PIN per POS.</b> Each kiosk PIN can default to its own source location and carry its own audit username, so multiple front-desk stations don't see each other's recent charge-outs.<br>
     <b>Need a kiosk to see more than the defaults?</b> The PIN lockdown is active <i>only while the Kiosk role still has its built-in permissions</i>. Grant the role any extra permission — e.g.&nbsp;<code>view_audit</code>, <code>manage_items</code> — and standard role permissions take over for every kiosk session. Edit perms under <a href="/users#roles">Users &amp; Roles → Kiosk</a>.
   </div>
 
-  <h3 style="margin-top:1rem">Master switch</h3>
+  <h3 class="settings-subhead">Master switch</h3>
   <form method="post" action="/settings/kiosk/global" class="grid-form" autocomplete="off">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label class="check">Enable kiosk PIN on /welcome <input type="checkbox" name="kiosk_enabled" {% if cfg.kiosk_enabled == '1' %}checked{% endif %}></label>
     <label>Lockout (minutes after 5 bad attempts from one IP)
-      <input name="kiosk_lockout_minutes" type="number" min="1" max="1440" value="{{ cfg.kiosk_lockout_minutes or '5' }}" style="width:6rem">
+      <input name="kiosk_lockout_minutes" type="number" min="1" max="1440" value="{{ cfg.kiosk_lockout_minutes or '5' }}" class="w-num">
     </label>
     <button type="submit">Save</button>
   </form>
 
-  <h3 style="margin-top:1.5rem">PINs</h3>
+  <h3 class="settings-subhead">PINs</h3>
   {% if not kiosk_pins %}
   <p class="muted"><i>No PINs configured yet. Add one below — you'll need at least one active PIN before the kiosk switch above lets sessions start.</i></p>
   {% else %}
   <div class="table-scroll">
-  <table class="lines" style="margin-bottom:.75rem">
+  <table class="lines mb-1">
     <thead><tr><th>Label</th><th>PIN</th><th>Username</th><th>Default location</th><th>Active</th><th title="Can add/edit items + adjust stock from the mobile app">Inv&nbsp;admin</th><th></th></tr></thead>
     <tbody>
     {% for p in kiosk_pins %}
@@ -306,25 +306,25 @@
       <td>
         <form id="kp-{{ p.id }}" method="post" action="/settings/kiosk/{{ p.id }}/save" autocomplete="off"></form>
         <input form="kp-{{ p.id }}" type="hidden" name="_csrf" value="{{ csrf_token }}">
-        <input form="kp-{{ p.id }}" name="label" value="{{ p.label }}" maxlength="64" required style="width:8.5rem">
+        <input form="kp-{{ p.id }}" name="label" value="{{ p.label }}" maxlength="64" required class="w-sm">
       </td>
       <td>
-        <input form="kp-{{ p.id }}" name="pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="new-password" placeholder="•••• unchanged" style="width:8rem">
-        <small class="muted" style="display:block">Blank = keep</small>
+        <input form="kp-{{ p.id }}" name="pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="new-password" placeholder="•••• unchanged" class="w-sm">
+        <small class="muted">Blank = keep</small>
       </td>
       <td>
-        <input form="kp-{{ p.id }}" name="kiosk_username" value="{{ p.kiosk_username }}" maxlength="64" style="width:7.5rem">
+        <input form="kp-{{ p.id }}" name="kiosk_username" value="{{ p.kiosk_username }}" maxlength="64" class="w-sm">
       </td>
       <td>
-        <select form="kp-{{ p.id }}" name="location_id" style="max-width:11rem">
+        <select form="kp-{{ p.id }}" name="location_id" class="w-md">
           <option value="">— first active location —</option>
           {% for l in kiosk_locations %}<option value="{{ l.id }}" {% if p.location_id == l.id %}selected{% endif %}>{{ l.name }}</option>{% endfor %}
         </select>
       </td>
-      <td style="text-align:center">
+      <td class="cell-center">
         <input form="kp-{{ p.id }}" type="checkbox" name="active" {% if p.active %}checked{% endif %} aria-label="Active">
       </td>
-      <td style="text-align:center">
+      <td class="cell-center">
         <input form="kp-{{ p.id }}" type="checkbox" name="is_inventory_admin" {% if p.is_inventory_admin %}checked{% endif %} aria-label="Inventory admin">
       </td>
       <td>
@@ -341,7 +341,7 @@
   </div>
   {% endif %}
 
-  <h3 style="margin-top:1rem">Add a kiosk PIN</h3>
+  <h3 class="settings-subhead">Add a kiosk PIN</h3>
   <form method="post" action="/settings/kiosk/add" class="grid-form" autocomplete="off">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label>Label (shown in the audit log)
@@ -361,7 +361,7 @@
       </select>
     </label>
     <label class="wide">
-      <span style="display:inline-flex; align-items:center; gap:.4rem"><input type="checkbox" name="is_inventory_admin"> Inventory admin</span>
+      <span class="check-inline"><input type="checkbox" name="is_inventory_admin"> Inventory admin</span>
       <small class="muted">Lets this PIN add/edit catalog items and adjust stock from the mobile app's Inventory screen.</small>
     </label>
     <button type="submit">Add PIN</button>
@@ -376,11 +376,11 @@
   <p class="muted">People credited with a charge-out. On a <b>kiosk</b> charge-out the operator must pick the technician here — this is separate from which station (Kiosk PIN) they signed in on. Deactivate to drop someone from the picker without losing their history.</p>
 
   <!-- Hardware-verified identity policy -->
-  <form method="post" action="/settings/techs/verification" class="grid-form" style="margin-bottom:1rem">
+  <form method="post" action="/settings/techs/verification" class="grid-form mb-1">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label class="wide">
-      <span style="display:inline-flex; align-items:center; gap:.4rem">
-        <input type="checkbox" name="require_hw" onchange="this.form.submit()" {% if cfg.require_hardware_tech_verification == '1' %}checked{% endif %}>
+      <span class="check-inline">
+        <input type="checkbox" name="require_hw" onchange="this.form.requestSubmit()" {% if cfg.require_hardware_tech_verification == '1' %}checked{% endif %}>
         Require hardware verification at kiosk charge-out
       </span>
       <small class="muted">When on, the kiosk replaces the technician dropdown with a <b>scan badge / tap card</b> prompt — the operator can't pick a tech without their enrolled barcode or NFC card. Enrol each tech's credential in the table below.</small>
@@ -390,7 +390,7 @@
 
   {% if technicians %}
   <div class="table-scroll">
-  <table class="lines" style="margin-bottom:.75rem">
+  <table class="lines mb-1">
     <thead><tr><th>Name</th><th title="Badge barcode scanned at the kiosk">Badge barcode</th><th title="NFC card UID tapped at the kiosk">NFC card UID</th><th>Active</th><th></th></tr></thead>
     <tbody>
     {% for t in technicians %}
@@ -398,11 +398,11 @@
       <td>
         <form id="tech-{{ t.id }}" method="post" action="/settings/techs/{{ t.id }}/save"></form>
         <input form="tech-{{ t.id }}" type="hidden" name="_csrf" value="{{ csrf_token }}">
-        <input form="tech-{{ t.id }}" name="name" value="{{ t.name }}" maxlength="100" required style="width:11rem" aria-label="Technician name">
+        <input form="tech-{{ t.id }}" name="name" value="{{ t.name }}" maxlength="100" required class="w-md" aria-label="Technician name">
       </td>
-      <td><input form="tech-{{ t.id }}" name="barcode_value" value="{{ t.barcode_value or '' }}" maxlength="128" placeholder="scan to set" style="width:10rem" aria-label="Badge barcode" autocomplete="off"></td>
-      <td><input form="tech-{{ t.id }}" name="nfc_uid" value="{{ t.nfc_uid or '' }}" maxlength="128" placeholder="tap to set" style="width:10rem" aria-label="NFC card UID" autocomplete="off"></td>
-      <td style="text-align:center"><input form="tech-{{ t.id }}" type="checkbox" name="active" {% if t.active %}checked{% endif %} aria-label="Active"></td>
+      <td><input form="tech-{{ t.id }}" name="barcode_value" value="{{ t.barcode_value or '' }}" maxlength="128" placeholder="scan to set" class="w-md" aria-label="Badge barcode" autocomplete="off"></td>
+      <td><input form="tech-{{ t.id }}" name="nfc_uid" value="{{ t.nfc_uid or '' }}" maxlength="128" placeholder="tap to set" class="w-md" aria-label="NFC card UID" autocomplete="off"></td>
+      <td class="cell-center"><input form="tech-{{ t.id }}" type="checkbox" name="active" {% if t.active %}checked{% endif %} aria-label="Active"></td>
       <td><span class="row-actions"><button form="tech-{{ t.id }}" type="submit">Save</button></span></td>
     </tr>
     {% endfor %}
@@ -413,7 +413,7 @@
   <p class="muted"><i>No technicians yet. Add one below — until at least one exists, kiosk charge-out doesn't require a pick.</i></p>
   {% endif %}
 
-  <h3 style="margin-top:1rem">Add a technician</h3>
+  <h3 class="settings-subhead">Add a technician</h3>
   <form method="post" action="/settings/techs/add" class="grid-form">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label>Name <input name="name" maxlength="100" placeholder="e.g. Jordan Lee" required></label>
@@ -443,7 +443,7 @@
 
     <div class="subgroup" id="smtp_fields">
       <label>SMTP host <input name="smtp_host" value="{{ cfg.smtp_host }}"></label>
-      <label>Port <input name="smtp_port" value="{{ cfg.smtp_port }}" style="width:5rem"></label>
+      <label>Port <input name="smtp_port" value="{{ cfg.smtp_port }}" class="w-tiny"></label>
       <label>Username <input name="smtp_username" value="{{ cfg.smtp_username }}"></label>
       <label>Password <input name="smtp_password" type="password" placeholder="{% if cfg.smtp_password %}•••••• (unchanged){% else %}not set{% endif %}"></label>
       <label class="check">Use STARTTLS <input type="checkbox" name="smtp_use_tls" {% if cfg.smtp_use_tls == '1' %}checked{% endif %}></label>
@@ -487,26 +487,43 @@
     <label class="check">Low-stock email alerts <input type="checkbox" name="alert_low_stock_enabled" {% if cfg.alert_low_stock_enabled == '1' %}checked{% endif %}></label>
     <label class="wide">Low-stock recipients (comma-separated) <input name="alert_low_stock_recipients" value="{{ cfg.alert_low_stock_recipients }}"></label>
 
-    <div class="subgroup">
-      <strong class="wide">📅 Daily report</strong>
-      <label class="check">Enabled <input type="checkbox" name="alert_daily_enabled" {% if cfg.alert_daily_enabled == '1' %}checked{% endif %}></label>
-      <label>At hour (0–23) <input name="alert_daily_hour" type="number" min="0" max="23" value="{{ cfg.alert_daily_hour }}" style="width:5rem"></label>
-      <label class="wide">Recipients <input name="alert_daily_recipients" value="{{ cfg.alert_daily_recipients }}"></label>
-    </div>
+    {# Hick's / Miller's Law: three near-identical 5-field schedules stacked
+       open put ~20 controls on screen at once. Each is a details.subgroup-fold
+       that opens only when that report is actually enabled, so the tab reads as
+       three lines plus whatever you're editing. The on/off chip in the summary
+       keeps the *state* visible while the detail is folded away — and a closed
+       <details> still submits its inputs, so nothing is lost on save. #}
+    <details class="subgroup-fold" {% if cfg.alert_daily_enabled == '1' %}open{% endif %}>
+      <summary>📅 Daily report
+        <span class="fold-state {% if cfg.alert_daily_enabled == '1' %}is-on{% endif %}">{% if cfg.alert_daily_enabled == '1' %}on{% else %}off{% endif %}</span>
+      </summary>
+      <div class="subgroup-body">
+        <label class="check">Enabled <input type="checkbox" name="alert_daily_enabled" {% if cfg.alert_daily_enabled == '1' %}checked{% endif %}></label>
+        <label>At hour (0–23) <input name="alert_daily_hour" type="number" min="0" max="23" value="{{ cfg.alert_daily_hour }}" class="w-tiny"></label>
+        <label class="wide">Recipients <input name="alert_daily_recipients" value="{{ cfg.alert_daily_recipients }}"></label>
+      </div>
+    </details>
 
-    <div class="subgroup">
-      <strong class="wide">🗓️ Weekly report</strong>
-      <label class="check">Enabled <input type="checkbox" name="alert_weekly_enabled" {% if cfg.alert_weekly_enabled == '1' %}checked{% endif %}></label>
-      <label>On
-        <select name="alert_weekly_weekday">{% for n, nm in weekdays %}<option value="{{ n }}" {% if cfg.alert_weekly_weekday|string == n|string %}selected{% endif %}>{{ nm }}</option>{% endfor %}</select>
-      </label>
-      <label>At hour (0–23) <input name="alert_weekly_hour" type="number" min="0" max="23" value="{{ cfg.alert_weekly_hour }}" style="width:5rem"></label>
-      <label class="wide">Recipients <input name="alert_weekly_recipients" value="{{ cfg.alert_weekly_recipients }}"></label>
-    </div>
+    <details class="subgroup-fold" {% if cfg.alert_weekly_enabled == '1' %}open{% endif %}>
+      <summary>🗓️ Weekly report
+        <span class="fold-state {% if cfg.alert_weekly_enabled == '1' %}is-on{% endif %}">{% if cfg.alert_weekly_enabled == '1' %}on{% else %}off{% endif %}</span>
+      </summary>
+      <div class="subgroup-body">
+        <label class="check">Enabled <input type="checkbox" name="alert_weekly_enabled" {% if cfg.alert_weekly_enabled == '1' %}checked{% endif %}></label>
+        <label>On
+          <select name="alert_weekly_weekday">{% for n, nm in weekdays %}<option value="{{ n }}" {% if cfg.alert_weekly_weekday|string == n|string %}selected{% endif %}>{{ nm }}</option>{% endfor %}</select>
+        </label>
+        <label>At hour (0–23) <input name="alert_weekly_hour" type="number" min="0" max="23" value="{{ cfg.alert_weekly_hour }}" class="w-tiny"></label>
+        <label class="wide">Recipients <input name="alert_weekly_recipients" value="{{ cfg.alert_weekly_recipients }}"></label>
+      </div>
+    </details>
 
     {% set nths = [(1,'first'),(2,'second'),(3,'third'),(4,'fourth'),(-1,'last')] %}
-    <div class="subgroup">
-      <strong class="wide">🗓️ Monthly report</strong>
+    <details class="subgroup-fold" {% if cfg.alert_monthly_enabled == '1' %}open{% endif %}>
+      <summary>🗓️ Monthly report
+        <span class="fold-state {% if cfg.alert_monthly_enabled == '1' %}is-on{% endif %}">{% if cfg.alert_monthly_enabled == '1' %}on{% else %}off{% endif %}</span>
+      </summary>
+      <div class="subgroup-body">
       <label class="check">Enabled <input type="checkbox" name="alert_monthly_enabled" {% if cfg.alert_monthly_enabled == '1' %}checked{% endif %}></label>
       <label>Schedule
         <select name="alert_monthly_mode" id="mm-mode" onchange="monthlyMode()">
@@ -514,16 +531,17 @@
           <option value="weekday" {% if cfg.alert_monthly_mode == 'weekday' %}selected{% endif %}>On a weekday of the month</option>
         </select>
       </label>
-      <label id="mm-day">On day (1–28) <input name="alert_monthly_day" type="number" min="1" max="28" value="{{ cfg.alert_monthly_day }}" style="width:5rem"></label>
+      <label id="mm-day">On day (1–28) <input name="alert_monthly_day" type="number" min="1" max="28" value="{{ cfg.alert_monthly_day }}" class="w-tiny"></label>
       <label class="mm-wd">On the
         <select name="alert_monthly_nth">{% for n, nm in nths %}<option value="{{ n }}" {% if cfg.alert_monthly_nth|string == n|string %}selected{% endif %}>{{ nm }}</option>{% endfor %}</select>
       </label>
       <label class="mm-wd">weekday
         <select name="alert_monthly_weekday">{% for n, nm in weekdays %}<option value="{{ n }}" {% if cfg.alert_monthly_weekday|string == n|string %}selected{% endif %}>{{ nm }}</option>{% endfor %}</select>
       </label>
-      <label>At hour (0–23) <input name="alert_monthly_hour" type="number" min="0" max="23" value="{{ cfg.alert_monthly_hour }}" style="width:5rem"></label>
+      <label>At hour (0–23) <input name="alert_monthly_hour" type="number" min="0" max="23" value="{{ cfg.alert_monthly_hour }}" class="w-tiny"></label>
       <label class="wide">Recipients <input name="alert_monthly_recipients" value="{{ cfg.alert_monthly_recipients }}"></label>
-    </div>
+      </div>
+    </details>
     <button type="submit">Save alerts</button>
   </form>
   <small>Times are in the server's clock (UTC in Docker) and checked hourly. Daily bills the
@@ -546,13 +564,13 @@
   running) of every <code>*.db</code> file plus the <code>uploads/</code>
   folder. Keep these somewhere off the server.</p>
   <a class="btn" href="/settings/backup" download>⬇ Download backup now</a>
-  <small class="muted" style="display:block;margin-top:.5rem">
+  <small class="muted mt-half">
     For scheduled / automated backups, run <code>./scripts/backup.sh</code> on
     the host (cron-friendly). See <a href="https://github.com/stephenthecold/inv-keep/blob/main/docs/BACKUPS.md">docs/BACKUPS.md</a>.
   </small>
 
-  <h3 style="margin-top:1.5rem">Restore from a backup</h3>
-  <div class="notice bad" style="margin:.5rem 0">
+  <h3 class="settings-subhead">Restore from a backup</h3>
+  <div class="notice bad">
     <b>Replaces every database row and the entire uploads folder</b> with the contents
     of the uploaded bundle. The current data is saved as
     <code>data/before-restore-&lt;timestamp&gt;/</code> on the server first, but
@@ -565,7 +583,7 @@
     <label>Backup file (.tar.gz produced by Download backup / scripts/backup.sh):
       <input type="file" name="bundle" accept=".gz,.tgz,application/gzip,application/x-gzip" required>
     </label>
-    <button type="submit" class="danger" style="margin-top:.5rem">Restore</button>
+    <button type="submit" class="danger mt-half">Restore</button>
   </form>
 </section>
 {% endif %}
@@ -574,13 +592,13 @@
 <section class="card settings-tab" id="tab-version" data-tab-pane="version" data-tab-title="Version &amp; updates">
   <h2>Version & updates</h2>
   <p>Current: <b>v{{ version }}</b></p>
-  <div id="update-status" class="muted" style="margin:.5rem 0">Click <b>Check now</b> to compare against the latest GitHub release.</div>
+  <div id="update-status" class="muted my-half">Click <b>Check now</b> to compare against the latest GitHub release.</div>
   <button type="button" id="check-update-btn" class="btn">Check for updates</button>
   <a class="btn ghost" href="https://github.com/stephenthecold/inv-keep/releases" target="_blank" rel="noopener">View all releases ↗</a>
 
-  <h3 style="margin-top:1.5rem">How to update</h3>
+  <h3 class="settings-subhead">How to update</h3>
   <p class="muted">Updates ship as new Docker images on GHCR. To pull and restart in place:</p>
-  <pre style="background:var(--panel-2);padding:.75rem;border-radius:6px;overflow:auto"><code>docker compose pull
+  <pre class="codeblock"><code>docker compose pull
 docker compose up -d</code></pre>
   <p class="muted"><small>Self-update from inside the UI requires the app to control its own container, which would break the security boundary. Running the two commands above on the host takes ~10 seconds; existing sessions reconnect automatically.</small></p>
 </section>
@@ -660,6 +678,22 @@ function authMode() {
   document.getElementById('forward_auth_fields').style.display = (m === 'forward') ? '' : 'none';
 }
 authMode();
+
+// Keep each collapsible group's on/off chip in sync with its own Enabled
+// checkbox. Folding a section may hide its detail but must never hide its
+// state — a summary that says "off" while the box inside it is ticked is worse
+// than no summary at all.
+document.querySelectorAll('details.subgroup-fold').forEach(function (fold) {
+  var box = fold.querySelector('input[type="checkbox"]');
+  var chip = fold.querySelector('.fold-state');
+  if (!box || !chip) return;
+  function sync() {
+    chip.textContent = box.checked ? 'on' : 'off';
+    chip.classList.toggle('is-on', box.checked);
+  }
+  box.addEventListener('change', sync);
+  sync();
+});
 
 function monthlyMode() {
   var wd = document.getElementById('mm-mode').value === 'weekday';

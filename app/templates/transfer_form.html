@@ -29,7 +29,7 @@
 
   <h2>Lines</h2>
   <table class="lines">
-    <thead><tr><th>Part</th><th class="num" style="width:8rem">Quantity</th><th></th></tr></thead>
+    <thead><tr><th>Part</th><th class="num w-sm">Quantity</th><th></th></tr></thead>
     <tbody id="xfer-body">
       <tr class="xfer-line">
         <td>
@@ -38,14 +38,14 @@
             {% for p in parts %}<option value="{{ p.id }}">{{ p.name }} ({{ p.barcode }})</option>{% endfor %}
           </select>
         </td>
-        <td class="num"><input name="quantity" type="number" min="1" value="1" style="width:6rem"></td>
+        <td class="num"><input name="quantity" type="number" min="1" value="1" class="w-num"></td>
         <td><button type="button" class="ghost xfer-remove" aria-label="Remove line">✕</button></td>
       </tr>
     </tbody>
   </table>
   <p><button type="button" class="ghost" id="xfer-add-line">+ Add another line</button></p>
 
-  <menu class="modal-actions" style="margin-top:1rem">
+  <menu class="modal-actions mt-1">
     <a class="btn ghost" href="/transfers">Cancel</a>
     <button type="submit">Post transfer</button>
   </menu>

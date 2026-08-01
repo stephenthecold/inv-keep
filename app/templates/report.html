@@ -93,7 +93,7 @@
 
 {% if report %}
 <div class="grand-total">Billable total: {{ totals.charge | money(cfg.currency) }}</div>
-{% if can('see_cost') %}<div class="muted" style="text-align:right">Cost: {{ totals.cost | money(cfg.currency) }} · Margin: {{ totals.margin | money(cfg.currency) }}</div>{% endif %}
+{% if can('see_cost') %}<div class="muted text-right">Cost: {{ totals.cost | money(cfg.currency) }} · Margin: {{ totals.margin | money(cfg.currency) }}</div>{% endif %}
 {% endif %}
 <script>
 (function(){

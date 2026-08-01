@@ -255,8 +255,10 @@ document.addEventListener("click", (e) => {
   setIconField(document.getElementById("edit-part"), d.icon || "");
   const cur = document.getElementById("ep-image-current");
   if (cur) {
-    if (d.image) { cur.src = d.image; cur.style.display = ""; }
-    else { cur.removeAttribute("src"); cur.style.display = "none"; }
+    // `hidden` rather than an inline display style — [hidden] is the app's
+    // one visibility idiom (see the !important rule in style.css).
+    if (d.image) { cur.src = d.image; cur.hidden = false; }
+    else { cur.removeAttribute("src"); cur.hidden = true; }
   }
   const rm = document.getElementById("ep-remove");
   if (rm) rm.checked = false;
@@ -296,6 +298,8 @@ if (scan && cart) {
   const statusEl = document.getElementById("cart-status");
   const submitBtn = document.getElementById("cart-submit");
   const cancelBtn = document.getElementById("cart-cancel");
+  // Goal-Gradient: names whatever is still blocking Submit (see updateSubmitHint).
+  const submitHint = document.getElementById("cart-submit-hint");
   // Compact-pill targets header (<details> wrapper around the three selects)
   const targetsCard = document.getElementById("cart-targets-card");
   const pillLocation = targetsCard && targetsCard.querySelector('[data-pill="location"] .ct-text');
@@ -435,12 +439,28 @@ if (scan && cart) {
     return tile;
   }
 
+  // Goal-Gradient Effect: a disabled primary button must say what unblocks it.
+  // Submit is gated on "has lines" AND "has a client", so surface whichever of
+  // the two is still outstanding rather than leaving a greyed-out dead end.
+  function updateSubmitHint(c) {
+    const need = !c || !c.lines || !c.lines.length
+      ? "Scan or search an item to start this order"
+      : !(c.client_id || c.client_walkin)
+        ? "Pick a client (or a walk-in) to enable Submit"
+        : "";
+    submitBtn.title = need || "Submit this order";
+    if (!submitHint) return;
+    submitHint.textContent = need ? "→ " + need : "";
+    submitHint.hidden = !need;
+  }
+
   function render(c) {
     if (!c || !c.open) {
       cart.hidden = true;
       tiles.innerHTML = "";
       subtotalEl.textContent = money(0);
       updatePills();
+      updateSubmitHint(c);
       return;
     }
     cart.hidden = false;
@@ -479,6 +499,7 @@ if (scan && cart) {
     }
     subtotalEl.textContent = money(c.subtotal);
     submitBtn.disabled = !(c.lines.length && (c.client_id || c.client_walkin));
+    updateSubmitHint(c);
 
     updatePills();
 
@@ -1117,6 +1138,100 @@ document.addEventListener("click", async (e) => {
       input.value = "";
       toast("Comment added", true);
     } else { toast("Couldn't add comment", false); }
+  });
+})();
+
+// ---- form save-state (Zeigarnik + Doherty Threshold) ----
+// Every navigating POST reports progress instead of looking like a dead click:
+// the button the user actually pressed gets a spinner + "Saving…", and the
+// form's submit controls are disabled so a slow round-trip can't be
+// double-fired.
+//
+// Registered on document (bubble phase) so a form's own submit listener runs
+// first — if that listener called preventDefault() the form is JS-handled and
+// owns its own feedback, so we leave it alone. Opt a form out with data-no-busy.
+//
+// NOTE: forms whose constraint validation fails never fire `submit` at all, so
+// a required-field block can't strand a button in the busy state.
+(function () {
+  const BUSY_LABEL = "Saving…";
+
+  // Submit controls for a form: the ones inside it, plus any wired from
+  // outside via form="<id>" (the row-edit pattern on /jobs, /users,
+  // /categories and the Settings kiosk/technician tables).
+  function submitControls(form) {
+    const inside = Array.from(form.querySelectorAll("button, input[type=submit]"));
+    const outside = form.id
+      ? Array.from(document.querySelectorAll('[form="' + CSS.escape(form.id) + '"]'))
+      : [];
+    return inside
+      .concat(outside.filter((el) => el.tagName === "BUTTON" || el.type === "submit"))
+      .filter((el) => el.type !== "button");
+  }
+
+  function clearBusy(form) {
+    delete form.dataset.busy;
+    form.removeAttribute("aria-busy");
+    form.classList.remove("is-busy");
+    submitControls(form).forEach((b) => {
+      b.disabled = false;
+      if (!b.classList.contains("is-busy")) return;
+      b.classList.remove("is-busy");
+      if (b.dataset.idleLabel != null) b.textContent = b.dataset.idleLabel;
+    });
+  }
+
+  document.addEventListener("submit", (e) => {
+    const form = e.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    if (e.defaultPrevented) return;                  // JS-handled elsewhere
+    if (form.hasAttribute("data-no-busy")) return;
+    if (form.dataset.busy === "1") { e.preventDefault(); return; }
+    form.dataset.busy = "1";
+    form.setAttribute("aria-busy", "true");
+
+    const btn = e.submitter;
+    if (btn && btn.tagName === "BUTTON") {
+      btn.dataset.idleLabel = btn.textContent;
+      btn.textContent = btn.dataset.busyLabel || BUSY_LABEL;
+      btn.classList.add("is-busy");
+    } else {
+      // Submitted with no button (a select's onchange calling
+      // requestSubmit) — there's nothing to put a spinner in, so the form
+      // itself reports progress.
+      form.classList.add("is-busy");
+    }
+
+    // Deferred on purpose: disabling a submitter before the browser has
+    // serialised the form drops its name/value from the POST body, and would
+    // break the formaction buttons (Archive / Delete / Restore). By the next
+    // tick the request is already on the wire.
+    setTimeout(() => submitControls(form).forEach((b) => { b.disabled = true; }), 0);
+  });
+
+  // A back-navigation must never land on a page frozen mid-"Saving…".
+  window.addEventListener("pageshow", () => {
+    document.querySelectorAll('form[data-busy="1"]').forEach(clearBusy);
+  });
+
+  // Unsaved-changes marker (the other half of Zeigarnik). Scoped to the config
+  // forms inside the settings shell — that's where a long form full of fields
+  // makes it easy to lose track of whether you actually pressed Save. Row-edit
+  // forms in dense tables are deliberately excluded: their Save button is
+  // already sitting in the same row as the field you just touched.
+  document.addEventListener("input", (e) => {
+    const form = e.target.form;
+    if (!form || !form.classList.contains("grid-form")) return;
+    if (form.classList.contains("is-dirty")) return;
+    if (!form.closest(".settings-shell")) return;
+    const btn = submitControls(form).find((b) => b.tagName === "BUTTON" && !b.classList.contains("danger"));
+    if (!btn) return;
+    form.classList.add("is-dirty");
+    const flag = document.createElement("span");
+    flag.className = "dirty-flag";
+    flag.setAttribute("role", "status");
+    flag.textContent = "Not saved yet";
+    btn.insertAdjacentElement("beforebegin", flag);
   });
 })();
 

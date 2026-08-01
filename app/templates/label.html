@@ -44,7 +44,7 @@
     {% endif %}
     {% if include_all is defined and include_all %}<input type="hidden" name="all" value="1">{% endif %}
     <label>Label size
-      <select name="size" onchange="this.form.submit()">
+      <select name="size" onchange="this.form.requestSubmit()">
         {% for brand, items in size_groups %}
         <optgroup label="{{ brand }}">
           {% for key, s in items %}
@@ -68,9 +68,9 @@
   {% endif %}
 
   {% if adhoc_value is not defined %}
-  <details class="filter" style="margin-top:.5rem">
+  <details class="filter mt-half">
     <summary>Print an ad-hoc label for any barcode (re-tag / one-off)</summary>
-    <form method="get" action="/labels/print" class="filter" style="margin-top:.5rem">
+    <form method="get" action="/labels/print" class="filter mt-half">
       <label>Barcode value <input name="value" required maxlength="128" placeholder="scan or type"></label>
       <label>Caption <input name="name" maxlength="64" placeholder="optional"></label>
       {% if size_key %}<input type="hidden" name="size" value="{{ size_key }}">{% endif %}
