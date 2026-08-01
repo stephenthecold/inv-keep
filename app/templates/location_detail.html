@@ -35,7 +35,7 @@
   {% endif %}
 {% else %}
 
-<form method="post" action="/locations/{{ location.id }}/stocktake" class="stocktake-form" {% if location.archived or not location.active %}style="opacity:.55;pointer-events:none"{% endif %}>
+<form method="post" action="/locations/{{ location.id }}/stocktake" class="stocktake-form{% if location.archived or not location.active %} is-locked{% endif %}">
   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
 
   {# Action bar — sits sticky so on a long count the Save button is

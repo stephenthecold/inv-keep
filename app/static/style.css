@@ -94,12 +94,16 @@ code { background: var(--panel-2); padding: .1rem .35rem; border-radius: 4px; }
 
 .field { margin: 1rem 0; }
 .field label { display: block; font-weight: 600; margin-bottom: .3rem; }
+/* background-COLOR, not the `background` shorthand: the app-wide <select>
+   chrome further down paints its caret with background-image, and the
+   shorthand would wipe it. Same reasoning applies to every other rule in
+   this file that repaints a select. */
 input, select, button {
   font-size: 1rem;
   padding: .55rem .9rem;
   border-radius: 8px;
   border: 1px solid var(--line);
-  background: var(--panel-2);
+  background-color: var(--panel-2);
   color: var(--text);
 }
 #scan {
@@ -154,7 +158,10 @@ tfoot td { font-weight: 700; }
 .card summary { cursor: pointer; font-weight: 600; }
 .grid-form { display: flex; flex-wrap: wrap; gap: .75rem; align-items: flex-end; margin-top: .75rem; }
 .grid-form label { display: flex; flex-direction: column; font-size: .85rem; color: var(--muted); gap: .25rem; }
-.inline { display: inline; }
+/* An inline <form> wrapping a single button (Archive / Delete / Restore in a
+   row-action cluster). margin:0 so it lines up flush with its siblings instead
+   of inheriting the UA's form margin. */
+.inline { display: inline; margin: 0; }
 /* Inline row action clusters (Save / Delete in a table cell) — give the
    buttons breathing room instead of butting together. */
 .row-actions { display: inline-flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
@@ -198,6 +205,11 @@ input[type=file] { max-width: 100%; min-width: 0; }
 /* Destructive notice (e.g. the Restore-from-backup warning) — red rail +
    tint so it reads as dangerous rather than a routine amber note. */
 .notice.bad { border-left-color: var(--bad); background: rgba(229, 83, 75, .08); }
+/* Neutral explanatory callout — same box, accent rail, no alarm colour. Use it
+   instead of hand-rolling a bordered <div> with inline styles. */
+.notice.info { border-left-color: var(--accent); background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--accent); }
+/* Copy-paste command block (e.g. the docker compose update recipe). */
+.codeblock { background: var(--panel-2); padding: .75rem; border-radius: 6px; overflow: auto; margin: .5rem 0; }
 .muted { color: var(--muted); }
 
 .toast { position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%); padding: .8rem 1.4rem; border-radius: 10px; font-weight: 600; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 50; }
@@ -224,7 +236,7 @@ button.danger, .btn.danger { background: var(--bad); border-color: var(--bad); c
 section.card h2 { margin-top: 0; }
 .grid-form label.wide { flex: 1 1 100%; }
 .grid-form label.check { flex-direction: row; align-items: center; gap: .4rem; }
-.grid-form textarea, .grid-form input, .grid-form select { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: .5rem; max-width: 100%; }
+.grid-form textarea, .grid-form input, .grid-form select { background-color: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: .5rem; max-width: 100%; }
 /* Let labels (the flex items) and their inputs shrink below intrinsic width
    on narrow screens so long values / placeholders (e.g. the OIDC discovery
    URL on the Authentication tab) wrap inside the card instead of overflowing
@@ -232,10 +244,76 @@ section.card h2 { margin-top: 0; }
 .grid-form label, .subgroup label { min-width: 0; }
 .subgroup { width: 100%; display: flex; flex-wrap: wrap; gap: .75rem; padding: .75rem; margin: .5rem 0; border: 1px dashed var(--line); border-radius: 8px; }
 .subgroup label { display: flex; flex-direction: column; font-size: .85rem; color: var(--muted); gap: .25rem; }
+
+/* Collapsible variant of .subgroup (Hick's + Miller's): the same dashed group,
+   but folded shut by default so a tab full of optional settings reads as a few
+   lines. The summary keeps an on/off chip — collapsing a section must never
+   hide whether it's *active*, only its detail. */
+details.subgroup-fold { width: 100%; display: block; padding: .6rem .75rem; margin: .5rem 0; border: 1px dashed var(--line); border-radius: 8px; }
+details.subgroup-fold > summary { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; min-height: 2.2rem; cursor: pointer; font-weight: 600; list-style: none; }
+details.subgroup-fold > summary::-webkit-details-marker { display: none; }
+details.subgroup-fold > summary::after { content: "▾"; margin-left: auto; color: var(--muted); font-size: .9rem; }
+details.subgroup-fold[open] > summary::after { content: "▴"; }
+details.subgroup-fold[open] > summary { border-bottom: 1px solid var(--line); padding-bottom: .5rem; margin-bottom: .25rem; }
+.subgroup-body { display: flex; flex-wrap: wrap; gap: .75rem; padding-top: .6rem; }
+.subgroup-body > label { display: flex; flex-direction: column; font-size: .85rem; color: var(--muted); gap: .25rem; min-width: 0; }
+.subgroup-body > label.check { flex-direction: row; align-items: center; gap: .4rem; }
+.subgroup-body > label.wide, .subgroup-body > .wide { flex: 1 1 100%; }
+/* State chip in a fold's summary — mirrors .tag but reads as status, not data. */
+.fold-state { font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; border-radius: 999px; padding: .1rem .5rem; border: 1px solid var(--line); color: var(--muted); background: var(--panel-2); }
+.fold-state.is-on { color: var(--good); border-color: var(--good); background: rgba(46,160,67,.12); }
+
+/* ---- Shared layout / typography helpers ------------------------------------
+   These exist so templates never need a one-off `style=`. Reach for one of
+   these first; if none fits, add a named class here rather than inlining. */
+/* Sub-heading inside a .card — carries its own rhythm + separator so every
+   card section is spaced identically (Aesthetic-Usability + Proximity). */
+h3.settings-subhead { margin: 1.5rem 0 .5rem; padding-top: 1rem; border-top: 1px solid var(--line); font-size: 1rem; }
+h3.settings-subhead:first-of-type { margin-top: 1rem; }
+/* Horizontal rule between action groups inside a dialog. */
+.rule { border: 0; border-top: 1px solid var(--line); margin: 1rem 0; }
+/* Checkbox + its own label text on one line, inside a stacked .wide label. */
+.check-inline { display: inline-flex; align-items: center; gap: .4rem; }
+/* Table cell whose content is a single centred control (Active / Lock boxes). */
+td.cell-center, th.cell-center { text-align: center; }
+/* Narrow numeric / short-text inputs. Named widths keep every "hour", "count"
+   and "port" field the same size instead of drifting per template. */
+.w-tiny { width: 5rem; }
+.w-num  { width: 6rem; }
+.w-sm   { width: 8rem; }
+.w-md   { width: 11rem; }
+.w-desc { width: 16rem; }
+.w-emoji { width: 3.4rem; text-align: center; }
+/* Native colour swatch — needs a tight box, not the standard text-input one. */
+.color-input { width: 4rem; padding: .2rem; }
+/* Utility spacing used where a named component would be overkill. */
+.mt-half { margin-top: .5rem; }
+.my-half { margin: .5rem 0; }
+.mt-1 { margin-top: 1rem; }
+.mb-1 { margin-bottom: 1rem; }
+.mb-half { margin-bottom: .5rem; }
+.is-hidden { display: none; }
+/* Full-width note inside a wrapping flex row (.grid-form / .row-actions). */
+.flex-full { flex: 1 1 100%; }
+.text-right { text-align: right; }
+/* Non-interactive status line inside a dropdown menu (the account popover). */
+.account-menu .account-note { display: block; padding: .5rem .7rem; }
+/* Uploaded brand asset preview (logo / favicon) on the Branding tab. */
+.brand-preview { background: #fff; border-radius: 6px; padding: 4px; max-height: 48px; display: block; }
+.brand-preview.is-favicon { height: 32px; width: 32px; padding: 2px; object-fit: contain; }
+/* A form the operator can look at but not submit (archived location stocktake). */
+.is-locked { opacity: .55; pointer-events: none; }
+/* Spans the full width of a .cat-grid row (the "nothing here yet" message). */
+.grid-span { grid-column: 1 / -1; }
+/* Required-field asterisk. */
+.req { color: var(--bad); }
+/* Archive / Delete row at the foot of the edit-item dialog. Each button is its
+   own <form> posting to its own endpoint, so they need a tighter gap than a
+   .grid-form's field spacing — and enough of one that Delete can't be hit by
+   someone aiming at Archive (Fitts + Proximity). */
+.lifecycle-actions { gap: .5rem; }
 details.card.inactive summary { opacity: .55; }
-.grid-form select option { color: #000; }
-.lines select { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: .3rem; }
-.lines select option { color: #000; }
+.lines select { background-color: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: .3rem; }
 
 /* Larger, easier-to-tap dropdowns inside modals (per-item stock add/move/set,
    bulk actions). The default .grid-form select rendered as a small target;
@@ -430,6 +508,9 @@ dialog.modal h2 { margin-top: 0; }
 }
 .cart-subtotal { font-size: 1rem; color: var(--muted); }
 .cart-subtotal strong { font-size: 1.3rem; color: var(--text); margin-left: .35rem; }
+/* Goal-Gradient: a disabled Submit must name the one thing still missing.
+   Populated by render() in app.js; hidden the moment the cart is submittable. */
+.cart-submit-hint { flex: 1 1 100%; order: 99; margin: 0; color: var(--warn); font-size: .85rem; font-weight: 600; display: flex; align-items: center; gap: .35rem; }
 .sg-icon { display: inline-block; width: 1.4rem; text-align: center; margin-right: .2rem; }
 
 /* emoji picker */
@@ -481,7 +562,7 @@ dialog.modal h2 { margin-top: 0; }
 .cat-card-chev { grid-column: 2; grid-row: 1 / span 2; color: var(--muted); font-size: 1.6rem; line-height: 1; align-self: center; padding-left: .35rem; }
 .cat-card-tap:active { transform: scale(.985); }
 .cat-card-admin { display: flex; flex-wrap: wrap; gap: .5rem; padding: .45rem .65rem .65rem; border-top: 1px dashed var(--line); margin-top: -.15rem; }
-.cat-card-admin button, .cat-card-admin .danger { background: transparent; border: 1px solid var(--line); color: var(--text); padding: .25rem .55rem; font-size: .75rem; border-radius: 6px; }
+.cat-card-admin button, .cat-card-admin .danger { background: transparent; border: 1px solid var(--line); color: var(--text); padding: .35rem .7rem; font-size: .8rem; min-height: 1.9rem; border-radius: 6px; }
 .cat-card-admin .danger { color: var(--bad); border-color: var(--line); }
 .cat-card-admin .danger:hover { border-color: var(--bad); }
 .cat-card-admin .inline { margin: 0; }
@@ -726,7 +807,9 @@ body.nav-open .nav-toggle .hamburger-bar:nth-child(3) { transform: translateY(-7
    it stays reachable while ticking rows down a long list; it only appears
    (hidden attr removed by JS) once at least one row is selected. */
 .bulk-col { width: 2.4rem; text-align: center; }
-.bulk-check, .bulk-all { width: 1.1rem; height: 1.1rem; cursor: pointer; }
+/* Sizing deliberately omitted — the app-wide input[type=checkbox] rule owns it
+   (and grows the box on coarse pointers). Law of Similarity. */
+.bulk-check, .bulk-all { cursor: pointer; }
 .bulk-bar { position: sticky; top: .5rem; z-index: 6; display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; background: var(--panel); border: 1px solid var(--accent); border-radius: 10px; padding: .55rem .75rem; margin: .75rem 0; box-shadow: 0 6px 16px rgba(0,0,0,.3); }
 .bulk-bar .bulk-count { margin-right: .25rem; }
 .bulk-move-table { width: 100%; margin: .25rem 0 0; }
@@ -774,8 +857,11 @@ body.nav-open .nav-toggle .hamburger-bar:nth-child(3) { transform: translateY(-7
   background: transparent;
   border: 1px solid var(--line);
   color: var(--muted);
-  min-height: 0;
-  padding: .1rem .4rem;
+  /* Was min-height:0 + .1rem padding — a ~20px icon-only target even with a
+     mouse. Fitts's Law; the coarse-pointer block takes it to 44px. */
+  min-height: 1.75rem;
+  min-width: 1.75rem;
+  padding: .15rem .45rem;
   margin-left: .4rem;
   font-size: .9rem;
   border-radius: 6px;
@@ -815,12 +901,19 @@ body.nav-open .nav-toggle .hamburger-bar:nth-child(3) { transform: translateY(-7
 .oc-form-actions { display: flex; justify-content: flex-end; }
 
 /* ---------------------------------------------------------------------------
-   Settings / Users control refresh — modern checkboxes + select chrome, scoped
-   to the settings shell so the rest of the app's native controls are untouched.
-   The old native checkboxes + default <select> arrow read as dated next to the
-   card UI; these match the accent/line/radius design language.
+   CONTROL CHROME — checkboxes + selects, APP-WIDE.
+
+   Law of Similarity: one control, one look, on every page. These rules used to
+   be scoped to `.settings-shell`, which meant /settings rendered the styled
+   controls while /parts, /jobs, /clients, /categories and the scan page kept
+   raw OS chrome — two visual languages for the same widget. Do not re-scope
+   them to a single page.
+
+   The select block is a selector LIST on purpose: each entry applies at its own
+   specificity, so it beats the per-context select rules above (.grid-form,
+   .lines, dialog.modal) that would otherwise win on padding.
 --------------------------------------------------------------------------- */
-.settings-shell input[type="checkbox"] {
+input[type="checkbox"] {
   appearance: none;
   -webkit-appearance: none;
   width: 1.25rem;
@@ -830,20 +923,20 @@ body.nav-open .nav-toggle .hamburger-bar:nth-child(3) { transform: translateY(-7
   padding: 0;
   border: 1.5px solid var(--line);
   border-radius: 6px;
-  background: var(--panel-2);
+  background-color: var(--panel-2);
   cursor: pointer;
   position: relative;
   flex: 0 0 auto;
-  transition: background .12s ease, border-color .12s ease;
+  transition: background-color .12s ease, border-color .12s ease;
   vertical-align: middle;
 }
-.settings-shell input[type="checkbox"]:hover { border-color: var(--accent); }
-.settings-shell input[type="checkbox"]:checked {
-  background: var(--accent);
+input[type="checkbox"]:hover { border-color: var(--accent); }
+input[type="checkbox"]:checked {
+  background-color: var(--accent);
   border-color: var(--accent);
 }
 /* Drawn checkmark — no image dependency, crisp at any zoom. */
-.settings-shell input[type="checkbox"]:checked::after {
+input[type="checkbox"]:checked::after {
   content: "";
   position: absolute;
   left: .38rem;
@@ -854,30 +947,120 @@ body.nav-open .nav-toggle .hamburger-bar:nth-child(3) { transform: translateY(-7
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
-.settings-shell input[type="checkbox"]:focus-visible {
+input[type="checkbox"]:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+input[type="checkbox"]:disabled { opacity: .5; cursor: not-allowed; }
 
+select,
+.grid-form select,
+.subgroup select,
+.lines select,
+.filter select,
+.cart-tech-row select,
+dialog.modal select,
 .settings-shell select {
   appearance: none;
   -webkit-appearance: none;
-  background-color: var(--panel-2);
   /* Caret drawn as an inline SVG data-URI so there's no asset to ship. */
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%238b98a5' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right .75rem center;
+  background-position: right .7rem center;
   background-size: .7rem;
   padding-right: 2rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
   color: var(--text);
   cursor: pointer;
   transition: border-color .12s ease;
 }
-.settings-shell select:hover { border-color: var(--accent); }
-.settings-shell select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
-.settings-shell select option { color: #000; }
+select:hover { border-color: var(--accent); }
+select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+/* Native option lists paint on a light popup on most platforms — keep the
+   text dark so options stay legible against it. */
+select option, select optgroup { color: #000; }
+
+/* ---------------------------------------------------------------------------
+   BUSY / SAVE STATE (Zeigarnik + Doherty). Applied by the delegated submit
+   handler in app.js: the submitter gets .is-busy (spinner + "Saving…") and the
+   form's submit buttons are disabled until the navigation lands, so a slow POST
+   never looks like a dead click and can't be double-fired.
+--------------------------------------------------------------------------- */
+@keyframes inv-spin { to { transform: rotate(360deg); } }
+button.is-busy, .btn.is-busy { cursor: progress; opacity: 1; }
+button.is-busy::before, .btn.is-busy::before {
+  content: "";
+  width: .85em;
+  height: .85em;
+  flex: 0 0 auto;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: inv-spin .6s linear infinite;
+}
+/* Buttons are disabled while busy; keep them legible rather than ghosted. */
+button.is-busy:disabled, .btn.is-busy:disabled { opacity: .8; }
+/* Forms submitted without a visible button (a select's onchange) can't host a
+   spinner, so the whole form reports progress instead. */
+form.is-busy { cursor: progress; opacity: .6; }
+/* Unsaved-changes chip, injected next to a settings form's Save button on the
+   first edit. Amber (not red) — it's a reminder, not an error. */
+.dirty-flag {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  gap: .35rem;
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--warn);
+  background: rgba(210, 153, 34, .12);
+  border: 1px solid rgba(210, 153, 34, .32);
+  border-radius: 999px;
+  padding: .2rem .65rem;
+}
+.dirty-flag::before { content: "●"; font-size: .7em; }
+form.is-busy .dirty-flag { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  button.is-busy::before, .btn.is-busy::before { animation: none; }
+}
+
+/* Icon-only affordances (🏷️ print, 📍 map) need a real hit box — a bare glyph
+   in a table cell is a ~14px target. Fitts's Law. */
+.icon-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  min-height: 2rem;
+  padding: 0 .25rem;
+  border-radius: 6px;
+  text-decoration: none;
+  line-height: 1;
+}
+.icon-link:hover { background: var(--panel-2); }
+.icon-link:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Tap-target floor. Compact (`.small`, icon) variants stay dense for mouse
+   users and expand to a 44px minimum wherever the primary pointer is a finger.
+   Never opt a control out of this with `min-height: 0` — set the compact size
+   in the default rule and let this block win. Fitts's Law. */
+@media (pointer: coarse) {
+  button, .btn, .add-btn,
+  .btn.small, button.small,
+  .ms-tab, .comment-btn, .oc-close, .oc-edit-link,
+  .cat-card-admin button, .cat-card-admin .danger,
+  .emoji-pick button, .cart-tile .tile-remove,
+  .items-table .item-actions button, .icon-link {
+    min-height: 44px;
+  }
+  .icon-link { min-width: 44px; }
+  .cat-card-admin button, .cat-card-admin .danger { padding: .4rem .8rem; font-size: .85rem; }
+  .comment-btn { min-width: 44px; padding: .4rem .6rem; }
+  .emoji-pick button { min-width: 44px; font-size: 1.3rem; }
+  /* Bigger checkbox for finger-accuracy on the row toggles (Active / Lock /
+     bulk-select) that live in dense tables. */
+  input[type="checkbox"] { width: 1.4rem; height: 1.4rem; }
+  input[type="checkbox"]:checked::after { left: .45rem; top: .2rem; height: .7rem; }
+}
 
 /* label printing */
 .label-sheet { display: flex; flex-wrap: wrap; gap: .4rem; }

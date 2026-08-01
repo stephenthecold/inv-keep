@@ -60,12 +60,12 @@
             data-id="{{ l.id }}" data-name="{{ l.name }}" data-notes="{{ l.notes }}"
             data-active="{{ '1' if l.active else '0' }}">Edit</button>
           {% if l.archived %}
-            <form method="post" action="/locations/{{ l.id }}/restore" style="display:inline">
+            <form method="post" action="/locations/{{ l.id }}/restore" class="inline">
               <input type="hidden" name="_csrf" value="{{ csrf_token }}">
               <button type="submit" class="ghost">Restore</button>
             </form>
           {% else %}
-            <form method="post" action="/locations/{{ l.id }}/archive" style="display:inline" onsubmit="return confirm('Archive {{ l.name }}? Stock here must be zero.');">
+            <form method="post" action="/locations/{{ l.id }}/archive" class="inline" onsubmit="return confirm('Archive {{ l.name }}? Stock here must be zero.');">
               <input type="hidden" name="_csrf" value="{{ csrf_token }}">
               <button type="submit" class="ghost">Archive</button>
             </form>

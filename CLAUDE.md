@@ -98,6 +98,96 @@ CI assertions too** — that's how every CI failure since v1.17 has played out.
 | A new place that displays item on-hand counts | If `pack_size > 1`, show the derived `qty // pack_size` packs + remainder hint under the count (see parts.html "On hand" cell). Stock + billing stay per-unit — the pack-size is a display convenience, not a separate currency. v1.25. |
 | A new path that prints labels for arbitrary user input | Reuse `/labels/print?value=…&name=…` (ad-hoc, no Part required). Sanitize the value with the same length + control-char guard already in `labels_print_adhoc` before handing to `labels.render_svg` — the Code128 encoder will happily emit a 50k-pixel SVG for a 200-char string. v1.25. |
 | A new test against the items table in CI | Hit `/parts?cat=all`, not `/parts` — v1.18 turned the root URL into a category browser (cards, not item rows). The flat table only lives under `?cat=all`. The stock-modal regression test learned this the hard way in PR #6. |
+| A new `<select>` or `<input type="checkbox">` anywhere | Nothing extra — the app-wide chrome in `style.css` (custom caret + drawn checkmark) covers every control on every page. Do **not** re-scope those rules to one page or hand-roll a look-alike; identical controls must look identical everywhere (Law of Similarity). v1.42. |
+| A new `<form method="post">` that navigates | Nothing extra — the delegated `submit` handler in `app.js` puts the submitter into a spinner + "Saving…" state and blocks double-submits. If the form is JS-handled, call `preventDefault()` (the handler skips `defaultPrevented` events) and own the busy state yourself. Never call `form.submit()` — it bypasses the handler; use `form.requestSubmit()`. v1.42. |
+| A new icon-only control (emoji link, ✕, 💬) | Give it a real hit box, not bare glyph text: `class="icon-link"` for anchors, or a `button` that inherits the button system. The `@media (pointer: coarse)` block enforces a 44px floor — don't opt a control out of it with `min-height: 0`. v1.42. |
+| A new cluster of ≥3 related settings fields | Wrap it in `.subgroup` (always visible) or `<details class="subgroup-fold">` + `.subgroup-body` (collapsed by default, with a state chip in the `<summary>` so the closed state still reports what's configured). Prefer the fold once a tab shows more than ~7 controls. v1.42. |
+| A one-off `style="…"` you're about to type in a template | Don't. Add a named class to `style.css` instead — see the design-principles section below. The only surviving inline styles are genuinely per-row computed values (e.g. `.cat-indent` depth). |
+
+## Design principles (apply to every UI change)
+
+The UI is held to a fixed set of usability laws. They're not decoration: each
+one below cashes out to a concrete, checkable rule in *this* codebase. A change
+that breaks one is a bug even when the feature works.
+
+**Vocabulary note.** The brief these came from is written in WordPress-admin /
+Gutenberg / Tailwind terms. None of those exist here — this is FastAPI + Jinja2
++ one hand-written `app/static/style.css`. Translate before you go looking:
+
+| Brief says | Here it means |
+|---|---|
+| `PanelBody`, Card | `.card` (a page section) · `.subgroup` (a related field cluster inside a form) · `details.subgroup-fold` (the same, collapsed) |
+| `gap-2`, `px-4`, `space-x-2` | the rem spacing scale already in `style.css` — `.25 / .4 / .5 / .75 / 1 / 1.5rem`. There is no utility framework; add a **named class**, never an inline `style=`. |
+| `text-lg font-semibold` | the type scale: `h1` → `h2` → `h3.settings-subhead` → `.section-h2` → `small.muted`. Lives in CSS, never inline. |
+| WP list table | `table.lines` wrapped in `.table-scroll` |
+| WP top bar + sidebar | `<header>` in `base.html` + `.settings-nav` (the shared `/settings` + `/users` shell) |
+| Modal | `<dialog class="modal">` opened via `openModal(id)`, actions in a `<menu class="modal-actions">` |
+| Toggle / status switch | plain `input[type=checkbox]` — the app-wide chrome makes it read as a switch |
+
+### The laws, as rules
+
+- **Aesthetic-Usability — spacing and type carry the perceived ease.** Forms are
+  `.grid-form` (flex + `gap: .75rem`), sections are `.card`, sub-headings inside
+  a card are `h3.settings-subhead` (which draws the separator rule for you).
+  Reach for a named class; an inline `style=` in a template is the smell that
+  says "this spacing is unique", and it almost never is.
+- **Hick's Law — fewer visible choices per screen.** `/settings` shows exactly
+  one tab at a time; `/parts` drills down instead of listing everything;
+  `/report`'s client filter is a `<details>` popover, not 40 inline checkboxes.
+  When a tab grows past ~7 controls, fold the optional ones.
+- **Jakob's Law — behave like the admin UI people already know.** "+ Add …" is
+  a filled primary button top-right in `.page-head > .head-actions`; destructive
+  actions are `.danger` and last in the row; rows live in a table; edits happen
+  in a `<dialog class="modal">`; the left sidebar is the section switcher.
+  Don't invent a new interaction where one of those fits.
+- **Fitts's Law — important targets are big and close to the pointer.** The
+  button system already sets `min-height: 2.4rem`; `@media (pointer: coarse)`
+  raises everything (including `.small` variants, `.ms-tab`, `.comment-btn`,
+  `.tile-remove`, `.cat-card-admin` buttons) to a **44px floor**. Icon-only
+  targets get `.icon-link` so the glyph has a box around it. Primary action sits
+  where the thumb already is — that's why `.cart-footer` sticks to the bottom of
+  the viewport on phones and why `.stocktake-bar` / `.bulk-bar` are sticky.
+- **Law of Proximity — group by containment, not by hoping.** Related inputs go
+  in one `.subgroup` (dashed border) or `.subgroup-fold`. Button clusters use
+  `.row-actions` / `.head-actions` / `.modal-actions` so the gap is uniform;
+  never let a Save and a Delete butt together with no gap.
+- **Zeigarnik Effect — never leave an action in limbo.** Every navigating POST
+  gets the delegated busy state from `app.js` (spinner + "Saving…" + the form's
+  submit buttons disabled until navigation). Async work reports inline: see
+  "Check for updates" on the Version tab and `#cart-submit-hint` on the scan
+  page. A collapsed `.subgroup-fold` must still show its on/off chip in the
+  summary — hiding a section is fine, hiding its *state* is not.
+- **Goal-Gradient — always name the next step.** A disabled primary button must
+  say why it's disabled and what unblocks it (`#cart-submit-hint`: "Add an item
+  to continue" → "Pick a client to continue"). The scan page's `.ct-pill`s light
+  up (`.is-set`) as each target is chosen — that's the progress bar.
+- **Law of Similarity — one control, one look, everywhere.** Checkbox and
+  `<select>` chrome is defined **app-wide**, not per page. It was once scoped to
+  `.settings-shell`, which left `/parts`, `/jobs`, `/clients` and the scan page
+  rendering raw OS controls next to styled ones — that's the exact bug the rule
+  exists to prevent. Same for buttons: use `.btn` / `.ghost` / `.danger`, don't
+  hand-roll a fourth variant.
+- **Miller's Law — chunk, and default the advanced chunk closed.** The Alerts
+  tab's daily / weekly / monthly schedules are three `details.subgroup-fold`s
+  that open only when that report is enabled — ~20 controls become 3 lines plus
+  whatever you actually use.
+- **Doherty Threshold — under 400ms, or show something.** Debounce typeahead at
+  180ms (`/api/search`, global search) and never block on it. Anything slower
+  than a paint gets a visible state before the request goes out: disable the
+  button, swap the label, show the spinner. `tryGetGeo` is capped at 4s and
+  resolves `null` rather than stalling a scan.
+
+### Quick design review (run before committing a UI change)
+
+1. Any new `style="…"` in a template? Move it to a named class.
+2. New button — does it use `.btn` / `.ghost` / `.danger`, and is it ≥44px on a
+   coarse pointer?
+3. New form — does it navigate? Then it must inherit the busy state (don't call
+   `form.submit()`).
+4. New `<select>` / checkbox — does it look identical to the ones on `/settings`?
+5. Did the screen gain more than ~7 visible controls? Fold the optional ones.
+6. Is there a disabled primary button anywhere with no explanation next to it?
+7. Desktop `<nav>` **and** the mobile drawer both updated? (see the table above)
 
 ## Conventions
 
@@ -306,6 +396,23 @@ scripts/quickstart.sh  one-line bootstrap (clone + install.sh) for curl-pipe / g
   `/labels` sheet trusts that flag to decide what to bulk-print by
   default — leaving it True after a rebrand silently includes the
   manually-typed code in every bulk run. v1.25.
+- The **app-wide** (not `.settings-shell`-scoped) `input[type="checkbox"]`
+  and `select` chrome in `style.css`. Re-scoping either one to a single
+  page is what produced the v1.42 Law-of-Similarity bug: styled controls
+  on `/settings`, raw OS controls on `/parts`, `/jobs`, `/clients` and
+  the scan page. The `.grid-form` / `.lines` / `dialog.modal` select rules
+  must keep using `background-color:`, never the `background:` shorthand —
+  the shorthand wipes the caret `background-image`. v1.42.
+- The delegated `submit` listener in `app.js` and its
+  `if (e.defaultPrevented) return` guard. The guard is what keeps
+  JS-handled forms (`#custom-form`, `#oc-form`) from being frozen in a
+  "Saving…" state that never resolves, and the deferred disable
+  (`setTimeout(…, 0)`) is what keeps a `formaction` submitter's value in
+  the POST body. v1.42.
+- The `@media (pointer: coarse)` 44px tap-target floor. Adding
+  `min-height: 0` to a control to make it visually compact opts it out on
+  phones — set the compact size inside the default (fine-pointer) rule
+  instead and let the coarse block win. v1.42.
 
 ## Where to push back
 

@@ -45,7 +45,7 @@
         </select>
       </td>
       <td><input form="job-{{ j.id }}" name="name" value="{{ j.name }}" aria-label="Job name"></td>
-      <td><input form="job-{{ j.id }}" name="reference" value="{{ j.reference }}" style="width:8rem" aria-label="Ticket / work-order reference"></td>
+      <td><input form="job-{{ j.id }}" name="reference" value="{{ j.reference }}" class="w-sm" aria-label="Ticket / work-order reference"></td>
       <td><input form="job-{{ j.id }}" type="checkbox" name="active" {% if j.active %}checked{% endif %} aria-label="Job active"></td>
       <td><button form="job-{{ j.id }}" type="submit">Save</button></td>
     </tr>

@@ -79,7 +79,7 @@
           <span class="muted impersonate-label">View as…</span>
           <form method="post" action="/impersonate" class="impersonate-form">
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-            <select name="role" onchange="this.form.submit()">
+            <select name="role" onchange="this.form.requestSubmit()">
               <option value="">— role —</option>
               {% for rn in impersonate_roles %}<option value="{{ rn }}" {% if user.is_impersonating and user.role == rn %}selected{% endif %}>{{ rn }}</option>{% endfor %}
             </select>
@@ -94,7 +94,7 @@
         </div>
         {% endif %}
         {% if user.is_kiosk or cfg.auth_mode == 'oidc' %}<form method="post" action="/logout" class="logout-form"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="logout" type="submit">{% if user.is_kiosk %}Exit kiosk{% else %}Log out{% endif %}</button></form>{% endif %}
-        {% if not (can('manage_users') or can('manage_settings') or user.is_kiosk or cfg.auth_mode == 'oidc') %}<span class="muted" style="display:block;padding:.5rem .7rem">Signed in as {{ user.role or 'user' }}</span>{% endif %}
+        {% if not (can('manage_users') or can('manage_settings') or user.is_kiosk or cfg.auth_mode == 'oidc') %}<span class="muted account-note">Signed in as {{ user.role or 'user' }}</span>{% endif %}
       </div>
     </div>
   </header>
@@ -129,7 +129,7 @@
   <main>
     {% if disable_auth %}<div class="flash bad" role="alert"><b>⚠️ DISABLE_AUTH is active</b> — all authentication is bypassed. This is a break-glass recovery setting; unset <code>DISABLE_AUTH</code> in the environment and restart before exposing this app.</div>{% endif %}
     {% if user.is_impersonating %}<div class="flash bad impersonate-banner" role="status"><b>👁 Viewing as {{ user.role }}</b> · You're an Admin previewing what a {{ user.role }} sees.
-      <form method="post" action="/impersonate" style="display:inline">
+      <form method="post" action="/impersonate" class="inline">
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
         <input type="hidden" name="role" value="stop">
         <button type="submit" class="link-btn">Stop</button>

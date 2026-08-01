@@ -8,7 +8,7 @@
       {% for key, nm in icon_choices %}<option value="svg:{{ key }}" {% if current == 'svg:' + key %}selected{% endif %}>{{ nm }}</option>{% endfor %}
       <option value="__custom" {% if current and not current.startswith('svg:') %}selected{% endif %}>Custom emoji…</option>
     </select>
-    <input name="icon" class="icon-input" value="{{ current }}" maxlength="12" style="width:3.4rem;text-align:center" placeholder="emoji" {% if current.startswith('svg:') or not current %}hidden{% endif %}>
+    <input name="icon" class="icon-input w-emoji" value="{{ current }}" maxlength="12" placeholder="emoji" {% if current.startswith('svg:') or not current %}hidden{% endif %}>
   </span>
 </label>
 {% endmacro %}
@@ -127,7 +127,7 @@
   </div>
   {% endif %}
   {% if view == 'root' and not sub_cats and not uncategorized_count and not total_count %}
-  <p class="muted" style="grid-column:1/-1">No categories or items yet. {% if can('manage_items') %}Use <b>+ Add item</b> to drop one in, or turn on <b>Manage</b> to start a category tree.{% endif %}</p>
+  <p class="muted grid-span">No categories or items yet. {% if can('manage_items') %}Use <b>+ Add item</b> to drop one in, or turn on <b>Manage</b> to start a category tree.{% endif %}</p>
   {% endif %}
 </div>
 {% endif %}
@@ -166,7 +166,7 @@
             <div class="item-name">{{ p.name }}{% if not p.active %} <span class="tag muted">inactive</span>{% endif %}</div>
             {% if p.description %}<div class="muted item-desc">{{ p.description }}</div>{% endif %}
           </td>
-          <td><code>{{ p.barcode }}</code> <a href="/parts/{{ p.id }}/label" title="Print label" aria-label="Print label for {{ p.name }}">🏷️</a></td>
+          <td><code>{{ p.barcode }}</code> <a class="icon-link" href="/parts/{{ p.id }}/label" title="Print label" aria-label="Print label for {{ p.name }}">🏷️</a></td>
           {% if view == 'all' %}<td>{{ cat_names.get(p.category_id, '') }}</td>{% endif %}
           <td class="num {% if p.quantity_on_hand <= 0 %}low{% endif %}">
             {{ p.quantity_on_hand }}
@@ -251,13 +251,13 @@
   <h2>Edit item</h2>
   <form id="edit-part-form" method="post" action="" enctype="multipart/form-data">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <div class="muted" id="ep-meta" style="margin-bottom:.5rem"></div>
+    <div class="muted mb-half" id="ep-meta"></div>
     <div class="grid-form">
       <label>Name <input name="name" id="ep-name" required></label>
       {{ icon_field() }}
       <label>Photo
         <span class="icon-field">
-          <img id="ep-image-current" class="item-thumb" alt="" style="display:none">
+          <img id="ep-image-current" class="item-thumb" alt="" hidden>
           <input type="file" name="image" accept="image/png,image/jpeg,image/webp,image/gif">
         </span>
       </label>
@@ -281,18 +281,18 @@
      own endpoint without dragging the edit form's fields along. The
      archive / restore / delete forms are populated by JS when the edit
      dialog opens so they target the current item. #}
-  <hr style="border:0;border-top:1px solid var(--line);margin:1rem 0">
-  <div class="grid-form" style="gap:.5rem">
-    <form id="ep-archive-form" method="post" action="" class="inline" style="margin:0">
+  <hr class="rule">
+  <div class="grid-form lifecycle-actions">
+    <form id="ep-archive-form" method="post" action="" class="inline">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <button type="submit" class="ghost" id="ep-archive-btn">Archive</button>
     </form>
-    <form id="ep-delete-form" method="post" action="" class="inline" style="margin:0"
+    <form id="ep-delete-form" method="post" action="" class="inline"
           onsubmit="return confirm('Permanently delete this item? Items with sale or transfer history cannot be deleted — archive them instead.')">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <button type="submit" class="danger">Delete</button>
     </form>
-    <small class="muted" style="flex:1 1 100%">Archive hides the item from the catalog but keeps its history. Delete is for typos / duplicates with no history.</small>
+    <small class="muted flex-full">Archive hides the item from the catalog but keeps its history. Delete is for typos / duplicates with no history.</small>
   </div>
 </dialog>
 
@@ -345,7 +345,7 @@
   {% if not locations %}
   <p class="flash bad">No active locations — add one under <a href="/locations">Inventory → Locations</a>.</p>
   {% else %}
-  <table class="lines" style="margin-bottom:1rem">
+  <table class="lines mb-1">
     <thead><tr><th>Location</th><th class="num">On hand</th></tr></thead>
     <tbody id="ms-body"></tbody>
   </table>
@@ -367,7 +367,7 @@
         </select>
       </label>
       <label>Amount to add
-        <input name="amount" type="number" min="1" value="10" required style="width:6rem">
+        <input name="amount" type="number" min="1" value="10" required class="w-num">
       </label>
       <button type="submit">+ Add stock</button>
     </form>
@@ -388,7 +388,7 @@
         </select>
       </label>
       <label>Quantity
-        <input name="quantity" type="number" min="1" value="1" required style="width:6rem">
+        <input name="quantity" type="number" min="1" value="1" required class="w-num">
       </label>
       <label class="wide">Notes <input name="notes" placeholder="optional"></label>
       <button type="submit">Move</button>
@@ -405,7 +405,7 @@
         </select>
       </label>
       <label>New on-hand count
-        <input name="quantity" type="number" min="0" value="0" required style="width:6rem">
+        <input name="quantity" type="number" min="0" value="0" required class="w-num">
       </label>
       <label class="wide">Reason (optional)
         <input name="reason" placeholder="e.g. June stocktake, breakage write-off">
@@ -416,7 +416,7 @@
   </div>
   {% endif %}
 
-  <menu class="modal-actions" style="margin-top:1rem">
+  <menu class="modal-actions mt-1">
     <button type="button" class="ghost" onclick="this.closest('dialog').close()">Close</button>
   </menu>
 </dialog>
@@ -451,7 +451,7 @@
         {% for l in locations %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
       </select>
     </label>
-    <label>New on-hand count <input name="quantity" type="number" min="0" value="0" required style="width:7rem"></label>
+    <label>New on-hand count <input name="quantity" type="number" min="0" value="0" required class="w-sm"></label>
     <menu class="modal-actions">
       <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
       <button type="submit">Set count</button>
